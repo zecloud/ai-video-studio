@@ -52,23 +52,25 @@ Content-Type: application/json
 }
 ```
 
-### `POST /api/v1/delete`
-Deletes a previously staged blob.
+### `DELETE /api/v1/blobs/{name}`
+Deletes a previously staged blob. Uses the default container (or override via
+`?container=...`). No request body is needed.
 
 ```
-Authorization: Bearer <API_KEY>
-Content-Type: application/json
+Authorization: ******
 
-{
-  "blobName":      "analysis/abc123.mp4",
-  "blobContainer": "media-staging"
-}
+DELETE /api/v1/blobs/analysis/abc123.mp4?container=media-staging
 ```
 
 ```
 200 OK
 {"status": "deleted"}
 ```
+
+> The legacy `POST /api/v1/delete` (JSON body) is kept for backward
+> compatibility but may be removed in a future version. New callers should
+> use `DELETE /api/v1/blobs/{name}`.
+
 
 ## Configuration
 

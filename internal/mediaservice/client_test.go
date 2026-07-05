@@ -119,22 +119,20 @@ func TestCopyToBlob_MissingFields(t *testing.T) {
 
 func TestDeleteBlob_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/delete" {
+		if r.URL.Path != "/api/v1/blobs/clip.mp4" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		if r.Method != http.MethodPost {
+		if r.URL.Query().Get("container") != "staging" {
+			t.Errorf("unexpected container param: %s", r.URL.Query().Get("container"))
+		}
+		if r.Method != http.MethodDelete {
 			t.Errorf("unexpected method: %s", r.Method)
+		}
+		if r.Body != http.NoBody {
+			t.Errorf("expected no body for DELETE request")
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer test-api-key" {
 			t.Errorf("unexpected Authorization header: %q", got)
-		}
-
-		var req deleteRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("failed to decode request body: %v", err)
-		}
-		if req.BlobName != "clip.mp4" {
-			t.Errorf("unexpected blobName: %q", req.BlobName)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -148,7 +146,6 @@ func TestDeleteBlob_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
-
 func TestDeleteBlob_Error(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -161,10 +158,9 @@ func TestDeleteBlob_Error(t *testing.T) {
 		t.Fatal("expected an error, got nil")
 	}
 	if !errors.Is(err, ErrUnexpectedStatus) {
-		t.Errorf("expected ErrUnexpectedStatus, got: %v", err)
+		t.Errorf("expected ErrUnexpectedStatus in error chain, got: %v", err)
 	}
 }
-
 func TestDeleteBlob_MissingBlobName(t *testing.T) {
 	client := NewClient(testConfig("https://example.com"), http.DefaultClient)
 	if err := client.DeleteBlob(context.Background(), "", "staging"); err == nil {

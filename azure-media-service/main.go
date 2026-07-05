@@ -31,7 +31,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", server.handleHealth)
 	mux.Handle("POST /api/v1/copy", requireAPIKey(cfg, http.HandlerFunc(server.handleCopy)))
-	mux.Handle("POST /api/v1/delete", requireAPIKey(cfg, http.HandlerFunc(server.handleDelete)))
+	mux.Handle("DELETE /api/v1/blobs/{name}", requireAPIKey(cfg, http.HandlerFunc(server.handleDeleteByPath)))
 	mux.Handle("POST /api/v1/analyze", requireAPIKey(cfg, http.HandlerFunc(server.handleAnalyze)))
 	mux.Handle("POST /api/v1/render", requireAPIKey(cfg, http.HandlerFunc(server.handleRender)))
 

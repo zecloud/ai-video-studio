@@ -147,6 +147,12 @@ func (c *Client) CopyToBlob(ctx context.Context, oneDriveItemID, oneDriveToken, 
 }
 
 // DeleteBlob asks the remote service to delete a previously staged blob.
+// DeleteBlob asks the remote service to delete a staged blob via the RESTful
+// DELETE /api/v1/blobs/{name} endpoint. The container name is passed as a
+// query parameter; when empty the server uses its default container.
+// DeleteBlob asks the remote service to delete a staged blob via the RESTful
+// DELETE /api/v1/blobs/{name} endpoint. The container name is passed as a
+// query parameter; when empty the server uses its default container.
 func (c *Client) DeleteBlob(ctx context.Context, blobName, blobContainer string) error {
 	if c == nil {
 		return fmt.Errorf("%w: nil client", ErrInvalidConfig)
@@ -159,20 +165,42 @@ func (c *Client) DeleteBlob(ctx context.Context, blobName, blobContainer string)
 		return fmt.Errorf("%w: blobName is required", ErrInvalidConfig)
 	}
 
-	reqBody := deleteRequest{
-		BlobName:      blobName,
-		BlobContainer: strings.TrimSpace(blobContainer),
+	container := strings.TrimSpace(blobContainer)
+	if container == "" {
+		container = "media-staging"
+	}
+	// Use DELETE /api/v1/blobs/{name}?container=... with no JSON body.
+	path := "/api/v1/blobs/" + blobName
+	if container != "" {
+		path += "?container=" + url.QueryEscape(container)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.cfg.Endpoint+path, nil)
+	if err != nil {
+		return fmt.Errorf("mediaservice: delete blob: %w", err)
+	}
+	c.cfg.authorize(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("mediaservice: delete blob: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("%w: %d %s: %s", ErrUnexpectedStatus, resp.StatusCode, resp.Status, strings.TrimSpace(string(body)))
 	}
 
 	var result deleteResponse
-	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/delete", reqBody, &result); err != nil {
-		return fmt.Errorf("mediaservice: delete blob: %w", err)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("mediaservice: delete blob: decode response: %w", err)
+	}
+	if result.Status != "deleted" {
+		return fmt.Errorf("mediaservice: delete blob: unexpected status %q", result.Status)
 	}
 	return nil
 }
-
-// Health checks the remote service's /health endpoint. It returns nil when
-// the service responds with HTTP 200.
 func (c *Client) Health(ctx context.Context) error {
 	if c == nil {
 		return fmt.Errorf("%w: nil client", ErrInvalidConfig)

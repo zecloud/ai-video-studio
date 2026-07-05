@@ -56,7 +56,7 @@ func main() {
 		MinWidth:        960,
 		MinHeight:       640,
 		URL:             "/",
-		DevToolsEnabled: true,
+		DevToolsEnabled: devtoolsEnabled(),
 	})
 
 	if err := app.Run(); err != nil {

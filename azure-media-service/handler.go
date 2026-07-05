@@ -122,7 +122,9 @@ type deleteRequest struct {
 	BlobContainer string `json:"blobContainer"`
 }
 
-// handleDelete removes a previously staged blob.
+// handleDelete removes a previously staged blob via POST /api/v1/delete
+// (legacy, kept for backward compatibility). Prefer the RESTful
+// DELETE /api/v1/blobs/{name} endpoint exposed via handleDeleteByPath.
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -147,6 +149,32 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// handleDeleteByPath removes a previously staged blob via the RESTful
+// DELETE /api/v1/blobs/{name} route. The container name defaults to the
+// configured container but may be overridden via ?container=<name>.
+func (s *Server) handleDeleteByPath(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	blobName := r.PathValue("name")
+	if blobName == "" {
+		writeError(w, http.StatusBadRequest, "blob name is required")
+		return
+	}
+	container := r.URL.Query().Get("container")
+	if container == "" {
+		container = s.cfg.ContainerName
+	}
+	if err := s.blobs.DeleteBlob(ctx, container, blobName); err != nil {
+		s.logger.Error("blob delete failed", "error", err, "blobName", blobName)
+		if isBlobNotFound(err) {
+			writeError(w, http.StatusNotFound, "blob not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to delete blob")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
