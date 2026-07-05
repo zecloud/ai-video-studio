@@ -23,6 +23,14 @@ type Config struct {
 
 	// Port is the TCP port the HTTP server listens on.
 	Port string
+
+	// CUEndpoint is the Azure Content Understanding endpoint URL.
+	// Required for the /api/v1/analyze endpoint.
+	CUEndpoint string
+
+	// CUAPIKey is the Azure Content Understanding subscription key.
+	// Required for the /api/v1/analyze endpoint.
+	CUAPIKey string
 }
 
 // LoadConfig reads configuration from the environment and validates that
@@ -34,6 +42,8 @@ func LoadConfig() (*Config, error) {
 		StorageAccountName: os.Getenv("STORAGE_ACCOUNT_NAME"),
 		ContainerName:      getEnvDefault("CONTAINER_NAME", "media-staging"),
 		Port:               getEnvDefault("PORT", "8080"),
+		CUEndpoint:         os.Getenv("CU_ENDPOINT"),
+		CUAPIKey:           os.Getenv("CU_API_KEY"),
 	}
 
 	if cfg.APIKey == "" {
@@ -44,6 +54,12 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// CUConfigured returns true when the Content Understanding integration
+// variables are both set.
+func (c *Config) CUConfigured() bool {
+	return c.CUEndpoint != "" && c.CUAPIKey != ""
 }
 
 func getEnvDefault(key, fallback string) string {

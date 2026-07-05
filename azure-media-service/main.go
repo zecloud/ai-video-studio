@@ -32,6 +32,7 @@ func main() {
 	mux.HandleFunc("GET /health", server.handleHealth)
 	mux.Handle("POST /api/v1/copy", requireAPIKey(cfg, http.HandlerFunc(server.handleCopy)))
 	mux.Handle("POST /api/v1/delete", requireAPIKey(cfg, http.HandlerFunc(server.handleDelete)))
+	mux.Handle("POST /api/v1/analyze", requireAPIKey(cfg, http.HandlerFunc(server.handleAnalyze)))
 
 	httpServer := &http.Server{
 		Addr:              ":" + cfg.Port,

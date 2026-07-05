@@ -7,9 +7,6 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as contentunderstanding$0 from "../contentunderstanding/models.js";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
 import * as library$0 from "../library/models.js";
 
 export function AddAsset(asset: library$0.ProjectAsset): $CancellablePromise<void> {
@@ -30,15 +27,15 @@ export function AnalysisJobs(): $CancellablePromise<library$0.AnalysisJob[]> {
  * AnalysisResult returns the analysis result for a job, or nil if the job is
  * still running, failed, or has not yet produced a result.
  */
-export function AnalysisResult(jobID: string): $CancellablePromise<contentunderstanding$0.AnalysisResult | null> {
+export function AnalysisResult(jobID: string): $CancellablePromise<library$0.AnalysisJob | null> {
     return $Call.ByID(3471946201, jobID).then(($result: any) => {
-        return $$createType3($result);
+        return $$createType2($result);
     });
 }
 
 export function Current(): $CancellablePromise<library$0.ProjectLibrary> {
     return $Call.ByID(1949001123).then(($result: any) => {
-        return $$createType4($result);
+        return $$createType3($result);
     });
 }
 
@@ -48,26 +45,26 @@ export function Current(): $CancellablePromise<library$0.ProjectLibrary> {
  */
 export function GetAssetAnalysis(assetID: string): $CancellablePromise<library$0.AnalysisJob | null> {
     return $Call.ByID(3236891816, assetID).then(($result: any) => {
-        return $$createType5($result);
+        return $$createType2($result);
     });
 }
 
 export function ListAssets(): $CancellablePromise<library$0.ProjectAsset[]> {
     return $Call.ByID(3117580363).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType5($result);
     });
 }
 
 /**
  * SubmitForAnalysis starts an Azure Content Understanding analysis for the
- * given asset. It creates a OneDrive shareable link, submits it to CU, and
- * begins async polling in the background. Progress is reported via the
- * 'analysis:progress' and 'analysis:completed' Wails events, in addition to
- * being persisted so AnalysisJobs/AnalysisResult reflect the latest state.
+ * given asset. It delegates to the Azure Media Service which handles the
+ * full pipeline (OneDrive → Blob → CU → result). Since the operation can be
+ * long-running, it's executed in a goroutine and progresses are reported via
+ * the 'analysis:completed' Wails event with the final result.
  */
 export function SubmitForAnalysis(assetID: string): $CancellablePromise<library$0.AnalysisJob | null> {
     return $Call.ByID(2063292583, assetID).then(($result: any) => {
-        return $$createType5($result);
+        return $$createType2($result);
     });
 }
 
@@ -83,9 +80,7 @@ export function SyncWithOneDrive(folderPath: string): $CancellablePromise<number
 // Private type creation functions
 const $$createType0 = library$0.AnalysisJob.createFrom;
 const $$createType1 = $Create.Array($$createType0);
-const $$createType2 = contentunderstanding$0.AnalysisResult.createFrom;
-const $$createType3 = $Create.Nullable($$createType2);
-const $$createType4 = library$0.ProjectLibrary.createFrom;
-const $$createType5 = $Create.Nullable($$createType0);
-const $$createType6 = library$0.ProjectAsset.createFrom;
-const $$createType7 = $Create.Array($$createType6);
+const $$createType2 = $Create.Nullable($$createType0);
+const $$createType3 = library$0.ProjectLibrary.createFrom;
+const $$createType4 = library$0.ProjectAsset.createFrom;
+const $$createType5 = $Create.Array($$createType4);

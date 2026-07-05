@@ -37,7 +37,7 @@ func main() {
 			application.NewService(cuService),
 			application.NewService(backend.NewEditingService()),
 			application.NewService(backend.NewVideoProcessingService()),
-			application.NewService(backend.NewProjectLibraryService(libraryStore, oneDriveService, cuService, mediaClient)),
+			application.NewService(backend.NewProjectLibraryService(libraryStore, oneDriveService, mediaClient)),
 			application.NewService(settingsService),
 		},
 		Assets: application.AssetOptions{

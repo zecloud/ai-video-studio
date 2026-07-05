@@ -249,3 +249,92 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any, out 
 	}
 	return nil
 }
+
+// ---- Analyze ----
+
+// AnalyzeRequest is the payload for POST /api/v1/analyze.
+type AnalyzeRequest struct {
+	OneDriveItemID string `json:"oneDriveItemID"`
+	OneDriveToken  string `json:"oneDriveToken"`
+	AssetID        string `json:"assetID"`
+	AssetName      string `json:"assetName"`
+}
+
+// AnalyzeResult is the normalized analysis result returned by the media service.
+type AnalyzeResult struct {
+	JobID       string                `json:"jobId"`
+	Status      string                `json:"status"`
+	Scenes      []AnalyzeScene        `json:"scenes"`
+	Transcript  []AnalyzeTranscript   `json:"transcript"`
+	Highlights  []AnalyzeHighlight    `json:"highlights"`
+	Suggestions []AnalyzeSuggestion   `json:"suggestions"`
+}
+
+// AnalyzeScene describes a detected scene.
+type AnalyzeScene struct {
+	ID        string   `json:"id"`
+	StartMS   int64    `json:"startMs"`
+	EndMS     int64    `json:"endMs"`
+	Labels    []string `json:"labels"`
+	Summary   string   `json:"summary,omitempty"`
+	Highlight bool     `json:"highlight"`
+}
+
+// AnalyzeTranscript describes a transcript segment.
+type AnalyzeTranscript struct {
+	StartMS int64   `json:"startMs"`
+	EndMS   int64   `json:"endMs"`
+	Text    string  `json:"text"`
+	Speaker string  `json:"speaker,omitempty"`
+	Score   float64 `json:"score,omitempty"`
+}
+
+// AnalyzeHighlight describes a highlight candidate.
+type AnalyzeHighlight struct {
+	ID      string  `json:"id"`
+	StartMS int64   `json:"startMs"`
+	EndMS   int64   `json:"endMs"`
+	Reason  string  `json:"reason"`
+	Score   float64 `json:"score"`
+}
+
+// AnalyzeSuggestion describes an edit suggestion.
+type AnalyzeSuggestion struct {
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	SceneIDs    []string `json:"sceneIds"`
+}
+
+// Analyze submits a video for full analysis (OneDrive → Blob → CU → result).
+// The media service handles the entire pipeline server-side.
+func (c *Client) Analyze(ctx context.Context, req AnalyzeRequest) (*AnalyzeResult, error) {
+	if c == nil {
+		return nil, fmt.Errorf("%w: nil client", ErrInvalidConfig)
+	}
+	if err := c.cfg.validate(); err != nil {
+		return nil, err
+	}
+	req.OneDriveItemID = strings.TrimSpace(req.OneDriveItemID)
+	if req.OneDriveItemID == "" {
+		return nil, fmt.Errorf("%w: oneDriveItemID is required", ErrInvalidConfig)
+	}
+	req.OneDriveToken = strings.TrimSpace(req.OneDriveToken)
+	if req.OneDriveToken == "" {
+		return nil, fmt.Errorf("%w: oneDriveToken is required", ErrInvalidConfig)
+	}
+	req.AssetID = strings.TrimSpace(req.AssetID)
+	if req.AssetID == "" {
+		return nil, fmt.Errorf("%w: assetID is required", ErrInvalidConfig)
+	}
+	req.AssetName = strings.TrimSpace(req.AssetName)
+	if req.AssetName == "" {
+		return nil, fmt.Errorf("%w: assetName is required", ErrInvalidConfig)
+	}
+
+	var result AnalyzeResult
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/analyze", req, &result); err != nil {
+		return nil, fmt.Errorf("mediaservice: analyze: %w", err)
+	}
+	return &result, nil
+}

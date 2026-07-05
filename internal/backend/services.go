@@ -801,11 +801,10 @@ type ProjectLibraryService struct {
 }
 
 // NewProjectLibraryService constructs the project library service and wires
-// up its analysis pipeline. cuClient and mediaClient may be nil (e.g. when
-// Azure Content Understanding or the media staging service are not yet
-// configured); SubmitForAnalysis will return a descriptive error in that
-// case rather than panicking.
-func NewProjectLibraryService(store library.Store, oneDrive *OneDriveService, cuClient cu.Service, mediaClient *mediaservice.Client) *ProjectLibraryService {
+// up its analysis pipeline via the Azure Media Service. mediaClient may be
+// nil (e.g. when the media staging service is not yet configured);
+// SubmitForAnalysis will return a descriptive error in that case.
+func NewProjectLibraryService(store library.Store, oneDrive *OneDriveService, mediaClient *mediaservice.Client) *ProjectLibraryService {
 	if store == nil {
 		defaultPath, err := library.DefaultLibraryPath()
 		if err != nil {
@@ -818,7 +817,7 @@ func NewProjectLibraryService(store library.Store, oneDrive *OneDriveService, cu
 	if oneDrive != nil {
 		odClient = oneDrive.DriveClient()
 	}
-	engine := library.NewAnalysisEngine(store, cuClient, odClient, mediaClient)
+	engine := library.NewAnalysisEngine(store, mediaClient, odClient)
 	return &ProjectLibraryService{store: store, oneDrive: oneDrive, mediaClient: mediaClient, engine: engine}
 }
 
@@ -893,10 +892,10 @@ func emitAnalysisEvent(name string, job library.AnalysisJob) {
 }
 
 // SubmitForAnalysis starts an Azure Content Understanding analysis for the
-// given asset. It creates a OneDrive shareable link, submits it to CU, and
-// begins async polling in the background. Progress is reported via the
-// 'analysis:progress' and 'analysis:completed' Wails events, in addition to
-// being persisted so AnalysisJobs/AnalysisResult reflect the latest state.
+// given asset. It delegates to the Azure Media Service which handles the
+// full pipeline (OneDrive → Blob → CU → result). Since the operation can be
+// long-running, it's executed in a goroutine and progresses are reported via
+// the 'analysis:completed' Wails event with the final result.
 func (s *ProjectLibraryService) SubmitForAnalysis(assetID string) (*library.AnalysisJob, error) {
 	s.mu.Lock()
 	store := s.store
@@ -926,10 +925,18 @@ func (s *ProjectLibraryService) SubmitForAnalysis(assetID string) (*library.Anal
 		return nil, fmt.Errorf("asset %q not found", assetID)
 	}
 
-	return engine.SubmitAsset(ctx, *asset,
-		func(job library.AnalysisJob) { emitAnalysisEvent("analysis:progress", job) },
-		func(job library.AnalysisJob) { emitAnalysisEvent("analysis:completed", job) },
-	)
+	// Execute asynchronously so the UI stays responsive.
+	go func() {
+		job, err := engine.SubmitAsset(ctx, *asset)
+		if err != nil {
+			_ = err
+		}
+		emitAnalysisEvent("analysis:completed", *job)
+	}()
+	// Return a pending placeholder immediately — the real job status is
+	// accessible through AnalysisJobs/AnalysisResult once the goroutine
+	// completes.
+	return engine.GetAssetAnalysis(context.Background(), assetID)
 }
 
 // AnalysisJobs returns all analysis jobs, ordered by creation time
@@ -941,7 +948,7 @@ func (s *ProjectLibraryService) AnalysisJobs() ([]library.AnalysisJob, error) {
 	if engine == nil {
 		return nil, fmt.Errorf("analysis engine is not available")
 	}
-	jobs, err := engine.ListJobs(context.Background())
+	jobs, err := engine.GetJobs(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -951,18 +958,14 @@ func (s *ProjectLibraryService) AnalysisJobs() ([]library.AnalysisJob, error) {
 
 // AnalysisResult returns the analysis result for a job, or nil if the job is
 // still running, failed, or has not yet produced a result.
-func (s *ProjectLibraryService) AnalysisResult(jobID string) (*cu.AnalysisResult, error) {
+func (s *ProjectLibraryService) AnalysisResult(jobID string) (*library.AnalysisJob, error) {
 	s.mu.Lock()
 	engine := s.engine
 	s.mu.Unlock()
 	if engine == nil {
 		return nil, fmt.Errorf("analysis engine is not available")
 	}
-	job, err := engine.GetJob(context.Background(), jobID)
-	if err != nil {
-		return nil, err
-	}
-	return job.Result, nil
+	return engine.GetJob(context.Background(), jobID)
 }
 
 // GetAssetAnalysis returns the most recent analysis job for an asset, or nil

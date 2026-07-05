@@ -1,10 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // Server bundles the dependencies HTTP handlers need.
@@ -144,4 +149,280 @@ func isBlobNotFound(err error) bool {
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "BlobNotFound") || strings.Contains(msg, "404")
+}
+
+// ---- Analysis pipeline types ----
+
+// analyzeRequest is the payload for POST /api/v1/analyze.
+type analyzeRequest struct {
+	OneDriveItemID string `json:"oneDriveItemID"`
+	OneDriveToken  string `json:"oneDriveToken"`
+	AssetID        string `json:"assetID"`
+	AssetName      string `json:"assetName"`
+}
+
+// analyzeResponse is returned by POST /api/v1/analyze.
+type analyzeResponse struct {
+	JobID       string             `json:"jobId"`
+	Status      string             `json:"status"`
+	Scenes      []analysisScene    `json:"scenes"`
+	Transcript  []analysisTranscript `json:"transcript"`
+	Highlights  []analysisHighlight  `json:"highlights"`
+	Suggestions []analysisSuggestion `json:"suggestions"`
+}
+
+type analysisScene struct {
+	ID        string   `json:"id"`
+	StartMS   int64    `json:"startMs"`
+	EndMS     int64    `json:"endMs"`
+	Labels    []string `json:"labels"`
+	Summary   string   `json:"summary,omitempty"`
+	Highlight bool     `json:"highlight"`
+}
+
+type analysisTranscript struct {
+	StartMS int64   `json:"startMs"`
+	EndMS   int64   `json:"endMs"`
+	Text    string  `json:"text"`
+	Speaker string  `json:"speaker,omitempty"`
+	Score   float64 `json:"score,omitempty"`
+}
+
+type analysisHighlight struct {
+	ID      string  `json:"id"`
+	StartMS int64   `json:"startMs"`
+	EndMS   int64   `json:"endMs"`
+	Reason  string  `json:"reason"`
+	Score   float64 `json:"score"`
+}
+
+type analysisSuggestion struct {
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	SceneIDs    []string `json:"sceneIds"`
+}
+
+const mediaStagingContainer = "media-staging"
+
+// handleAnalyze runs the full analysis pipeline server-side:
+// OneDrive download → Blob upload → SAS → CU submit → CU poll → blob cleanup.
+func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	if !s.cfg.CUConfigured() {
+		writeError(w, http.StatusServiceUnavailable, "Content Understanding is not configured on this service")
+		return
+	}
+
+	var req analyzeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.OneDriveItemID == "" || req.OneDriveToken == "" || req.AssetID == "" || req.AssetName == "" {
+		writeError(w, http.StatusBadRequest, "oneDriveItemID, oneDriveToken, assetID and assetName are required")
+		return
+	}
+
+	container := mediaStagingContainer
+	blobName := fmt.Sprintf("analysis/%s/%s", req.AssetID, req.AssetName)
+
+	// Step 1: Download from OneDrive (streaming, no disk).
+	body, _, err := s.oneDrive.DownloadItem(ctx, req.OneDriveItemID, req.OneDriveToken)
+	if err != nil {
+		s.logger.Error("analyze: OneDrive download failed", "error", err, "assetID", req.AssetID)
+		writeError(w, http.StatusBadGateway, "failed to download source item from OneDrive")
+		return
+	}
+	defer body.Close()
+
+	// Step 2: Upload to Azure Blob.
+	if err := s.blobs.UploadStream(ctx, container, blobName, body); err != nil {
+		s.logger.Error("analyze: blob upload failed", "error", err, "blobName", blobName)
+		writeError(w, http.StatusInternalServerError, "failed to upload media to blob storage")
+		return
+	}
+
+	// Step 3: Generate SAS URL for CU.
+	sasURL, err := s.blobs.GenerateSASURL(ctx, container, blobName)
+	if err != nil {
+		s.logger.Error("analyze: SAS generation failed", "error", err, "blobName", blobName)
+		writeError(w, http.StatusInternalServerError, "failed to generate SAS URL")
+		return
+	}
+
+	// Always attempt cleanup on exit.
+	defer func() {
+		if delErr := s.blobs.DeleteBlob(context.Background(), container, blobName); delErr != nil {
+			s.logger.Error("analyze: blob cleanup failed", "error", delErr, "blobName", blobName)
+		}
+	}()
+
+	// Step 4: Submit to Content Understanding.
+	jobID, opLocation, err := s.submitToCU(ctx, sasURL)
+	if err != nil {
+		s.logger.Error("analyze: CU submit failed", "error", err, "assetID", req.AssetID)
+		writeError(w, http.StatusBadGateway, "failed to submit to Content Understanding")
+		return
+	}
+
+	// Step 5: Poll CU until terminal state.
+	result, err := s.pollCU(ctx, opLocation)
+	if err != nil {
+		s.logger.Error("analyze: CU poll failed", "error", err, "jobID", jobID)
+		writeError(w, http.StatusBadGateway, "Content Understanding analysis failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, analyzeResponse{
+		JobID:       jobID,
+		Status:      result.Status,
+		Scenes:      result.Scenes,
+		Transcript:  result.Transcript,
+		Highlights:  result.Highlights,
+		Suggestions: result.Suggestions,
+	})
+}
+
+// submitToCU sends a SAS URL to Azure Content Understanding and returns the
+// job ID and Operation-Location polling URL.
+func (s *Server) submitToCU(ctx context.Context, sasURL string) (jobID, opLocation string, err error) {
+	cuURL := fmt.Sprintf("%s/contentunderstanding/analyzers/prebuilt-videoSearch:analyze?api-version=2025-11-01",
+		strings.TrimRight(s.cfg.CUEndpoint, "/"))
+
+	reqBody, _ := json.Marshal(map[string]string{"url": sasURL})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cuURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return "", "", fmt.Errorf("building CU submit request: %w", err)
+	}
+	req.Header.Set("Ocp-Apim-Subscription-Key", s.cfg.CUAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("CU submit request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", "", fmt.Errorf("CU submit returned %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var submitResp struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&submitResp); err != nil {
+		return "", "", fmt.Errorf("decoding CU submit response: %w", err)
+	}
+
+	opLocation = resp.Header.Get("Operation-Location")
+	if opLocation == "" && submitResp.ID != "" {
+		opLocation = fmt.Sprintf("%s/contentunderstanding/analyzerResults/%s?api-version=2025-11-01",
+			strings.TrimRight(s.cfg.CUEndpoint, "/"), submitResp.ID)
+	}
+	if opLocation == "" {
+		return "", "", fmt.Errorf("CU submit: no Operation-Location returned")
+	}
+
+	return submitResp.ID, opLocation, nil
+}
+
+// cuOperationResponse matches the Azure CU long-running operation envelope.
+type cuOperationResponse struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+	Result struct {
+		AnalyzerID string          `json:"analyzerId"`
+		Contents   []cuContentItem `json:"contents"`
+	} `json:"result"`
+}
+
+type cuContentItem struct {
+	Markdown string                       `json:"markdown"`
+	Fields   map[string]json.RawMessage   `json:"fields"`
+}
+
+// pollCU polls the Operation-Location URL with 3 retries and exponential
+// backoff (2s, 4s, 6s) until CU returns a terminal status.
+func (s *Server) pollCU(ctx context.Context, opLocation string) (analyzeResponse, error) {
+	const maxRetries = 3
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(attempt) * 2 * time.Second
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return analyzeResponse{}, ctx.Err()
+			case <-timer.C:
+			}
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, opLocation, nil)
+		if err != nil {
+			return analyzeResponse{}, err
+		}
+		req.Header.Set("Ocp-Apim-Subscription-Key", s.cfg.CUAPIKey)
+		req.Header.Set("Accept", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			continue
+		}
+
+		var op cuOperationResponse
+		if err := json.NewDecoder(resp.Body).Decode(&op); err != nil {
+			resp.Body.Close()
+			continue
+		}
+		resp.Body.Close()
+
+		switch strings.ToLower(op.Status) {
+		case "succeeded":
+			return normalizeCUResult(op), nil
+		case "failed", "canceled", "cancelled":
+			return analyzeResponse{Status: op.Status}, nil
+		default:
+			// Still running — retry.
+		}
+	}
+
+	return analyzeResponse{}, fmt.Errorf("CU polling exhausted after %d attempts", maxRetries)
+}
+
+// normalizeCUResult converts a raw CU operation response into a normalized
+// analyzeResponse. Scenes, transcripts, and highlights are parsed from the
+// fields map when present; markdown content becomes edit suggestions.
+func normalizeCUResult(op cuOperationResponse) analyzeResponse {
+	result := analyzeResponse{
+		JobID:       op.ID,
+		Status:      op.Status,
+		Scenes:      []analysisScene{},
+		Transcript:  []analysisTranscript{},
+		Highlights:  []analysisHighlight{},
+		Suggestions: []analysisSuggestion{},
+	}
+
+	for i, content := range op.Result.Contents {
+		if strings.TrimSpace(content.Markdown) != "" {
+			result.Suggestions = append(result.Suggestions, analysisSuggestion{
+				ID:          fmt.Sprintf("summary-%d", i+1),
+				Title:       "Content Understanding summary",
+				Description: content.Markdown,
+			})
+		}
+		// Future: parse scenes, transcripts, highlights from content.Fields
+	}
+
+	return result
 }

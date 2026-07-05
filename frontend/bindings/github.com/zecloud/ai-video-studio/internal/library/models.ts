@@ -7,7 +7,7 @@ import { Create as $Create } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as contentunderstanding$0 from "../contentunderstanding/models.js";
+import * as mediaservice$0 from "../mediaservice/models.js";
 
 /**
  * AnalysisJob tracks a single analysis job from submission through result retrieval.
@@ -18,19 +18,12 @@ export class AnalysisJob {
     "assetName": string;
 
     /**
-     * CU operation ID
+     * CU operation ID (from media service)
      */
     "jobId"?: string;
-
-    /**
-     * CU polling URL
-     */
-    "operationLocation"?: string;
     "status": string;
     "errorMessage"?: string;
-    "result"?: contentunderstanding$0.AnalysisResult | null;
-    "blobName"?: string;
-    "blobUrl"?: string;
+    "result"?: mediaservice$0.AnalyzeResult | null;
     "createdAt": string;
     "updatedAt": string;
 
@@ -62,10 +55,10 @@ export class AnalysisJob {
      * Creates a new AnalysisJob instance from a string or object.
      */
     static createFrom($$source: any = {}): AnalysisJob {
-        const $$createField7_0 = $$createType1;
+        const $$createField6_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("result" in $$parsedSource) {
-            $$parsedSource["result"] = $$createField7_0($$parsedSource["result"]);
+            $$parsedSource["result"] = $$createField6_0($$parsedSource["result"]);
         }
         return new AnalysisJob($$parsedSource as Partial<AnalysisJob>);
     }
@@ -156,7 +149,7 @@ export class ProjectLibrary {
 }
 
 // Private type creation functions
-const $$createType0 = contentunderstanding$0.AnalysisResult.createFrom;
+const $$createType0 = mediaservice$0.AnalyzeResult.createFrom;
 const $$createType1 = $Create.Nullable($$createType0);
 const $$createType2 = ProjectAsset.createFrom;
 const $$createType3 = $Create.Array($$createType2);

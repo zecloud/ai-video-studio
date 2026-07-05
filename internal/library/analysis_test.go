@@ -6,13 +6,18 @@ import (
 	"sync"
 	"testing"
 
-	cu "github.com/zecloud/ai-video-studio/internal/contentunderstanding"
 	"github.com/zecloud/ai-video-studio/internal/mediaservice"
 	"github.com/zecloud/ai-video-studio/internal/onedrive"
 )
 
-// memStore is a minimal in-memory Store implementation for testing the
-// analysis engine without touching disk.
+// stubToken is a fake OneDrive token provider.
+type stubToken struct{}
+
+func (s stubToken) AccessToken(_ context.Context, _ []string) (string, error) {
+	return "test-token", nil
+}
+
+// memStore is a minimal in-memory Store implementation.
 type memStore struct {
 	mu     sync.Mutex
 	assets []ProjectAsset
@@ -64,27 +69,27 @@ func (m *memStore) LoadJobs(context.Context) ([]AnalysisJob, error) {
 
 func (m *memStore) Path() string { return "" }
 
-// stubCUService is a no-op cu.Service used to detect unwanted calls.
-type stubCUService struct {
-	submitCalled bool
+// stubBackend is an AnalyzeBackend test double.
+type stubBackend struct {
+	lastRequest *mediaservice.AnalyzeRequest
+	result      *mediaservice.AnalyzeResult
+	shouldError bool
 }
 
-func (s *stubCUService) Status(context.Context) (cu.ServiceStatus, error) {
-	return cu.ServiceStatus{Configured: true}, nil
+func (s *stubBackend) Analyze(_ context.Context, req mediaservice.AnalyzeRequest) (*mediaservice.AnalyzeResult, error) {
+	s.lastRequest = &req
+	if s.shouldError {
+		return nil, fakeErr("remote failure")
+	}
+	if s.result != nil {
+		return s.result, nil
+	}
+	return &mediaservice.AnalyzeResult{Status: "succeeded"}, nil
 }
 
-func (s *stubCUService) Submit(context.Context, cu.VideoAsset) (string, error) {
-	s.submitCalled = true
-	return "job-should-not-be-called", nil
-}
+type fakeErr string
 
-func (s *stubCUService) GetResult(context.Context, string) (cu.AnalysisResult, error) {
-	return cu.AnalysisResult{}, nil
-}
-
-func (s *stubCUService) PollResult(context.Context, string) (cu.AnalysisResult, error) {
-	return cu.AnalysisResult{}, nil
-}
+func (f fakeErr) Error() string { return string(f) }
 
 func TestSubmitAssetRejectsWhenAnalysisAlreadyInProgress(t *testing.T) {
 	store := &memStore{
@@ -92,25 +97,21 @@ func TestSubmitAssetRejectsWhenAnalysisAlreadyInProgress(t *testing.T) {
 			{ID: "analysis-1", AssetID: "asset-1", AssetName: "clip.mp4", Status: AnalysisPolling},
 		},
 	}
-	cuClient := &stubCUService{}
-	odClient := &onedrive.Client{TokenProvider: nil}
-	mediaClient := mediaservice.NewClient(mediaservice.Config{}, nil)
+	back := &stubBackend{}
+	od := &onedrive.Client{TokenProvider: stubToken{}}
 
-	engine := NewAnalysisEngine(store, cuClient, odClient, mediaClient)
+	engine := NewAnalysisEngine(store, back, od)
 
 	asset := ProjectAsset{ID: "asset-1", Name: "clip.mp4", CloudAssetID: "cloud-1"}
-	job, err := engine.SubmitAsset(context.Background(), asset, nil, nil)
+	job, err := engine.SubmitAsset(context.Background(), asset)
 	if err == nil {
-		t.Fatalf("expected error for asset with in-flight analysis, got nil (job=%+v)", job)
+		t.Fatalf("expected error, got nil (job=%+v)", job)
 	}
 	if !strings.Contains(err.Error(), "already in progress") {
-		t.Fatalf("expected 'already in progress' error, got: %v", err)
+		t.Fatalf("expected 'already in progress', got: %v", err)
 	}
-	if job != nil {
-		t.Fatalf("expected nil job when rejecting duplicate submission, got %+v", job)
-	}
-	if cuClient.submitCalled {
-		t.Fatalf("expected CU Submit to not be called when analysis already in progress")
+	if back.lastRequest != nil {
+		t.Fatal("expected Analyze not called")
 	}
 }
 
@@ -120,21 +121,59 @@ func TestSubmitAssetAllowsResubmitAfterFailure(t *testing.T) {
 			{ID: "analysis-1", AssetID: "asset-1", AssetName: "clip.mp4", Status: AnalysisFailed},
 		},
 	}
-	cuClient := &stubCUService{}
-	// No TokenProvider configured, so SubmitAsset will fail after the
-	// duplicate-submission check but before actually calling CU — this test
-	// only verifies the guard doesn't reject a previously-failed job.
-	odClient := &onedrive.Client{}
-	mediaClient := mediaservice.NewClient(mediaservice.Config{}, nil)
+	back := &stubBackend{result: &mediaservice.AnalyzeResult{Status: "succeeded"}}
+	od := &onedrive.Client{TokenProvider: stubToken{}}
 
-	engine := NewAnalysisEngine(store, cuClient, odClient, mediaClient)
+	engine := NewAnalysisEngine(store, back, od)
 
 	asset := ProjectAsset{ID: "asset-1", Name: "clip.mp4", CloudAssetID: "cloud-1"}
-	_, err := engine.SubmitAsset(context.Background(), asset, nil, nil)
-	if err == nil {
-		t.Fatalf("expected an error due to missing token provider")
+	job, err := engine.SubmitAsset(context.Background(), asset)
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
 	}
-	if strings.Contains(err.Error(), "already in progress") {
-		t.Fatalf("resubmission after failure should not be blocked by the in-progress guard, got: %v", err)
+	if job == nil {
+		t.Fatal("expected non-nil job")
+	}
+	if job.Status != AnalysisSucceeded {
+		t.Fatalf("expected %s, got %s", AnalysisSucceeded, job.Status)
+	}
+	if back.lastRequest == nil {
+		t.Fatal("expected Analyze to be called")
+	}
+	if back.lastRequest.AssetID != "asset-1" {
+		t.Fatalf("expected asset-1, got %s", back.lastRequest.AssetID)
+	}
+}
+
+func TestSubmitAssetNoCloudAssetID(t *testing.T) {
+	store := &memStore{}
+	back := &stubBackend{}
+	od := &onedrive.Client{TokenProvider: stubToken{}}
+
+	engine := NewAnalysisEngine(store, back, od)
+
+	_, err := engine.SubmitAsset(context.Background(), ProjectAsset{ID: "asset-1", Name: "clip.mp4"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestSubmitAssetMediaServiceError(t *testing.T) {
+	store := &memStore{}
+	back := &stubBackend{shouldError: true}
+	od := &onedrive.Client{TokenProvider: stubToken{}}
+
+	engine := NewAnalysisEngine(store, back, od)
+
+	asset := ProjectAsset{ID: "asset-1", Name: "clip.mp4", CloudAssetID: "cloud-1"}
+	job, err := engine.SubmitAsset(context.Background(), asset)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if job == nil {
+		t.Fatal("expected non-nil job on failure")
+	}
+	if job.Status != AnalysisFailed {
+		t.Fatalf("expected %s, got %s", AnalysisFailed, job.Status)
 	}
 }
