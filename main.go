@@ -35,7 +35,7 @@ func main() {
 			application.NewService(backend.NewTransferService(oneDriveService, libraryStore)),
 			application.NewService(oneDriveService),
 			application.NewService(cuService),
-			application.NewService(backend.NewEditingService()),
+			application.NewService(backend.NewEditingService(libraryStore, mediaClient, oneDriveService.DriveClient())),
 			application.NewService(backend.NewVideoProcessingService()),
 			application.NewService(backend.NewProjectLibraryService(libraryStore, oneDriveService, mediaClient)),
 			application.NewService(settingsService),

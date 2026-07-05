@@ -39,6 +39,20 @@ import {
   submitAssetForAnalysis,
   submitPendingAssets,
 } from "./analysis.js";
+import {
+  EditingViewState,
+  createEditingState,
+  loadEditingData,
+  renderEditingPanel,
+  setupEditingEvents,
+  createNewProject,
+  saveProject,
+  addClipToTimeline,
+  removeClip,
+  moveClipUp,
+  moveClipDown,
+  startRender,
+} from "./editing.js";
 
 type Tone = "success" | "warning" | "danger" | "info" | "neutral";
 type AppView = "camera" | "transfers" | "library" | "analysis" | "editing" | "settings";
@@ -113,7 +127,8 @@ type AppState = {
     selectedAssetId: string | null;
     loading: boolean;
     analysis: AnalysisViewState;
-};
+        editing: EditingViewState;
+    };
 
 const sampleMedia: MediaItem[] = [
   {
@@ -183,7 +198,8 @@ const state: AppState = {
     selectedAssetId: null,
   loading: true,
   analysis: createAnalysisState(),
-};
+    editing: createEditingState(),
+  };
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -616,39 +632,20 @@ function renderCameraMediaPanel(selectedCount: number): string {
   `;
 }
 
-function renderEditingPanel(): string {
+function renderEditingPanelWrapper(): string {
   return `
     <section class="panel" aria-labelledby="edit-title">
-      <div class="panel-header">
+      <div class="topbar">
         <div>
-          <p class="eyebrow">Editing studio preview</p>
-          <h3 id="edit-title">Ride highlights draft</h3>
+          <p class="eyebrow">AI Video Studio</p>
+          <h2>Editing Studio</h2>
+          <p class="lede">Drag analyzed assets into the timeline. Trim, reorder, add transitions, and render via Azure Container App.</p>
         </div>
-        <div class="toolbar">
-          <select class="field" aria-label="Render preset"><option>H.264 1080p - OneDrive render</option></select>
-          <button class="button secondary" type="button">Save project</button>
-          <button class="button" type="button">Render</button>
-        </div>
-      </div>
-      <div class="timeline" aria-label="Non-destructive timeline preview">
-        <div class="ruler"><span>00:00</span><span>00:15</span><span>00:30</span><span>00:45</span><span>01:00</span><span>01:15</span><span>01:30</span><span>01:45</span></div>
-        <div class="track">
-          <div class="track-label">Video 1</div>
-          <div class="segments">
-            <div class="segment">GX010112 - climb<br><span>00:31 - 00:58</span></div>
-            <div class="segment warning">GX010113 - jump<br><span>02:10 - 02:28</span></div>
-            <div class="segment">GX010114 - finish<br><span>01:05 - 01:42</span></div>
-          </div>
-        </div>
-        <div class="track">
-          <div class="track-label">Titles</div>
-          <div class="segments">
-            <div class="segment">Ride: day 1<br><span>00:00 - 00:04</span></div>
-            <div></div>
-            <div class="segment">Final sprint<br><span>01:18 - 01:26</span></div>
-          </div>
+        <div style="display:flex;gap:10px;align-items:center">
+          <button class="button secondary" data-action="save-project">Save</button>
         </div>
       </div>
+      ${renderEditingPanel(state.editing)}
     </section>
   `;
 }
@@ -740,7 +737,7 @@ function renderActiveView(selectedCount: number): string {
     case "settings":
       return renderSettingsPanel();
     case "editing":
-      return renderEditingPanel();
+          return renderEditingPanelWrapper();
     case "library":
           return renderLibraryPanel();
     case "analysis":
@@ -1040,7 +1037,88 @@ progress=continue</pre>
       }
     });
 
-  root.querySelector<HTMLButtonElement>("[data-action='start-transfer']")?.addEventListener("click", () => {
+        // Editing Studio actions
+        root.addEventListener("click", (event) => {
+          const target = event.target as HTMLElement;
+
+          // Add asset to timeline
+          const addBtn = target.closest<HTMLElement>("[data-action='add-asset']");
+          if (addBtn) {
+            const assetId = addBtn.dataset.assetId || "";
+            const asset = state.editing.assets.find((a) => a.id === assetId);
+            if (asset) {
+              void addClipToTimeline(state.editing, asset).then(() => render());
+            }
+            return;
+          }
+
+          // Remove clip
+          const removeBtn = target.closest<HTMLElement>("[data-action='remove-clip']");
+          if (removeBtn) {
+            removeClip(state.editing, removeBtn.dataset.clipId || "");
+            render();
+            return;
+          }
+
+          // Move clip up
+          const upBtn = target.closest<HTMLElement>("[data-action='move-up']");
+          if (upBtn) {
+            moveClipUp(state.editing, upBtn.dataset.clipId || "");
+            render();
+            return;
+          }
+
+          // Move clip down
+          const downBtn = target.closest<HTMLElement>("[data-action='move-down']");
+          if (downBtn) {
+            moveClipDown(state.editing, downBtn.dataset.clipId || "");
+            render();
+            return;
+          }
+
+          // Save project
+          const saveBtn = target.closest<HTMLElement>("[data-action='save-project']");
+          if (saveBtn) {
+            void saveProject(state.editing).then(() => render());
+            return;
+          }
+
+          // Start render
+          const renderBtn = target.closest<HTMLElement>("[data-action='start-render']");
+          if (renderBtn) {
+            void startRender(state.editing).then(() => render());
+            return;
+          }
+
+          // Select project
+          const selectProject = target.closest<HTMLElement>("[data-action='select-project']");
+          if (selectProject) {
+            const pid = selectProject.dataset.projectId || "";
+            const found = state.editing.projects.find((p) => p.id === pid);
+            if (found) {
+              state.editing.activeProject = found;
+              render();
+            }
+            return;
+          }
+
+          // New project
+          const newProjectBtn = target.closest<HTMLElement>("[data-action='new-project']");
+          if (newProjectBtn) {
+            void createNewProject(state.editing, `Edit ${new Date().toLocaleDateString()}`).then(() => render());
+            return;
+          }
+        });
+
+        // Preset change via select
+        root.addEventListener("change", (event) => {
+          const target = event.target as HTMLSelectElement;
+          if (target.dataset.action === "set-preset" && state.editing.activeProject) {
+            state.editing.activeProject.renderPreset = target.value;
+          }
+        });
+
+      root.querySelector<HTMLButtonElement>("[data-action='start-transfer']")?.addEventListener("click", () => {
     void startSelectedTransfer();
   });
 
@@ -1622,3 +1700,5 @@ render();
 void refreshServiceStatus();
 void refreshAnalysisState(state.analysis).then(() => render());
 setupAnalysisEvents(state.analysis, () => render());
+setupEditingEvents(state.editing, () => render());
+void loadEditingData(state.editing).then(() => render());

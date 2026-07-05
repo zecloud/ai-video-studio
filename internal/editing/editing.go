@@ -55,6 +55,26 @@ type RenderPreset struct {
 	MaxBitrate string `json:"maxBitrate"`
 }
 
+// RenderJob tracks a single render job dispatched to the Azure Container App.
+type RenderJob struct {
+	ID          string  `json:"id"`
+	ProjectID   string  `json:"projectId"`
+	Status      string  `json:"status"`
+	OutputURL   string  `json:"outputUrl,omitempty"`
+	Percent     float64 `json:"percent"`
+	CurrentMS   int64   `json:"currentMs"`
+	TotalMS     int64   `json:"totalMs"`
+	Message     string  `json:"message,omitempty"`
+	ErrorDetail string  `json:"errorDetail,omitempty"`
+}
+
+// RenderResult is what the media service returns after a successful render.
+type RenderResult struct {
+	Status    string `json:"status"`
+	OutputURL string `json:"outputUrl"`
+	Log       string `json:"log,omitempty"`
+}
+
 type Service interface {
 	ListProjects(context.Context) ([]EditProject, error)
 	SaveProject(context.Context, EditProject) (EditProject, error)

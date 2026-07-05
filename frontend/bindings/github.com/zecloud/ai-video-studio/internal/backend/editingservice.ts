@@ -15,9 +15,42 @@ export function CreateDraftProject(name: string): $CancellablePromise<editing$0.
     });
 }
 
+export function DeleteProject(projectID: string): $CancellablePromise<void> {
+    return $Call.ByID(3833426788, projectID);
+}
+
 export function ListProjects(): $CancellablePromise<editing$0.EditProject[]> {
     return $Call.ByID(3962621678).then(($result: any) => {
         return $$createType1($result);
+    });
+}
+
+/**
+ * Render dispatches a render job to the Azure Container App. It blocks until
+ * the remote service completes or fails, then stores the result.
+ * Emits wails events "editing:render:progress" and "editing:render:completed".
+ */
+export function Render(projectID: string): $CancellablePromise<editing$0.RenderJob | null> {
+    return $Call.ByID(2403669932, projectID).then(($result: any) => {
+        return $$createType3($result);
+    });
+}
+
+/**
+ * RenderJob returns the current state of a render job.
+ */
+export function RenderJob(jobID: string): $CancellablePromise<editing$0.RenderJob | null> {
+    return $Call.ByID(916506303, jobID).then(($result: any) => {
+        return $$createType3($result);
+    });
+}
+
+/**
+ * RenderJobs returns all render jobs.
+ */
+export function RenderJobs(): $CancellablePromise<(editing$0.RenderJob | null)[]> {
+    return $Call.ByID(3407409956).then(($result: any) => {
+        return $$createType4($result);
     });
 }
 
@@ -30,3 +63,6 @@ export function SaveProject(project: editing$0.EditProject): $CancellablePromise
 // Private type creation functions
 const $$createType0 = editing$0.EditProject.createFrom;
 const $$createType1 = $Create.Array($$createType0);
+const $$createType2 = editing$0.RenderJob.createFrom;
+const $$createType3 = $Create.Nullable($$createType2);
+const $$createType4 = $Create.Array($$createType3);

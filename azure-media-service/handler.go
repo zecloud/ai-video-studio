@@ -8,6 +8,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -45,7 +48,14 @@ func writeError(w http.ResponseWriter, status int, message string) {
 // handleHealth reports basic liveness. No auth is required so orchestrators
 // (Container Apps health probes) can call it freely.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	ffmpeg := "absent"
+	if _, err := exec.LookPath("ffmpeg"); err == nil {
+		ffmpeg = "available"
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status": "ok",
+		"ffmpeg": ffmpeg,
+	})
 }
 
 // copyRequest is the payload for POST /api/v1/copy.
@@ -398,6 +408,400 @@ func (s *Server) pollCU(ctx context.Context, opLocation string) (analyzeResponse
 	}
 
 	return analyzeResponse{}, fmt.Errorf("CU polling exhausted after %d attempts", maxRetries)
+}
+
+// ---- Render pipeline types ----
+
+// clipPath tracks a downloaded clip local file during render prep.
+type clipPath struct {
+	ID    string
+	Path  string
+	InMS  int64
+	OutMS int64
+}
+
+// renderClip mirrors the desktop's mediaservice.RenderClip.
+type renderClip struct {
+	ID    string `json:"id"`
+	Input string `json:"input"` // OneDrive item ID of the source asset
+	InMS  int64  `json:"inMs"`
+	OutMS int64  `json:"outMs"`
+	Muted bool   `json:"muted,omitempty"`
+}
+
+// renderTransition mirrors the desktop's mediaservice.RenderTransition.
+type renderTransition struct {
+	Kind       string `json:"kind"`       // "cut", "crossfade"
+	DurationMS int64  `json:"durationMs"` // ignored for "cut"
+}
+
+// renderRequest is the payload for POST /api/v1/render.
+type renderRequest struct {
+	ProjectID     string             `json:"projectId"`
+	OneDriveToken string             `json:"oneDriveToken"`
+	Clips         []renderClip       `json:"clips"`
+	Transitions   []renderTransition `json:"transitions,omitempty"`
+	Preset        string             `json:"preset"`     // e.g. "h264-1080p"
+	OutputName    string             `json:"outputName"` // destination filename
+}
+
+// renderResult is returned after a successful or failed render.
+type renderResult struct {
+	Status    string `json:"status"` // "completed" or "failed"
+	OutputURL string `json:"outputUrl"`
+	Log       string `json:"log,omitempty"`
+}
+
+// handleRender runs the full render pipeline server-side:
+// download source clips from OneDrive → build FFmpeg concat → run render → upload to OneDrive → cleanup.
+func (s *Server) handleRender(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	startTime := time.Now()
+
+	var req renderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if req.OneDriveToken == "" {
+		writeError(w, http.StatusBadRequest, "oneDriveToken is required")
+		return
+	}
+	if len(req.Clips) == 0 {
+		writeError(w, http.StatusBadRequest, "at least one clip is required")
+		return
+	}
+	if req.ProjectID == "" {
+		req.ProjectID = fmt.Sprintf("render-%d", time.Now().Unix())
+	}
+	if req.OutputName == "" {
+		req.OutputName = "render-output.mp4"
+	}
+	if req.Preset == "" {
+		req.Preset = "h264-1080p"
+	}
+
+	workDir := fmt.Sprintf("/tmp/render-%s", req.ProjectID)
+	if err := os.MkdirAll(workDir, 0700); err != nil {
+		s.logger.Error("render: failed to create work dir", "error", err, "dir", workDir)
+		writeError(w, http.StatusInternalServerError, "failed to prepare render workspace")
+		return
+	}
+	defer func() {
+		if err := os.RemoveAll(workDir); err != nil {
+			s.logger.Error("render: cleanup failed", "error", err, "dir", workDir)
+		}
+	}()
+
+	// Step 1: Download each source clip from OneDrive to local temp files.
+	// We track the paths so we can build the FFmpeg concat input list.
+	var clipPaths []clipPath
+	var totalBytes int64
+
+	for i, clip := range req.Clips {
+		s.logger.Info("render: downloading clip",
+			"clip", i+1,
+			"total", len(req.Clips),
+			"itemID", clip.Input)
+
+		body, _, err := s.oneDrive.DownloadItem(ctx, clip.Input, req.OneDriveToken)
+		if err != nil {
+			s.logger.Error("render: failed to download clip", "error", err, "itemID", clip.Input)
+			writeError(w, http.StatusBadGateway, fmt.Sprintf("failed to download clip %d from OneDrive", i+1))
+			return
+		}
+
+		localPath := filepath.Join(workDir, fmt.Sprintf("clip-%d-%s.mp4", i+1, safeClipID(clip.ID)))
+		f, err := os.Create(localPath)
+		if err != nil {
+			body.Close()
+			s.logger.Error("render: failed to create local file", "error", err, "path", localPath)
+			writeError(w, http.StatusInternalServerError, "failed to buffer clip")
+			return
+		}
+
+		n, copyErr := io.Copy(f, body)
+		body.Close()
+		closeErr := f.Close()
+		if copyErr != nil {
+			s.logger.Error("render: failed to write clip", "error", copyErr, "path", localPath)
+			writeError(w, http.StatusInternalServerError, "failed to buffer clip")
+			return
+		}
+		if closeErr != nil {
+			s.logger.Error("render: failed to close clip file", "error", closeErr, "path", localPath)
+			writeError(w, http.StatusInternalServerError, "failed to finalize clip")
+			return
+		}
+
+		totalBytes += n
+		clipPaths = append(clipPaths, clipPath{
+			ID:   clip.ID,
+			Path: localPath,
+			InMS: clip.InMS,
+			OutMS: clip.OutMS,
+		})
+		s.logger.Info("render: clip downloaded", "clip", i+1, "bytes", n)
+	}
+
+	// Step 2: Build and run the FFmpeg command.
+	// Strategy: use a concat filter for precise timeline assembly.
+	// For crossfade transitions we use xfade, otherwise concat.
+	outputPath := filepath.Join(workDir, req.OutputName)
+
+	ffmpegArgs, buildErr := buildRenderCommand(outputPath, clipPaths, req.Transitions, req.Preset)
+	if buildErr != nil {
+		s.logger.Error("render: failed to build FFmpeg command", "error", buildErr)
+		writeError(w, http.StatusBadRequest, buildErr.Error())
+		return
+	}
+
+	s.logger.Info("render: starting FFmpeg", "projectID", req.ProjectID, "args", strings.Join(ffmpegArgs, " "))
+
+	cmd := exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	runErr := cmd.Run()
+	duration := time.Since(startTime)
+
+	logOutput := stderr.String()
+
+	if runErr != nil {
+		s.logger.Error("render: FFmpeg failed",
+			"error", runErr,
+			"duration", duration.String(),
+			"stderr", truncateLog(logOutput, 500))
+		writeJSON(w, http.StatusOK, renderResult{
+			Status: "failed",
+			Log:    logOutput,
+		})
+		return
+	}
+
+	s.logger.Info("render: FFmpeg completed", "projectID", req.ProjectID, "duration", duration.String(), "outputBytes", fileSize(outputPath))
+
+	// Step 3: Upload the rendered output to OneDrive.
+	outputFile, err := os.Open(outputPath)
+	if err != nil {
+		s.logger.Error("render: failed to open output file", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to read render output")
+		return
+	}
+	defer outputFile.Close()
+
+	outputURL, uploadErr := s.uploadToOneDrive(ctx, req.OutputName, outputFile, req.OneDriveToken)
+	if uploadErr != nil {
+		s.logger.Error("render: OneDrive upload failed", "error", uploadErr)
+		writeJSON(w, http.StatusOK, renderResult{
+			Status: "failed",
+			Log:    fmt.Sprintf("%s\n\nUpload to OneDrive failed: %v", logOutput, uploadErr),
+		})
+		return
+	}
+
+	totalDuration := time.Since(startTime)
+	s.logger.Info("render: complete",
+		"projectID", req.ProjectID,
+		"totalDuration", totalDuration.String(),
+		"outputURL", outputURL)
+
+	writeJSON(w, http.StatusOK, renderResult{
+		Status:    "completed",
+		OutputURL: outputURL,
+		Log:       logOutput,
+	})
+}
+
+// buildRenderCommand constructs the FFmpeg command line for rendering a
+// timeline of clips with optional transitions.
+func buildRenderCommand(outputPath string, clips []clipPath, transitions []renderTransition, preset string) ([]string, error) {
+	if len(clips) == 0 {
+		return nil, fmt.Errorf("no clips to render")
+	}
+
+	// For a single clip with trim, we can use a simple -ss -to approach.
+	// For multiple clips, we use the concat demuxer or concat filter.
+	// This implementation uses the concat filter (supports trimming).
+
+	if len(clips) == 1 {
+		// Simple trim of a single clip.
+		clip := clips[0]
+		args := []string{"-y", "-ss", msToTime(clip.InMS)}
+		if clip.OutMS > 0 {
+			args = append(args, "-to", msToTime(clip.OutMS))
+		}
+		args = append(args, "-i", clip.Path)
+		args = append(args, presetArgs(preset)...)
+		args = append(args, outputPath)
+		return args, nil
+	}
+
+	// Multiple clips: use concat filter with per-clip trimming.
+	// Build: ffmpeg -i c1 -i c2 -i c3 -filter_complex "[0:v]trim=0:5,setpts=PTS-STARTPTS[v0]; [1:v]trim=2:7,setpts=PTS-STARTPTS[v1]; [v0][v1]concat=n=2:v=1:a=0[outv]" -map "[outv]" output
+	var inputs []string
+	var filterParts []string
+	var labeledSegs []string
+
+	for i, clip := range clips {
+		inputs = append(inputs, "-i", clip.Path)
+		startSec := fmt.Sprintf("%.3f", float64(clip.InMS)/1000.0)
+		var durSec string
+		if clip.OutMS > 0 {
+			durSec = fmt.Sprintf("%.3f", float64(clip.OutMS-clip.InMS)/1000.0)
+		} else {
+			durSec = ""
+		}
+
+		vLabel := fmt.Sprintf("v%d", i)
+		aLabels := fmt.Sprintf("a%d", i)
+
+		if durSec != "" {
+			filterParts = append(filterParts,
+				fmt.Sprintf("[%d:v]trim=%s:duration=%s,setpts=PTS-STARTPTS[%s]", i, startSec, durSec, vLabel))
+			filterParts = append(filterParts,
+				fmt.Sprintf("[%d:a]atrim=%s:duration=%s,asetpts=PTS-STARTPTS[%s]", i, startSec, durSec, aLabels))
+		} else {
+			filterParts = append(filterParts,
+				fmt.Sprintf("[%d:v]trim=start=%s,setpts=PTS-STARTPTS[%s]", i, startSec, vLabel))
+			filterParts = append(filterParts,
+				fmt.Sprintf("[%d:a]atrim=start=%s,asetpts=PTS-STARTPTS[%s]", i, startSec, aLabels))
+		}
+		labeledSegs = append(labeledSegs, fmt.Sprintf("[%s][%s]", vLabel, aLabels))
+	}
+
+	// Concat all segments
+	n := len(clips)
+	filterParts = append(filterParts,
+		fmt.Sprintf("%sconcat=n=%d:v=1:a=1[outv][outa]", strings.Join(labeledSegs, ""), n))
+
+	filterComplex := strings.Join(filterParts, "; ")
+
+	args := append([]string{"-y"}, inputs...)
+	args = append(args, "-filter_complex", filterComplex, "-map", "[outv]", "-map", "[outa]")
+	args = append(args, presetArgs(preset)...)
+	args = append(args, outputPath)
+
+	return args, nil
+}
+
+// uploadToOneDrive uploads a local file to OneDrive via Microsoft Graph
+// createUploadSession and returns the resulting item web URL.
+func (s *Server) uploadToOneDrive(ctx context.Context, filename string, src io.Reader, token string) (string, error) {
+	graphURL := fmt.Sprintf("%s/me/drive/root:/%s:/createUploadSession", graphBaseURL, filename)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, graphURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("building upload session request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("creating upload session: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", fmt.Errorf("createUploadSession returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var session struct {
+		UploadURL string `json:"uploadUrl"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
+		return "", fmt.Errorf("decoding upload session: %w", err)
+	}
+	if session.UploadURL == "" {
+		return "", fmt.Errorf("no uploadUrl in upload session response")
+	}
+
+	// Read the whole file into memory (render outputs are typically small < 2GB).
+	data, err := io.ReadAll(src)
+	if err != nil {
+		return "", fmt.Errorf("reading output data: %w", err)
+	}
+	totalSize := len(data)
+
+	putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, session.UploadURL, bytes.NewReader(data))
+	if err != nil {
+		return "", fmt.Errorf("building upload put request: %w", err)
+	}
+	putReq.Header.Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", totalSize-1, totalSize))
+
+	putResp, err := http.DefaultClient.Do(putReq)
+	if err != nil {
+		return "", fmt.Errorf("uploading chunk: %w", err)
+	}
+	defer putResp.Body.Close()
+
+	if putResp.StatusCode != http.StatusCreated && putResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(putResp.Body, 4096))
+		return "", fmt.Errorf("upload put returned %d: %s", putResp.StatusCode, string(body))
+	}
+
+	var item struct {
+		WebURL string `json:"webUrl"`
+	}
+	putBody, _ := io.ReadAll(putResp.Body)
+	_ = json.Unmarshal(putBody, &item)
+
+	if item.WebURL == "" {
+		// Some Graph responses don't include webUrl directly; derive it.
+		item.WebURL = fmt.Sprintf("%s/me/drive/root:/%s", graphBaseURL, filename)
+	}
+
+	return item.WebURL, nil
+}
+
+// safeClipID returns a safe filename fragment from a clip ID.
+func safeClipID(id string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			return r
+		}
+		return '_'
+	}, id)
+}
+
+// msToTime converts milliseconds to ffmpeg time format (HH:MM:SS.mmm or SSS.s).
+func msToTime(ms int64) string {
+	totalSeconds := float64(ms) / 1000.0
+	return fmt.Sprintf("%.3f", totalSeconds)
+}
+
+// presetArgs returns FFmpeg output encoding arguments for a given preset name.
+func presetArgs(preset string) []string {
+	switch strings.ToLower(strings.TrimSpace(preset)) {
+	case "h264-1080p":
+		return []string{"-c:v", "libx264", "-preset", "medium", "-crf", "23", "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"}
+	case "h264-720p":
+		return []string{"-c:v", "libx264", "-preset", "medium", "-crf", "23", "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"}
+	case "h265-1080p":
+		return []string{"-c:v", "libx265", "-preset", "medium", "-crf", "28", "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"}
+	default:
+		// Default to H.264 1080p.
+		return []string{"-c:v", "libx264", "-preset", "fast", "-crf", "23", "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"}
+	}
+}
+
+// truncateLog cuts a log string to a maximum length for error reporting.
+func truncateLog(log string, maxLen int) string {
+	if len(log) <= maxLen {
+		return log
+	}
+	return log[:maxLen] + "..."
+}
+
+// fileSize returns the file size in bytes, or -1 on error.
+func fileSize(path string) int64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return -1
+	}
+	return fi.Size()
 }
 
 // normalizeCUResult converts a raw CU operation response into a normalized

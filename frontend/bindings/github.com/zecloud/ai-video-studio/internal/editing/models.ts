@@ -85,6 +85,53 @@ export class EditProject {
     }
 }
 
+/**
+ * RenderJob tracks a single render job dispatched to the Azure Container App.
+ */
+export class RenderJob {
+    "id": string;
+    "projectId": string;
+    "status": string;
+    "outputUrl"?: string;
+    "percent": number;
+    "currentMs": number;
+    "totalMs": number;
+    "message"?: string;
+    "errorDetail"?: string;
+
+    /** Creates a new RenderJob instance. */
+    constructor($$source: Partial<RenderJob> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("projectId" in $$source)) {
+            this["projectId"] = "";
+        }
+        if (!("status" in $$source)) {
+            this["status"] = "";
+        }
+        if (!("percent" in $$source)) {
+            this["percent"] = 0;
+        }
+        if (!("currentMs" in $$source)) {
+            this["currentMs"] = 0;
+        }
+        if (!("totalMs" in $$source)) {
+            this["totalMs"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new RenderJob instance from a string or object.
+     */
+    static createFrom($$source: any = {}): RenderJob {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new RenderJob($$parsedSource as Partial<RenderJob>);
+    }
+}
+
 export class TextOverlay {
     "id": string;
     "text": string;

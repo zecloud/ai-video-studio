@@ -338,3 +338,74 @@ func (c *Client) Analyze(ctx context.Context, req AnalyzeRequest) (*AnalyzeResul
 	}
 	return &result, nil
 }
+
+	// ---- Render ----
+
+	// RenderClip describes a single clip segment in a render request.
+	type RenderClip struct {
+		ID    string `json:"id"`
+		Input string `json:"input"` // OneDrive item ID of the source asset
+		InMS  int64  `json:"inMs"`
+		OutMS int64  `json:"outMs"`
+		Muted bool   `json:"muted,omitempty"`
+	}
+
+	// RenderTransition describes a transition between two clips.
+	type RenderTransition struct {
+		Kind       string `json:"kind"`       // "cut", "crossfade"
+		DurationMS int64  `json:"durationMs"` // ignored for "cut"
+	}
+
+	// RenderRequest is the payload for POST /api/v1/render.
+	type RenderRequest struct {
+		ProjectID     string             `json:"projectId"`
+		OneDriveToken string             `json:"oneDriveToken"`
+		Clips         []RenderClip       `json:"clips"`
+		Transitions   []RenderTransition `json:"transitions,omitempty"`
+		Preset        string             `json:"preset"`     // e.g. "h264-1080p"
+		OutputName    string             `json:"outputName"` // destination filename
+	}
+
+	// RenderResult is returned by the media service after a successful render.
+	type RenderResult struct {
+		Status    string `json:"status"`
+		OutputURL string `json:"outputUrl"`
+		Log       string `json:"log,omitempty"`
+	}
+
+	// Render submits a render job to the Azure Container App. The media service
+	// downloads source assets from OneDrive, runs FFmpeg, and uploads the result
+	// back to OneDrive. This method blocks until rendering is complete.
+	func (c *Client) Render(ctx context.Context, req RenderRequest) (*RenderResult, error) {
+		if c == nil {
+			return nil, fmt.Errorf("%w: nil client", ErrInvalidConfig)
+		}
+		if err := c.cfg.validate(); err != nil {
+			return nil, err
+		}
+		req.OneDriveToken = strings.TrimSpace(req.OneDriveToken)
+		if req.OneDriveToken == "" {
+			return nil, fmt.Errorf("%w: oneDriveToken is required", ErrInvalidConfig)
+		}
+		if len(req.Clips) == 0 {
+			return nil, fmt.Errorf("%w: at least one clip is required", ErrInvalidConfig)
+		}
+		req.ProjectID = strings.TrimSpace(req.ProjectID)
+		if req.ProjectID == "" {
+			return nil, fmt.Errorf("%w: projectId is required", ErrInvalidConfig)
+		}
+		req.Preset = strings.TrimSpace(req.Preset)
+		if req.Preset == "" {
+			req.Preset = "h264-1080p"
+		}
+		req.OutputName = strings.TrimSpace(req.OutputName)
+		if req.OutputName == "" {
+			req.OutputName = "render-output.mp4"
+		}
+
+		var result RenderResult
+		if err := c.doJSON(ctx, http.MethodPost, "/api/v1/render", req, &result); err != nil {
+			return nil, fmt.Errorf("mediaservice: render: %w", err)
+		}
+		return &result, nil
+	}

@@ -15,14 +15,19 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" -o /out/azure-media-service .
 
 # ---- Runtime stage ----
-# Distroless nonroot image: no shell, no package manager, minimal attack
-# surface — appropriate for a stateless network service handling tokens.
-FROM gcr.io/distroless/static-debian12:nonroot
+# Uses alpine rather than distroless so the render endpoint has access to
+# ffmpeg. The /tmp filesystem is used as a transient workspace for
+# downloading source clips and writing the render output before uploading it
+# to OneDrive.
+FROM alpine:3.21
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup && \
+    apk add --no-cache ffmpeg
 
 WORKDIR /app
 COPY --from=build /out/azure-media-service /app/azure-media-service
 
-USER nonroot:nonroot
+USER appuser:appgroup
 
 EXPOSE 8080
 

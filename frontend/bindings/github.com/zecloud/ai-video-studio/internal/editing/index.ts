@@ -4,6 +4,7 @@
 export {
     ClipSegment,
     EditProject,
+    RenderJob,
     TextOverlay,
     Timeline,
     Track,

@@ -700,12 +700,27 @@ func NewMediaServiceClient(store settings.Store) *mediaservice.Client {
 }
 
 type EditingService struct {
-	mu       sync.Mutex
-	projects map[string]editing.EditProject
+	mu           sync.Mutex
+	projects     map[string]editing.EditProject
+	jobs         map[string]*editing.RenderJob
+	store        library.Store
+	renderBackend RenderBackend
+	odClient     *onedrive.Client
 }
 
-func NewEditingService() *EditingService {
-	return &EditingService{projects: map[string]editing.EditProject{}}
+// RenderBackend is the subset of mediaservice.Client that editing needs.
+type RenderBackend interface {
+	Render(ctx context.Context, req mediaservice.RenderRequest) (*mediaservice.RenderResult, error)
+}
+
+func NewEditingService(store library.Store, renderBackend RenderBackend, odClient *onedrive.Client) *EditingService {
+	return &EditingService{
+		projects:      map[string]editing.EditProject{},
+		jobs:          map[string]*editing.RenderJob{},
+		store:         store,
+		renderBackend: renderBackend,
+		odClient:      odClient,
+	}
 }
 
 func (s *EditingService) ListProjects(_ context.Context) ([]editing.EditProject, error) {
@@ -746,6 +761,137 @@ func (s *EditingService) SaveProject(_ context.Context, project editing.EditProj
 	}
 	s.projects[project.ID] = project
 	return project, nil
+}
+
+func (s *EditingService) DeleteProject(_ context.Context, projectID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.projects, projectID)
+	return nil
+}
+
+// Render dispatches a render job to the Azure Container App. It blocks until
+// the remote service completes or fails, then stores the result.
+// Emits wails events "editing:render:progress" and "editing:render:completed".
+func (s *EditingService) Render(projectID string) (*editing.RenderJob, error) {
+	s.mu.Lock()
+	project, ok := s.projects[projectID]
+	s.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("project %q not found", projectID)
+	}
+
+	// Build the render request from the project timeline.
+	clips := make([]mediaservice.RenderClip, 0)
+	for _, track := range project.Timeline.Tracks {
+		for _, clip := range track.Clips {
+			clips = append(clips, mediaservice.RenderClip{
+				ID:    clip.ID,
+				Input: clip.SourceAssetID,
+				InMS:  clip.InMS,
+				OutMS: clip.OutMS,
+			})
+		}
+	}
+
+	if len(clips) == 0 {
+		return nil, fmt.Errorf("project %q has no clips", projectID)
+	}
+
+	preset := project.RenderPreset
+	if preset == "" {
+		preset = "h264-1080p"
+	}
+
+	// Obtain a OneDrive access token.
+	var token string
+	if s.odClient != nil && s.odClient.TokenProvider != nil {
+		tok, err := s.odClient.TokenProvider.AccessToken(context.Background(), s.odClient.Scopes)
+		if err != nil {
+			return nil, fmt.Errorf("editing: OneDrive token: %w", err)
+		}
+		token = tok
+	}
+
+	jobID := fmt.Sprintf("render-%d", time.Now().UnixNano())
+	job := &editing.RenderJob{
+		ID:        jobID,
+		ProjectID: projectID,
+		Status:    "submitted",
+	}
+
+	s.mu.Lock()
+	s.jobs[jobID] = job
+	s.mu.Unlock()
+
+	if s.renderBackend == nil {
+		job.Status = "failed"
+		job.ErrorDetail = "render backend is not configured"
+		return job, fmt.Errorf("editing: render backend not configured")
+	}
+
+	// Emit progress: submitted
+	emitRenderEvent("editing:render:progress", *job)
+
+	result, err := s.renderBackend.Render(context.Background(), mediaservice.RenderRequest{
+		ProjectID:     projectID,
+		OneDriveToken: token,
+		Clips:         clips,
+		Preset:        preset,
+		OutputName:    project.Name + ".mp4",
+	})
+	if err != nil {
+		job.Status = "failed"
+		job.ErrorDetail = err.Error()
+		s.mu.Lock()
+		s.jobs[jobID] = job
+		s.mu.Unlock()
+		emitRenderEvent("editing:render:completed", *job)
+		return job, fmt.Errorf("editing: render: %w", err)
+	}
+
+	job.Status = "completed"
+	job.OutputURL = result.OutputURL
+	job.Message = result.Log
+	s.mu.Lock()
+	s.jobs[jobID] = job
+	s.mu.Unlock()
+
+	emitRenderEvent("editing:render:completed", *job)
+	return job, nil
+}
+
+// emitRenderEvent notifies the frontend of a render job update via a
+// Wails event. It is a no-op when no application instance is running (e.g.
+// during unit tests), so it is always safe to call.
+func emitRenderEvent(name string, job editing.RenderJob) {
+	app := application.Get()
+	if app == nil || app.Event == nil {
+		return
+	}
+	app.Event.Emit(name, job)
+}
+
+// RenderJob returns the current state of a render job.
+func (s *EditingService) RenderJob(jobID string) (*editing.RenderJob, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job, ok := s.jobs[jobID]
+	if !ok {
+		return nil, fmt.Errorf("render job %q not found", jobID)
+	}
+	return job, nil
+}
+
+// RenderJobs returns all render jobs.
+func (s *EditingService) RenderJobs() ([]*editing.RenderJob, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	jobs := make([]*editing.RenderJob, 0, len(s.jobs))
+	for _, job := range s.jobs {
+		jobs = append(jobs, job)
+	}
+	return jobs, nil
 }
 
 type VideoProcessingService struct {
