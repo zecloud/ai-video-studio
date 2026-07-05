@@ -1,0 +1,33 @@
+{
+  "graphAuth": {
+    "tenantId": "organizations",
+    "clientId": "00000000-0000-0000-0000-000000000000",
+    "authFlow": "device_code",
+    "redirectUri": "",
+    "scopes": [
+      "Files.ReadWrite.AppFolder"
+    ]
+  },
+  "oneDriveDestination": {
+    "mode": "app_folder",
+    "displayName": "AI Video Studio app folder",
+    "path": "/Apps/AI Video Studio"
+  },
+  "azureContentUnderstanding": {
+    "endpoint": "https://your-content-understanding-resource.cognitiveservices.azure.com",
+    "analyzerId": "prebuilt-videoSearch",
+    "apiVersion": "2025-11-01",
+    "sourceMode": "https_url"
+  },
+  "ffmpegPath": "",
+  "ffprobePath": "",
+  "chunkSizeBytes": 10485760,
+  "maxConcurrentImports": 1,
+  "securityNotes": [
+    "Example values only; replace tenantId and clientId for local configuration.",
+    "Device-code auth also requests offline_access at runtime for token refresh support.",
+    "Do not add client secrets for the desktop app.",
+    "Do not commit Azure API keys; provide them through secure runtime configuration only.",
+    "Do not store access tokens, refresh tokens, SAS URLs, upload session URLs, or private media in this file."
+  ]
+}

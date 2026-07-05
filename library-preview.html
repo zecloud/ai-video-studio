@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Project Library — UI Preview</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f5f7fb;
+  --surface: #ffffff;
+  --surface-subtle: #edf2f8;
+  --surface-muted: #f8fafc;
+  --border: #d9e0ec;
+  --border-strong: #b8c2d2;
+  --ink: #172033;
+  --ink-muted: #526070;
+  --ink-subtle: #6b7788;
+  --accent: #1d4ed8;
+  --accent-hover: #1e40af;
+  --accent-soft: #eaf1ff;
+  --success: #15803d;
+  --success-soft: #dcfce7;
+  --warning: #854d0e;
+  --warning-soft: #fff4db;
+  --danger: #b42318;
+  --danger-soft: #fee4e2;
+  --info: #0369a1;
+  --info-soft: #e0f2fe;
+  --neutral-soft: #eef2f7;
+  --neutral: #475569;
+  --shadow: 0 10px 30px rgb(31 41 55 / 7%);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 1180px; min-height: 100vh; }
+h1,h2,h3,p { margin: 0; }
+table { width: 100%; border-collapse: collapse; }
+.shell { display: grid; min-height: 100vh; grid-template-columns: 280px minmax(0, 1fr); }
+.sidebar { border-right: 1px solid var(--border); background: var(--surface-subtle); padding: 24px; }
+.brand { display: flex; gap: 14px; align-items: center; margin-bottom: 30px; }
+.brand-mark { display: grid; width: 44px; height: 44px; place-items: center; border-radius: 12px; background: var(--accent); color: #fff; font-weight: 800; }
+.brand h1 { font-size: 1.18rem; }
+.eyebrow { color: var(--ink-muted); font-size: 0.76rem; font-weight: 700; }
+nav { display: grid; gap: 6px; }
+nav button { display: flex; width: 100%; justify-content: space-between; gap: 12px; border: 0; background: transparent; text-align: left; padding: 10px 14px; border-radius: 10px; cursor: pointer; font-size: 0.92rem; font-weight: 600; color: var(--ink-muted); transition: background 0.12s, color 0.12s; }
+nav button:hover { background: var(--surface); }
+nav button.active { background: var(--surface); color: var(--ink); font-weight: 700; box-shadow: 0 1px 4px rgb(31 41 55 / 6%); }
+nav button small { font-weight: 500; color: var(--ink-subtle); }
+nav button.active small { color: var(--ink); }
+.footer { margin-top: 28px; color: var(--ink-muted); font-size: 0.76rem; }
+.content-area { display: grid; grid-template-columns: 1fr 380px; gap: 22px; padding: 24px 24px 24px 28px; min-width: 0; }
+.main-stack { display: grid; gap: 22px; align-content: start; min-width: 0; }
+.details { display: grid; gap: 18px; align-content: start; min-width: 0; }
+.status-strip { grid-column: 1 / -1; display: flex; gap: 28px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 20px; }
+.status-block { display: grid; gap: 2px; }
+.status-block span:first-child { color: var(--ink-muted); font-size: 0.76rem; font-weight: 700; }
+.status-block span:last-child { color: var(--ink); font-size: 0.92rem; font-weight: 600; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+.panel-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--border); }
+.panel-header h3 { font-size: 1.02rem; }
+.detail-body { padding: 20px 24px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; border-radius: 8px; font-size: 0.76rem; font-weight: 700; white-space: nowrap; }
+.badge.success { background: var(--success-soft); color: var(--success); }
+.badge.warning { background: var(--warning-soft); color: var(--warning); }
+.badge.danger { background: var(--danger-soft); color: var(--danger); }
+.badge.info { background: var(--info-soft); color: var(--info); }
+.badge.neutral { background: var(--neutral-soft); color: var(--neutral); }
+.progress { display: grid; gap: 4px; min-width: 140px; }
+.progress .bar { width: 100%; height: 6px; border-radius: 999px; background: var(--border); overflow: hidden; }
+.progress .bar span { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
+.progress > span { font-size: 0.76rem; color: var(--ink-muted); }
+.kv { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.kv:last-child, .kv.last { border-bottom: 0; }
+.kv span:first-child { color: var(--ink-muted); font-size: 0.82rem; }
+.kv strong { font-size: 0.92rem; font-weight: 600; color: var(--ink); text-align: right; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table-wrap { overflow-x: auto; }
+.table-wrap table { min-width: 600px; }
+th { text-align: left; font-size: 0.76rem; font-weight: 700; color: var(--ink-muted); padding: 8px 16px; border-bottom: 1px solid var(--border); }
+td { padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 0.88rem; }
+.muted { color: var(--ink-muted); }
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.button {
+  display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border: 0;
+  border-radius: 8px; font-size: 0.86rem; font-weight: 600; cursor: pointer;
+  background: var(--accent); color: #fff; transition: background 0.12s;
+}
+.button:hover { background: var(--accent-hover); }
+.button.secondary { background: var(--surface-subtle); color: var(--ink); border: 1px solid var(--border); }
+.button.secondary:hover { background: var(--border); }
+.empty-state { text-align: center; padding: 40px 16px; }
+.empty-state strong { display: block; margin-bottom: 6px; }
+.empty-state p { color: var(--ink-muted); font-size: 0.88rem; max-width: 460px; margin: 0 auto; }
+tr.selected { background: var(--accent-soft); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">AVS</div>
+      <div>
+        <h1>AI Video Studio</h1>
+        <span class="eyebrow">v0.1.0</span>
+      </div>
+    </div>
+    <nav>
+      <button>Camera</button>
+      <button>Transfers<small>2 completed</small></button>
+      <button class="active">Library<small>38 assets</small></button>
+      <button>Analysis<small>3 jobs</small></button>
+      <button>Editing<small>1 render</small></button>
+      <button>Settings<small>safe</small></button>
+    </nav>
+    <div class="footer" style="margin-top:28px">Osmo Action 4 · OneDrive · Azure CU</div>
+  </aside>
+  <div class="content-area">
+    <div class="status-strip">
+      <div class="status-block"><span>OneDrive folder</span><span>/Apps/AI Video Studio/Imports</span></div>
+      <div class="status-block"><span>Assets indexed</span><span>38 files</span></div>
+      <div class="status-block"><span>Total size</span><span>214 GB</span></div>
+      <div class="status-block"><span>Analyzed</span><span>12 of 38</span></div>
+    </div>
+    <div class="main-stack">
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">OneDrive asset library</p>
+            <h3>Imported videos</h3>
+          </div>
+          <div class="toolbar">
+            <span class="badge info">38 assets</span>
+            <button class="button secondary">Refresh from OneDrive</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Name</th>
+              <th>Import date</th>
+              <th>Size</th>
+              <th>Analysis</th>
+              <th>Scenes</th>
+              <th>Cloud ID</th>
+            </tr></thead>
+            <tbody>
+              <tr class="selected">
+                <td><strong>DJI_20260618192450_0320_D.MP4</strong></td>
+                <td class="muted">Jul 3, 2026</td>
+                <td class="muted">1.9 GB</td>
+                <td><span class="badge success">Complete</span></td>
+                <td class="muted">8</td>
+                <td class="muted">a1b2c3…320D</td>
+              </tr>
+              <tr>
+                <td><strong>DJI_20260618192451_0413_D.MP4</strong></td>
+                <td class="muted">Jul 4, 2026</td>
+                <td class="muted">5.6 GB</td>
+                <td><span class="badge success">Complete</span></td>
+                <td class="muted">12</td>
+                <td class="muted">b2c3d4…413D</td>
+              </tr>
+              <tr>
+                <td><strong>DJI_20260618192452_0792_D.MP4</strong></td>
+                <td class="muted">Jul 5, 2026</td>
+                <td class="muted">2.1 GB</td>
+                <td><span class="badge info">Running</span></td>
+                <td class="muted">—</td>
+                <td class="muted">c3d4e5…792D</td>
+              </tr>
+              <tr>
+                <td><strong>DJI_20260617183012_0001_D.MP4</strong></td>
+                <td class="muted">Jul 2, 2026</td>
+                <td class="muted">4.2 GB</td>
+                <td><span class="badge neutral">Pending</span></td>
+                <td class="muted">—</td>
+                <td class="muted">d4e5f6…001D</td>
+              </tr>
+              <tr>
+                <td><strong>DJI_20260617183345_0002_D.MP4</strong></td>
+                <td class="muted">Jul 2, 2026</td>
+                <td class="muted">3.8 GB</td>
+                <td><span class="badge neutral">Pending</span></td>
+                <td class="muted">—</td>
+                <td class="muted">e5f6a7…002D</td>
+              </tr>
+              <tr>
+                <td><strong>DJI_20260617183509_0003_D.MP4</strong></td>
+                <td class="muted">Jun 30, 2026</td>
+                <td class="muted">6.1 GB</td>
+                <td><span class="badge neutral">Pending</span></td>
+                <td class="muted">—</td>
+                <td class="muted">f6a7b8…003D</td>
+              </tr>
+              <tr>
+                <td><strong>DJI_20260615190233_0100_D.MP4</strong></td>
+                <td class="muted">Jun 28, 2026</td>
+                <td class="muted">2.4 GB</td>
+                <td><span class="badge warning">No source URL</span></td>
+                <td class="muted">—</td>
+                <td class="muted">a7b8c9…100D</td>
+              </tr>
+              <tr>
+                <td><strong>DJI_20260615190514_0101_D.MP4</strong></td>
+                <td class="muted">Jun 28, 2026</td>
+                <td class="muted">7.3 GB</td>
+                <td><span class="badge warning">No source URL</span></td>
+                <td class="muted">—</td>
+                <td class="muted">b8c9d0…101D</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+    <aside class="details">
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Selected asset</p>
+            <h3>DJI_20260618…320_D</h3>
+          </div>
+          <span class="badge success">Analyzed</span>
+        </div>
+        <div class="detail-body">
+          <div class="kv"><span>Name</span><strong>DJI_20260618192450_0320_D.MP4</strong></div>
+          <div class="kv"><span>Size</span><strong>1.9 GB</strong></div>
+          <div class="kv"><span>Import date</span><strong>Jul 3, 2026</strong></div>
+          <div class="kv"><span>Cloud asset ID</span><strong class="path-detail">a1b2c3d4-e5f6-…-320D</strong></div>
+          <div class="kv"><span>Analysis</span><strong>8 scenes · 32 transcript segments</strong></div>
+          <div class="kv"><span>Analysis job ID</span><strong>cu-job-0320</strong></div>
+          <div class="kv last"><span>Highlights</span><strong>4 candidates</strong></div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Quick actions</p>
+            <h3>Selected asset</h3>
+          </div>
+        </div>
+        <div class="detail-body" style="display:grid;gap:8px;">
+          <button class="button secondary" style="width:100%;justify-content:center;">View analysis</button>
+          <button class="button secondary" style="width:100%;justify-content:center;">Open in OneDrive</button>
+          <button class="button secondary" style="width:100%;justify-content:center;">Send to editing studio</button>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Analysis coverage</p>
+            <h3>Library stats</h3>
+          </div>
+          <span class="badge warning">26 pending</span>
+        </div>
+        <div class="detail-body">
+          <div class="kv"><span>Analyzed</span><strong>12</strong></div>
+          <div class="kv"><span>In progress</span><strong>1</strong></div>
+          <div class="kv"><span>Pending</span><strong>23</strong></div>
+          <div class="kv last"><span>No source URL (blocked)</span><strong>2</strong></div>
+        </div>
+      </section>
+    </aside>
+  </div>
+</div>
+</body>
+</html>
