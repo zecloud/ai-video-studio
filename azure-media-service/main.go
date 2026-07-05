@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"log/slog"
 	"net/http"
 	"os"
@@ -59,7 +60,7 @@ func requireAPIKey(cfg *Config, next http.Handler) http.Handler {
 		}
 
 		token := strings.TrimPrefix(authHeader, prefix)
-		if token == "" || token != cfg.APIKey {
+		if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(cfg.APIKey)) != 1 {
 			writeError(w, http.StatusUnauthorized, "invalid API key")
 			return
 		}

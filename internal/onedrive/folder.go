@@ -53,47 +53,26 @@ func (c *Client) ListFolderItems(ctx context.Context, folderPath string) ([]Driv
 		folderPath = strings.TrimPrefix(folderPath, destPrefix)
 		folderPath = strings.Trim(folderPath, "/")
 		if folderPath == "" {
-			folderPath = "/"
-		}
-		encoded := encodePathSegment(folderPath)
+				// Root of app folder: no colon segment needed, just list children.
+				currentURL = fmt.Sprintf("%s/me/drive/special/approot/children", baseURL)
+				} else {
+				encoded := encodePathSegment(folderPath)
 				currentURL = fmt.Sprintf("%s/me/drive/special/approot:/%s:/children", baseURL, encoded)
-	} else {
-		encoded := encodePathSegment(folderPath)
-				currentURL = fmt.Sprintf("%s/me/drive/root:%s:/children", baseURL, encoded)
-	}
+				}
+			} else {
+				encoded := encodePathSegment(folderPath)
+				currentURL = fmt.Sprintf("%s/me/drive/root:/%s:/children", baseURL, encoded)
+			}
 
 	var items []DriveItem
-	for currentURL != "" {
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, currentURL, nil)
-		if err != nil {
-			return nil, fmt.Errorf("list folder: %w", err)
+		for currentURL != "" {
+			page, nextLink, err := fetchChildrenPage(ctx, c, currentURL)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, page...)
+			currentURL = nextLink
 		}
-
-		token, err := c.TokenProvider.AccessToken(ctx, c.Scopes)
-		if err != nil {
-			return nil, fmt.Errorf("list folder token: %w", err)
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		resp, err := c.HTTPClient.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("list folder request: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-					body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-					resp.Body.Close()
-					return nil, fmt.Errorf("list folder: HTTP %d: %s", resp.StatusCode, string(bytes.TrimSpace(body)))
-				}
-
-		var page graphChildrenResponse
-		if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
-			return nil, fmt.Errorf("list folder decode: %w", err)
-		}
-		items = append(items, page.Value...)
-				currentURL = page.NextLink
-	}
 
 	return items, nil
 }
@@ -109,4 +88,37 @@ func encodePathSegment(path string) string {
 		parts[i] = url.PathEscape(p)
 	}
 	return strings.Join(parts, "/")
+}
+
+// fetchChildrenPage fetches a single page of OneDrive folder children and
+// returns the items plus the @odata.nextLink (empty when no more pages).
+// The response body is always closed before returning.
+func fetchChildrenPage(ctx context.Context, c *Client, pageURL string) ([]DriveItem, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("list folder: %w", err)
+	}
+
+	token, err := c.TokenProvider.AccessToken(ctx, c.Scopes)
+	if err != nil {
+		return nil, "", fmt.Errorf("list folder token: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("list folder request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, "", fmt.Errorf("list folder: HTTP %d: %s", resp.StatusCode, string(bytes.TrimSpace(body)))
+	}
+
+	var page graphChildrenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		return nil, "", fmt.Errorf("list folder decode: %w", err)
+	}
+	return page.Value, page.NextLink, nil
 }

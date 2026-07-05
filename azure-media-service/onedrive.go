@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"time"
 )
 
 // OneDriveDownloader downloads content from Microsoft Graph without ever
@@ -14,12 +16,21 @@ type OneDriveDownloader struct {
 	httpClient *http.Client
 }
 
-// NewOneDriveDownloader creates a downloader backed by a plain net/http
-// client. A dedicated client (rather than http.DefaultClient) lets us tune
-// timeouts independently of other outbound calls.
+// NewOneDriveDownloader creates a downloader backed by a dedicated HTTP client
+// configured with appropriate timeouts for streaming video files. Timeouts are
+// generous to accommodate large video downloads over variable network conditions.
 func NewOneDriveDownloader() *OneDriveDownloader {
 	return &OneDriveDownloader{
-		httpClient: &http.Client{},
+		httpClient: &http.Client{
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				TLSHandshakeTimeout:   15 * time.Second,
+				ResponseHeaderTimeout: 60 * time.Second,
+			},
+		},
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	neturl "net/url"
 	"strings"
 )
 
@@ -65,11 +66,16 @@ func (c *Client) CreateShareableLink(ctx context.Context, itemID string) (string
 				return "", fmt.Errorf("create share link: no URL returned")
 	}
 
-			// Convert the sharing URL to a direct download URL by appending "?download=1"
-			// This gives us a URL Azure CU can stream from.
-			if !strings.Contains(shareURL, "?") {
-				shareURL += "?download=1"
+			// Convert the sharing URL to a direct download URL by appending "download=1".
+			// OneDrive share links may already carry query params (e.g. ?e=...), so
+			// use proper URL parsing instead of a simple substring check.
+			parsed, err := neturl.Parse(shareURL)
+			if err != nil {
+				return "", fmt.Errorf("create share link: invalid URL from OneDrive: %w", err)
 			}
+			q := parsed.Query()
+			q.Set("download", "1")
+			parsed.RawQuery = q.Encode()
 
-			return shareURL, nil
+			return parsed.String(), nil
 }
