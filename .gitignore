@@ -1,0 +1,7 @@
+.agents/
+bin/
+build/bin/
+frontend/dist/
+frontend/node_modules/
+*.log
+.DS_Store

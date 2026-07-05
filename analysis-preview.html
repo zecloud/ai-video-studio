@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Analysis Studio — UI Preview</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f5f7fb;
+  --surface: #ffffff;
+  --surface-subtle: #edf2f8;
+  --surface-muted: #f8fafc;
+  --border: #d9e0ec;
+  --border-strong: #b8c2d2;
+  --ink: #172033;
+  --ink-muted: #526070;
+  --ink-subtle: #6b7788;
+  --accent: #1d4ed8;
+  --accent-hover: #1e40af;
+  --accent-soft: #eaf1ff;
+  --success: #15803d;
+  --success-soft: #dcfce7;
+  --warning: #854d0e;
+  --warning-soft: #fff4db;
+  --danger: #b42318;
+  --danger-soft: #fee4e2;
+  --info: #0369a1;
+  --info-soft: #e0f2fe;
+  --neutral-soft: #eef2f7;
+  --neutral: #475569;
+  --shadow: 0 10px 30px rgb(31 41 55 / 7%);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 1180px; min-height: 100vh; }
+h1,h2,h3,p { margin: 0; }
+table { width: 100%; border-collapse: collapse; }
+.shell { display: grid; min-height: 100vh; grid-template-columns: 280px minmax(0, 1fr); }
+.sidebar { border-right: 1px solid var(--border); background: var(--surface-subtle); padding: 24px; }
+.brand { display: flex; gap: 14px; align-items: center; margin-bottom: 30px; }
+.brand-mark { display: grid; width: 44px; height: 44px; place-items: center; border-radius: 12px; background: var(--accent); color: #fff; font-weight: 800; }
+.brand h1 { font-size: 1.18rem; }
+.eyebrow { color: var(--ink-muted); font-size: 0.76rem; font-weight: 700; }
+nav { display: grid; gap: 6px; }
+nav button { display: flex; width: 100%; justify-content: space-between; gap: 12px; border: 0; background: transparent; text-align: left; padding: 10px 14px; border-radius: 10px; cursor: pointer; font-size: 0.92rem; font-weight: 600; color: var(--ink-muted); transition: background 0.12s, color 0.12s; }
+nav button:hover { background: var(--surface); }
+nav button.active { background: var(--surface); color: var(--ink); font-weight: 700; box-shadow: 0 1px 4px rgb(31 41 55 / 6%); }
+nav button small { font-weight: 500; color: var(--ink-subtle); }
+nav button.active small { color: var(--ink); }
+.footer { margin-top: 28px; color: var(--ink-muted); font-size: 0.76rem; }
+.content-area { display: grid; grid-template-columns: 1fr 380px; gap: 22px; padding: 24px 24px 24px 28px; min-width: 0; }
+.main-stack { display: grid; gap: 22px; align-content: start; min-width: 0; }
+.details { display: grid; gap: 18px; align-content: start; min-width: 0; }
+.status-strip { grid-column: 1 / -1; display: flex; gap: 28px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 20px; }
+.status-block { display: grid; gap: 2px; }
+.status-block span:first-child { color: var(--ink-muted); font-size: 0.76rem; font-weight: 700; }
+.status-block span:last-child { color: var(--ink); font-size: 0.92rem; font-weight: 600; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+.panel-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--border); }
+.panel-header h3 { font-size: 1.02rem; }
+.detail-body { padding: 20px 24px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; border-radius: 8px; font-size: 0.76rem; font-weight: 700; white-space: nowrap; }
+.badge.success { background: var(--success-soft); color: var(--success); }
+.badge.warning { background: var(--warning-soft); color: var(--warning); }
+.badge.danger { background: var(--danger-soft); color: var(--danger); }
+.badge.info { background: var(--info-soft); color: var(--info); }
+.badge.neutral { background: var(--neutral-soft); color: var(--neutral); }
+.progress { display: grid; gap: 4px; min-width: 140px; }
+.progress .bar { width: 100%; height: 6px; border-radius: 999px; background: var(--border); overflow: hidden; }
+.progress .bar span { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
+.progress > span { font-size: 0.76rem; color: var(--ink-muted); }
+.kv { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.kv:last-child, .kv.last { border-bottom: 0; }
+.kv span:first-child { color: var(--ink-muted); font-size: 0.82rem; }
+.kv strong { font-size: 0.92rem; font-weight: 600; color: var(--ink); text-align: right; }
+.table-wrap { overflow-x: auto; }
+.table-wrap table { min-width: 600px; }
+th { text-align: left; font-size: 0.76rem; font-weight: 700; color: var(--ink-muted); padding: 8px 16px; border-bottom: 1px solid var(--border); }
+td { padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 0.88rem; }
+.muted { color: var(--ink-muted); }
+.scenes-timeline { display: flex; gap: 2px; height: 36px; background: var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 14px; }
+.scenes-timeline .seg { border-radius: 2px; transition: opacity 0.15s; }
+.scenes-timeline .seg.highlight { outline: 2px solid var(--warning); outline-offset: -2px; }
+.transcript-row { display: grid; grid-template-columns: 90px 1fr; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 0.86rem; align-items: baseline; }
+.transcript-row:last-child { border-bottom: 0; }
+.transcript-label { color: var(--ink-muted); font-size: 0.76rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.transcript-text { color: var(--ink); line-height: 1.45; }
+.empty-state { text-align: center; padding: 40px 16px; }
+.empty-state strong { display: block; margin-bottom: 6px; }
+.empty-state p { color: var(--ink-muted); font-size: 0.88rem; max-width: 460px; margin: 0 auto; }
+.suggestion-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; background: var(--surface-subtle); }
+.suggestion-card h4 { font-size: 0.92rem; margin-bottom: 4px; }
+.suggestion-card p { color: var(--ink-muted); font-size: 0.82rem; }
+.analysis-asset-row { display: grid; grid-template-columns: 1fr auto auto; gap: 20px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.analysis-asset-row:last-child { border-bottom: 0; }
+.analysis-asset-row strong { font-size: 0.92rem; }
+.analysis-asset-row .asset-meta { font-size: 0.82rem; color: var(--ink-muted); }
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">AVS</div>
+      <div>
+        <h1>AI Video Studio</h1>
+        <span class="eyebrow">v0.1.0</span>
+      </div>
+    </div>
+    <nav>
+      <button>Camera</button>
+      <button>Transfers<small>2 completed</small></button>
+      <button>Library</button>
+      <button class="active">Analysis<small>3 jobs</small></button>
+      <button>Editing</button>
+      <button>Settings</button>
+    </nav>
+    <div class="footer">Osmo Action 4 · OneDrive · Azure CU</div>
+  </aside>
+  <div class="content-area">
+    <div class="status-strip">
+      <div class="status-block"><span>Azure CU</span><span>Configured · prebuilt-videoSearch</span></div>
+      <div class="status-block"><span>Analyses</span><span>3 submitted · 2 completed</span></div>
+      <div class="status-block"><span>Endpoint</span><span>eastus.api.cognitive.microsoft.com</span></div>
+    </div>
+    <div class="main-stack">
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Analyzed assets</p>
+            <h3>Content Understanding results</h3>
+          </div>
+          <span class="badge info">3 assets</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Asset name</th><th>Duration</th><th>Scenes</th><th>Transcript</th><th>Highlights</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>DJI_20260618192450_0320_D.MP4</strong><br><span class="muted">onedrive://videos/0320_D</span></td>
+                <td class="muted">03:14</td><td class="muted">8</td><td class="muted">32 segments</td>
+                <td><span class="badge warning">4</span></td><td><span class="badge success">Completed</span></td>
+              </tr>
+              <tr>
+                <td><strong>DJI_20260618192451_0413_D.MP4</strong><br><span class="muted">onedrive://videos/0413_D</span></td>
+                <td class="muted">05:42</td><td class="muted">12</td><td class="muted">48 segments</td>
+                <td><span class="badge warning">6</span></td><td><span class="badge success">Completed</span></td>
+              </tr>
+              <tr>
+                <td><strong>DJI_20260618192452_0792_D.MP4</strong><br><span class="muted">onedrive://videos/0792_D</span></td>
+                <td class="muted">02:08</td><td class="muted">—</td><td class="muted">—</td><td class="muted">—</td>
+                <td><span class="badge info">Running</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Scene detection</p>
+            <h3>DJI_20260618192450_0320_D.MP4 · 8 scenes</h3>
+          </div>
+          <span class="badge neutral">03:14</span>
+        </div>
+        <div class="detail-body">
+          <div class="scenes-timeline" title="8 scenes across 03:14">
+            <div class="seg highlight" style="flex:12;background:var(--warning)"></div>
+            <div class="seg" style="flex:7;background:var(--accent)"></div>
+            <div class="seg" style="flex:10;background:var(--accent)"></div>
+            <div class="seg highlight" style="flex:9;background:var(--warning)"></div>
+            <div class="seg" style="flex:14;background:var(--accent)"></div>
+            <div class="seg highlight" style="flex:8;background:var(--warning)"></div>
+            <div class="seg" style="flex:11;background:var(--accent)"></div>
+            <div class="seg highlight" style="flex:29;background:var(--warning)"></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Time</th><th>Labels</th><th>Summary</th><th>Highlight</th></tr></thead>
+              <tbody>
+                <tr><td>1</td><td class="muted">00:00 – 00:24</td><td>outdoor, landscape, wide</td><td>Opening panorama of mountain trail under morning sun</td><td><span class="badge warning">Yes</span></td></tr>
+                <tr><td>2</td><td class="muted">00:24 – 00:38</td><td>action, bike, rider</td><td>Rider enters frame, climbs berm at speed</td><td>—</td></tr>
+                <tr><td>3</td><td class="muted">00:38 – 00:58</td><td>action, jump, dust</td><td>Tabletop jump with dust kick-up</td><td>—</td></tr>
+                <tr><td>4</td><td class="muted">00:58 – 01:16</td><td>action, cornering, trees</td><td>Tight switchback, bike leans hard</td><td><span class="badge warning">Yes</span></td></tr>
+                <tr><td>5</td><td class="muted">01:16 – 01:44</td><td>scenic, descent, forest</td><td>Long wooded descent with filtered light</td><td>—</td></tr>
+                <tr><td>6</td><td class="muted">01:44 – 02:00</td><td>action, drop, rock</td><td>Technical rock drop</td><td><span class="badge warning">Yes</span></td></tr>
+                <tr><td>7</td><td class="muted">02:00 – 02:22</td><td>scenic, valley, drone-style</td><td>POV sweeps into valley reveal</td><td>—</td></tr>
+                <tr><td>8</td><td class="muted">02:22 – 03:14</td><td>action, finish, sprint</td><td>Final sprint to trail end</td><td><span class="badge warning">Yes</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Transcript</p>
+            <h3>DJI_20260618192450_0320_D.MP4 · 32 segments</h3>
+          </div>
+          <span class="badge info">Language: en</span>
+        </div>
+        <div class="detail-body" style="max-height:360px;overflow-y:auto;">
+          <div class="transcript-row"><span class="transcript-label">00:03</span><span class="transcript-text">Alright, rolling down the trail — morning light is perfect today.</span></div>
+          <div class="transcript-row"><span class="transcript-label">00:14</span><span class="transcript-text">Gonna take the left line here, let's see how the berm holds up after the rain.</span></div>
+          <div class="transcript-row"><span class="transcript-label">00:28</span><span class="transcript-text">Speed is good, flow is great — keep the momentum into that next section.</span></div>
+          <div class="transcript-row"><span class="transcript-label">00:42</span><span class="transcript-text">Whoa, that jump was sketchy — almost washed out the rear.</span></div>
+          <div class="transcript-row"><span class="transcript-label">00:54</span><span class="transcript-text">Nice, coming into the rock garden now, stay light on the front.</span></div>
+          <div class="transcript-row"><span class="transcript-label">01:10</span><span class="transcript-text">That drop was clean, really happy with how the suspension absorbed it.</span></div>
+          <div class="transcript-row"><span class="transcript-label">01:28</span><span class="transcript-text">Long descent now — just cruising, taking in the view.</span></div>
+          <div class="transcript-row"><span class="transcript-label">01:52</span><span class="transcript-text">Here comes the sprint section, legs are burning but we're almost there.</span></div>
+          <div class="transcript-row"><span class="transcript-label">02:18</span><span class="transcript-text">Last hundred meters — push it, push it, go!</span></div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Edit suggestions</p>
+            <h3>AI-generated proposals for DJI_20260618192450_0320_D.MP4</h3>
+          </div>
+          <span class="badge warning">3 suggestions</span>
+        </div>
+        <div class="detail-body" style="display:grid;gap:12px;">
+          <div class="suggestion-card">
+            <h4>Ride highlights · 60 seconds</h4>
+            <p>Auto-cut reel from 4 highlighted scenes: panorama intro → switchback cornering → rock drop → final sprint. Includes dissolve transitions between clips. Scenes: #1, #4, #6, #8.</p>
+          </div>
+          <div class="suggestion-card">
+            <h4>Technical breakdown · 90 seconds</h4>
+            <p>Narrated edit that pauses on the tight switchback and rock drop with on-screen arrows. Scenes: #4, #6 + freeze frames. Good for coaching or skills review.</p>
+          </div>
+          <div class="suggestion-card">
+            <h4>Pure flow · uncut</h4>
+            <p>Trim only the boring first 3 seconds; leave the rest as a single long-form clip with color correction preset "trail-warm." No transitions, no titles.</p>
+          </div>
+        </div>
+      </section>
+    </div>
+    <aside class="details">
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Selected result</p>
+            <h3>DJI_20260618…320_D.MP4</h3>
+          </div>
+          <span class="badge success">Completed</span>
+        </div>
+        <div class="detail-body">
+          <div class="kv"><span>Duration</span><strong>03:14</strong></div>
+          <div class="kv"><span>Scenes</span><strong>8</strong></div>
+          <div class="kv"><span>Transcript segments</span><strong>32</strong></div>
+          <div class="kv"><span>Highlights</span><strong>4</strong></div>
+          <div class="kv"><span>Edit suggestions</span><strong>3</strong></div>
+          <div class="kv"><span>Cloud asset</span><strong class="path-detail">onedrive://videos/0320_D</strong></div>
+          <div class="kv"><span>Analyzer</span><strong>prebuilt-videoSearch</strong></div>
+          <div class="kv last"><span>Job ID</span><strong>a1b2c3d4-e5f6…</strong></div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Highlight candidates</p>
+            <h3>Top moments</h3>
+          </div>
+          <span class="badge warning">4 highlights</span>
+        </div>
+        <div class="detail-body">
+          <div class="kv"><span>Panorama opening</span><strong>00:00 – 00:24 · 92%</strong></div>
+          <div class="kv"><span>Switchback corner</span><strong>00:58 – 01:16 · 88%</strong></div>
+          <div class="kv"><span>Rock drop</span><strong>01:44 – 02:00 · 95%</strong></div>
+          <div class="kv last"><span>Final sprint</span><strong>02:22 – 03:14 · 90%</strong></div>
+        </div>
+      </section>
+    </aside>
+  </div>
+</div>
+</body>
+</html>

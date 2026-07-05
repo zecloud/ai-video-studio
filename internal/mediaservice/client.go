@@ -1,0 +1,251 @@
+// Package mediaservice provides a Go client for the remote Azure Media
+// Staging service. The service runs in an Azure Container App and copies
+// OneDrive-hosted video assets into short-lived Azure Blob staging so that
+// Azure Content Understanding (or other consumers) can read them over HTTPS.
+//
+// This client performs no local disk I/O; it is a thin HTTP wrapper intended
+// for use from internal/library.AnalysisEngine and other orchestration code.
+package mediaservice
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+)
+
+// ErrInvalidConfig is returned when the client configuration is missing
+// required fields (endpoint or API key).
+var ErrInvalidConfig = errors.New("invalid media staging service configuration")
+
+// ErrUnexpectedStatus is returned when the remote service responds with a
+// status code that does not indicate success.
+var ErrUnexpectedStatus = errors.New("unexpected media staging service response status")
+
+// Config holds the connection details for the remote media staging
+// Container App.
+type Config struct {
+	// Endpoint is the base URL of the Container App, e.g.
+	// "https://media-staging.azurecontainerapps.io". No trailing slash is
+	// required; it is trimmed automatically.
+	Endpoint string
+	// APIKey is the shared secret sent as a Bearer token on every request.
+	APIKey string
+}
+
+func (c Config) normalized() Config {
+	c.Endpoint = strings.TrimRight(strings.TrimSpace(c.Endpoint), "/")
+	c.APIKey = strings.TrimSpace(c.APIKey)
+	return c
+}
+
+func (c Config) validate() error {
+	if c.Endpoint == "" {
+		return fmt.Errorf("%w: endpoint is required", ErrInvalidConfig)
+	}
+	if _, err := url.ParseRequestURI(c.Endpoint); err != nil {
+		return fmt.Errorf("%w: endpoint must be an absolute URL", ErrInvalidConfig)
+	}
+	if c.APIKey == "" {
+		return fmt.Errorf("%w: API key is required", ErrInvalidConfig)
+	}
+	return nil
+}
+
+func (c Config) authorize(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+}
+
+// CopyResult is the outcome of a successful CopyToBlob call.
+type CopyResult struct {
+	BlobURL string `json:"blobUrl"`
+	SASURL  string `json:"sasUrl"`
+}
+
+type copyRequest struct {
+	OneDriveItemID string `json:"oneDriveItemID"`
+	OneDriveToken  string `json:"oneDriveToken"`
+	BlobName       string `json:"blobName"`
+	BlobContainer  string `json:"blobContainer,omitempty"`
+}
+
+type deleteRequest struct {
+	BlobName      string `json:"blobName"`
+	BlobContainer string `json:"blobContainer,omitempty"`
+}
+
+type deleteResponse struct {
+	Status string `json:"status"`
+}
+
+type healthResponse struct {
+	Status string `json:"status"`
+}
+
+// HTTPClient is the minimal interface the client depends on, satisfied by
+// *http.Client and allowing tests to substitute a mock transport.
+type HTTPClient interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+// Client is a Go client for the remote Azure Media Staging Container App.
+type Client struct {
+	cfg  Config
+	http HTTPClient
+}
+
+// NewClient creates a Client for the media staging service. httpClient may
+// be nil, in which case http.DefaultClient is used. NewClient does not
+// validate cfg; validation happens per-call so a Client can be constructed
+// before configuration is finalized (e.g. from settings loaded at startup).
+func NewClient(cfg Config, httpClient HTTPClient) *Client {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	return &Client{cfg: cfg.normalized(), http: httpClient}
+}
+
+// CopyToBlob asks the remote service to copy a OneDrive item into Azure Blob
+// staging, returning the resulting blob URL and a short-lived SAS URL.
+func (c *Client) CopyToBlob(ctx context.Context, oneDriveItemID, oneDriveToken, blobName, blobContainer string) (*CopyResult, error) {
+	if c == nil {
+		return nil, fmt.Errorf("%w: nil client", ErrInvalidConfig)
+	}
+	if err := c.cfg.validate(); err != nil {
+		return nil, err
+	}
+	oneDriveItemID = strings.TrimSpace(oneDriveItemID)
+	if oneDriveItemID == "" {
+		return nil, fmt.Errorf("%w: oneDriveItemID is required", ErrInvalidConfig)
+	}
+	oneDriveToken = strings.TrimSpace(oneDriveToken)
+	if oneDriveToken == "" {
+		return nil, fmt.Errorf("%w: oneDriveToken is required", ErrInvalidConfig)
+	}
+	blobName = strings.TrimSpace(blobName)
+	if blobName == "" {
+		return nil, fmt.Errorf("%w: blobName is required", ErrInvalidConfig)
+	}
+
+	reqBody := copyRequest{
+		OneDriveItemID: oneDriveItemID,
+		OneDriveToken:  oneDriveToken,
+		BlobName:       blobName,
+		BlobContainer:  strings.TrimSpace(blobContainer),
+	}
+
+	var result CopyResult
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/copy", reqBody, &result); err != nil {
+		return nil, fmt.Errorf("mediaservice: copy to blob: %w", err)
+	}
+	return &result, nil
+}
+
+// DeleteBlob asks the remote service to delete a previously staged blob.
+func (c *Client) DeleteBlob(ctx context.Context, blobName, blobContainer string) error {
+	if c == nil {
+		return fmt.Errorf("%w: nil client", ErrInvalidConfig)
+	}
+	if err := c.cfg.validate(); err != nil {
+		return err
+	}
+	blobName = strings.TrimSpace(blobName)
+	if blobName == "" {
+		return fmt.Errorf("%w: blobName is required", ErrInvalidConfig)
+	}
+
+	reqBody := deleteRequest{
+		BlobName:      blobName,
+		BlobContainer: strings.TrimSpace(blobContainer),
+	}
+
+	var result deleteResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/delete", reqBody, &result); err != nil {
+		return fmt.Errorf("mediaservice: delete blob: %w", err)
+	}
+	return nil
+}
+
+// Health checks the remote service's /health endpoint. It returns nil when
+// the service responds with HTTP 200.
+func (c *Client) Health(ctx context.Context) error {
+	if c == nil {
+		return fmt.Errorf("%w: nil client", ErrInvalidConfig)
+	}
+	cfg := c.cfg
+	if cfg.Endpoint == "" {
+		return fmt.Errorf("%w: endpoint is required", ErrInvalidConfig)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.Endpoint+"/health", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%w: health returned %s", ErrUnexpectedStatus, resp.Status)
+	}
+
+	var health healthResponse
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
+}
+
+// doJSON performs a JSON POST/GET request and decodes the JSON response body
+// into out. It centralizes request construction, auth, and error handling.
+func (c *Client) doJSON(ctx context.Context, method, path string, body any, out any) error {
+	var reader io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(encoded)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, c.cfg.Endpoint+path, reader)
+	if err != nil {
+		return err
+	}
+	c.cfg.authorize(req)
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		message, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if len(message) > 0 {
+			return fmt.Errorf("%w: %s: %s", ErrUnexpectedStatus, resp.Status, strings.TrimSpace(string(message)))
+		}
+		return fmt.Errorf("%w: %s", ErrUnexpectedStatus, resp.Status)
+	}
+
+	if out == nil {
+		return nil
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
+}

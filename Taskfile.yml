@@ -1,0 +1,42 @@
+version: '3'
+
+vars:
+  APP_NAME: ai-video-studio
+  VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
+
+tasks:
+  dev:
+    desc: Run the Wails v3 desktop app in development mode.
+    cmds:
+      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+
+  build:
+    desc: Build frontend assets used by the Wails build hook.
+    cmds:
+      - npm run build --prefix frontend
+
+  app:build:
+    desc: Build the native Wails binary.
+    cmds:
+      - wails3 build
+
+  run:
+    desc: Run the native app binary built by Wails.
+    cmds:
+      - go run .
+
+  package:
+    desc: Build the app; packaging assets/signing are not configured yet.
+    cmds:
+      - task: app:build
+
+  check:
+    desc: Run frontend checks and Go tests.
+    cmds:
+      - npm run check --prefix frontend
+      - go test ./...
+
+  bindings:
+    desc: Regenerate TypeScript bindings from Wails services.
+    cmds:
+      - wails3 generate bindings -ts
