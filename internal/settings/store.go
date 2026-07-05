@@ -72,7 +72,7 @@ func (s *FileStore) Load(_ context.Context) (AppSettings, error) {
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		loaded := s.defaults
-		loaded.MediaServiceAPIKey = s.readAPIKey()
+		loaded.MediaServiceAPIKey = s.readProtectedAPIKey()
 		return loaded, nil
 	}
 	if err != nil {
@@ -83,7 +83,7 @@ func (s *FileStore) Load(_ context.Context) (AppSettings, error) {
 		return AppSettings{}, fmt.Errorf("read settings: %w", err)
 	}
 	normalized := Normalize(mergeDefaults(s.defaults, loaded))
-	normalized.MediaServiceAPIKey = s.readAPIKey()
+	normalized.MediaServiceAPIKey = s.readProtectedAPIKey()
 	return normalized, nil
 }
 
@@ -107,26 +107,14 @@ func (s *FileStore) Save(_ context.Context, next AppSettings) (AppSettings, erro
 	// Only overwrite the stored API key when a new one was provided so that
 	// leaving the field blank in the UI does not clear a previously saved key.
 	if apiKey != "" {
-		if err := os.WriteFile(s.keyPath(), []byte(apiKey), 0o600); err != nil {
+		if err := s.writeProtectedAPIKey(apiKey); err != nil {
 			return AppSettings{}, err
 		}
 		normalized.MediaServiceAPIKey = apiKey
 	} else {
-		normalized.MediaServiceAPIKey = s.readAPIKey()
+		normalized.MediaServiceAPIKey = s.readProtectedAPIKey()
 	}
 	return normalized, nil
-}
-
-func (s *FileStore) readAPIKey() string {
-	path := s.keyPath()
-	if path == "" {
-		return ""
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
 }
 
 func Normalize(next AppSettings) AppSettings {
