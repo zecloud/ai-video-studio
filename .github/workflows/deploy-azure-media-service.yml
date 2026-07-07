@@ -13,14 +13,16 @@
 #   ACA_API_KEY            Shared API key the desktop app sends as
 #                          "Authorization: ******". Must match the
 #                          API_KEY environment variable inside the container.
+#   ACA_STORAGE_CONNECTION_STRING
+#                          Azure Storage connection string injected as a
+#                          Container App secret and bound to
+#                          STORAGE_CONNECTION_STRING.
 #
 # ── Required GitHub Variables (Settings → Secrets and variables → Variables) ─
 #   AZURE_RESOURCE_GROUP      Resource group that owns the Container App.
-#   AZURE_LOCATION            Azure region, e.g. "westeurope".
+#   AZURE_LOCATION            Azure region (Express preview currently: westcentralus or eastasia).
 #   AZURE_CONTAINER_APPS_ENV  Name of the Container Apps managed environment.
 #   ACR_NAME                  Azure Container Registry name (no .azurecr.io).
-#   AZURE_STORAGE_ACCOUNT     Storage account name for blob staging
-#                             (STORAGE_ACCOUNT_NAME env var in the container).
 #
 # ── One-time OIDC setup ──────────────────────────────────────────────────────
 #   az ad app create --display-name "github-ai-video-studio-deploy"
@@ -49,12 +51,6 @@ on:
       - 'azure-media-service/**'
       - '.github/workflows/deploy-azure-media-service.yml'
   workflow_dispatch:
-    inputs:
-      force_deploy:
-        description: 'Force deploy even without source changes'
-        required: false
-        default: 'false'
-        type: boolean
 
 # OIDC token is required for the azure/login action when using federated
 # credentials (no client secret stored in GitHub).
@@ -85,11 +81,27 @@ jobs:
         run: |
           az config set extension.use_dynamic_install=yes_without_prompt
           az extension add --name containerapp --upgrade --yes
+          az extension update --name containerapp --yes
 
-      # ── Express deploy: build image in ACR, push, create/update the app ─────
-      # az containerapp up combines ACR Tasks image build, push, and
-      # Container App create/update into a single idempotent command.
-      - name: Deploy to Azure Container Apps (express)
+      - name: Create Azure Container Apps Express environment
+        run: |
+          if ! az containerapp env show \
+            --name "${{ vars.AZURE_CONTAINER_APPS_ENV }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" > /dev/null 2>&1; then
+            az containerapp env create \
+              --environment-mode express \
+              --name "${{ vars.AZURE_CONTAINER_APPS_ENV }}" \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --location "${{ vars.AZURE_LOCATION }}" \
+              --logs-destination none
+          else
+            echo "Using existing Azure Container Apps Express environment: ${{ vars.AZURE_CONTAINER_APPS_ENV }}"
+          fi
+
+      # ── Deploy the app into the Azure Container Apps Express environment ───
+      # az containerapp up creates/updates the app and targets the previously
+      # provisioned express environment in a single idempotent command.
+      - name: Deploy app to Azure Container Apps Express
         run: |
           az containerapp up \
             --name azure-media-service \
@@ -106,16 +118,20 @@ jobs:
       # the container always has an up-to-date API_KEY without embedding it
       # in the image or exposing it in plain env-vars.
       - name: Set / update Container App secrets
+        env:
+          ACA_API_KEY: ${{ secrets.ACA_API_KEY }}
+          ACA_STORAGE_CONNECTION_STRING: ${{ secrets.ACA_STORAGE_CONNECTION_STRING }}
         run: |
           az containerapp secret set \
             --name azure-media-service \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --secrets \
-              api-key="${{ secrets.ACA_API_KEY }}"
+              api-key="$ACA_API_KEY" \
+              storage-connection-string="$ACA_STORAGE_CONNECTION_STRING"
 
       # ── Bind env-vars to secrets and apply storage config ───────────────────
       # This step is idempotent: it updates the app's environment variables to
-      # reference the managed secret and sets the storage account name.
+      # reference the managed secrets.
       # Secrets are referenced by their lowercase name assigned above.
       - name: Configure Container App environment variables
         run: |
@@ -124,4 +140,4 @@ jobs:
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --set-env-vars \
               API_KEY=secretref:api-key \
-              STORAGE_ACCOUNT_NAME="${{ vars.AZURE_STORAGE_ACCOUNT }}"
+              STORAGE_CONNECTION_STRING=secretref:storage-connection-string
