@@ -78,12 +78,12 @@ All configuration is via environment variables (see `.env.example`):
 
 | Variable               | Required | Default          | Description                                   |
 |-------------------------|----------|------------------|------------------------------------------------|
-| `API_KEY`               | yes      | —                | Shared secret desktop clients send as a Bearer token |
-| `STORAGE_CONNECTION_STRING` | yes   | —                | Azure Storage connection string |
+| `API_KEY`                   | yes      | —                | Shared secret desktop clients send as a bearer token                  |
+| `STORAGE_CONNECTION_STRING` | yes      | —                | Azure Storage connection string; it must include `AccountName` and `AccountKey` |
 | `CONTAINER_NAME`        | no       | `media-staging`  | Default blob container                        |
 | `PORT`                  | no       | `8080`           | HTTP listen port                              |
 
-Azure Storage authentication uses `STORAGE_CONNECTION_STRING`.
+Azure Storage authentication uses `STORAGE_CONNECTION_STRING`. The connection string must include both `AccountName` and `AccountKey` (for example, a standard Azure Storage account key connection string).
 
 ## Build
 

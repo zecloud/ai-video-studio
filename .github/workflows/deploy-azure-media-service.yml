@@ -11,7 +11,7 @@
 #   AZURE_TENANT_ID        Azure AD tenant ID.
 #   AZURE_SUBSCRIPTION_ID  Azure subscription ID.
 #   ACA_API_KEY            Shared API key the desktop app sends as
-#                          "Authorization: ******". Must match the
+#                          "Authorization: Bearer <api-key>". Must match the
 #                          API_KEY environment variable inside the container.
 #   ACA_STORAGE_CONNECTION_STRING
 #                          Azure Storage connection string injected as a

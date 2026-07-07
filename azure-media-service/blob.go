@@ -89,13 +89,22 @@ func (b *BlobStore) DeleteBlob(ctx context.Context, container, blobName string) 
 // BlobURL returns the non-SAS canonical URL for a blob.
 func (b *BlobStore) BlobURL(container, blobName string) string {
 	container = b.containerOrDefault(container)
-	return fmt.Sprintf("%s%s/%s", b.storageAccountURL, container, blobName)
+
+	baseURL, err := url.Parse(b.storageAccountURL)
+	if err != nil {
+		return fmt.Sprintf("%s%s/%s", b.storageAccountURL, container, blobName)
+	}
+
+	baseURL.Path = "/" + strings.TrimPrefix(strings.TrimPrefix(container+"/"+blobName, "/"), "/")
+	return baseURL.String()
 }
 
 // GenerateSASURL creates a short-lived, read-only shared-key SAS URL for the
 // given blob.
 func (b *BlobStore) GenerateSASURL(ctx context.Context, container, blobName string) (string, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	container = b.containerOrDefault(container)
 
 	now := time.Now().UTC().Add(-5 * time.Minute) // clock skew allowance
