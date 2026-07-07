@@ -4,5 +4,6 @@ build/bin/
 frontend/dist/
 frontend/node_modules/
 *.log
+*.exe
 .DS_Store
 .impeccable/
