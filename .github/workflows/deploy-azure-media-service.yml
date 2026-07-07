@@ -1,0 +1,127 @@
+# Deploy azure-media-service to Azure Container Apps (express approach)
+#
+# This workflow uses `az containerapp up --source` (the "express" single-command
+# deployment) to build the Docker image via Azure Container Registry Tasks,
+# push it, and create/update the Container App in one step — no local Docker
+# daemon or manual image tagging required.
+#
+# ── Required GitHub Secrets ─────────────────────────────────────────────────
+#   AZURE_CLIENT_ID        Client ID of the service principal / managed
+#                          identity configured for OIDC federated credentials.
+#   AZURE_TENANT_ID        Azure AD tenant ID.
+#   AZURE_SUBSCRIPTION_ID  Azure subscription ID.
+#   ACA_API_KEY            Shared API key the desktop app sends as
+#                          "Authorization: ******". Must match the
+#                          API_KEY environment variable inside the container.
+#
+# ── Required GitHub Variables (Settings → Secrets and variables → Variables) ─
+#   AZURE_RESOURCE_GROUP      Resource group that owns the Container App.
+#   AZURE_LOCATION            Azure region, e.g. "westeurope".
+#   AZURE_CONTAINER_APPS_ENV  Name of the Container Apps managed environment.
+#   ACR_NAME                  Azure Container Registry name (no .azurecr.io).
+#   AZURE_STORAGE_ACCOUNT     Storage account name for blob staging
+#                             (STORAGE_ACCOUNT_NAME env var in the container).
+#
+# ── One-time OIDC setup ──────────────────────────────────────────────────────
+#   az ad app create --display-name "github-ai-video-studio-deploy"
+#   # Note the appId and objectId, then:
+#   az ad sp create --id <appId>
+#   az role assignment create \
+#     --assignee <appId> \
+#     --role Contributor \
+#     --scope /subscriptions/<subscriptionId>/resourceGroups/<resourceGroup>
+#   # Add federated credential:
+#   az ad app federated-credential create --id <objectId> --parameters '{
+#     "name": "github-main",
+#     "issuer": "https://token.actions.githubusercontent.com",
+#     "subject": "repo:zecloud/ai-video-studio:ref:refs/heads/main",
+#     "audiences": ["api://AzureADTokenExchange"]
+#   }'
+# ────────────────────────────────────────────────────────────────────────────
+
+name: Deploy azure-media-service
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'azure-media-service/**'
+      - '.github/workflows/deploy-azure-media-service.yml'
+  workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: 'Force deploy even without source changes'
+        required: false
+        default: 'false'
+        type: boolean
+
+# OIDC token is required for the azure/login action when using federated
+# credentials (no client secret stored in GitHub).
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Azure authentication via OIDC (no stored client secret) ─────────────
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # ── Ensure the Container Apps CLI extension is up-to-date ───────────────
+      - name: Install / upgrade containerapp CLI extension
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az extension add --name containerapp --upgrade --yes
+
+      # ── Express deploy: build image in ACR, push, create/update the app ─────
+      # az containerapp up combines ACR Tasks image build, push, and
+      # Container App create/update into a single idempotent command.
+      - name: Deploy to Azure Container Apps (express)
+        run: |
+          az containerapp up \
+            --name azure-media-service \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --location "${{ vars.AZURE_LOCATION }}" \
+            --environment "${{ vars.AZURE_CONTAINER_APPS_ENV }}" \
+            --source azure-media-service \
+            --ingress external \
+            --target-port 8080 \
+            --registry-server "${{ vars.ACR_NAME }}.azurecr.io"
+
+      # ── Sync Container App secrets ───────────────────────────────────────────
+      # az containerapp up does not manage secrets; handle them explicitly so
+      # the container always has an up-to-date API_KEY without embedding it
+      # in the image or exposing it in plain env-vars.
+      - name: Set / update Container App secrets
+        run: |
+          az containerapp secret set \
+            --name azure-media-service \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --secrets \
+              api-key="${{ secrets.ACA_API_KEY }}"
+
+      # ── Bind env-vars to secrets and apply storage config ───────────────────
+      # This step is idempotent: it updates the app's environment variables to
+      # reference the managed secret and sets the storage account name.
+      # Secrets are referenced by their lowercase name assigned above.
+      - name: Configure Container App environment variables
+        run: |
+          az containerapp update \
+            --name azure-media-service \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --set-env-vars \
+              API_KEY=secretref:api-key \
+              STORAGE_ACCOUNT_NAME="${{ vars.AZURE_STORAGE_ACCOUNT }}"
