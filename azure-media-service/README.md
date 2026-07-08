@@ -11,7 +11,7 @@ Storage credentials and never has to hold a full copy of the video.
 - The desktop app authenticates the user against Microsoft Graph
   (delegated OneDrive access) but should not hold Azure Storage account
   keys or long-lived Storage RBAC roles.
-- This service holds the Storage identity (via Managed Identity) and
+- This service holds the Storage identity (via connection string) and
   exposes a small, API-key-gated HTTP API that the desktop app calls to
   stage a OneDrive item into Blob Storage, and to clean it up afterwards.
 - Blob Storage is the staging area Azure Content Understanding reads from
@@ -78,20 +78,12 @@ All configuration is via environment variables (see `.env.example`):
 
 | Variable               | Required | Default          | Description                                   |
 |-------------------------|----------|------------------|------------------------------------------------|
-| `API_KEY`               | yes      | —                | Shared secret desktop clients send as a Bearer token |
-| `STORAGE_ACCOUNT_NAME`  | yes      | —                | Azure Storage account name (no domain suffix) |
+| `API_KEY`                   | yes      | —                | Shared secret desktop clients send as a bearer token                  |
+| `STORAGE_CONNECTION_STRING` | yes      | —                | Azure Storage connection string; it must include `AccountName` and `AccountKey` |
 | `CONTAINER_NAME`        | no       | `media-staging`  | Default blob container                        |
 | `PORT`                  | no       | `8080`           | HTTP listen port                              |
 
-Azure Storage authentication uses `azidentity.DefaultAzureCredential`, which
-resolves to the Container App's Managed Identity in Azure and to your local
-`az login` session (or service principal env vars) during local development.
-**No storage account key is ever read from configuration.**
-
-The Managed Identity needs at minimum the **Storage Blob Data Contributor**
-role on the target storage account (to upload/delete blobs) — user
-delegation SAS generation requires no extra role beyond this, since it
-signs with a delegation key obtained from Azure AD via the identity itself.
+Azure Storage authentication uses `STORAGE_CONNECTION_STRING`. The connection string must include both `AccountName` and `AccountKey` (for example, a standard Azure Storage account key connection string).
 
 ## Build
 
@@ -105,8 +97,7 @@ go build ./...
 ```bash
 cp .env.example .env
 # edit .env with real values, then:
-az login   # so DefaultAzureCredential can resolve your identity
-$env:API_KEY = "<value>"; $env:STORAGE_ACCOUNT_NAME = "<value>"
+$env:API_KEY = "<value>"; $env:STORAGE_CONNECTION_STRING = "<value>"
 go run .
 ```
 
@@ -122,15 +113,9 @@ curl http://localhost:8080/health
 docker build -t azure-media-service:latest .
 docker run -p 8080:8080 \
   -e API_KEY=... \
-  -e STORAGE_ACCOUNT_NAME=... \
+  -e STORAGE_CONNECTION_STRING=... \
   azure-media-service:latest
 ```
-
-The runtime image is `gcr.io/distroless/static-debian12:nonroot` — no
-shell, no package manager. When running outside Azure with Managed
-Identity unavailable, mount/inject the credentials `DefaultAzureCredential`
-expects (e.g. `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_CLIENT_SECRET`
-for a service principal).
 
 ## Deploy to Azure Container Apps
 
@@ -138,7 +123,7 @@ for a service principal).
 # Build and push the image to a registry the Container App can pull from.
 az acr build --registry <your-acr> --image azure-media-service:latest .
 
-# Create/update the Container App, assigning a system-assigned managed identity.
+# Create/update an app in a Container Apps Express environment.
 az containerapp create \
   --name azure-media-service \
   --resource-group <rg> \
@@ -146,16 +131,8 @@ az containerapp create \
   --image <your-acr>.azurecr.io/azure-media-service:latest \
   --target-port 8080 \
   --ingress external \
-  --system-assigned \
-  --env-vars API_KEY=secretref:api-key STORAGE_ACCOUNT_NAME=<storage-account> \
-  --secrets api-key=<your-api-key>
-
-# Grant the Container App's managed identity Storage access.
-principalId=$(az containerapp show -n azure-media-service -g <rg> --query identity.principalId -o tsv)
-az role assignment create \
-  --assignee "$principalId" \
-  --role "Storage Blob Data Contributor" \
-  --scope $(az storage account show -n <storage-account> -g <rg> --query id -o tsv)
+  --env-vars API_KEY=secretref:api-key STORAGE_CONNECTION_STRING=secretref:storage-connection-string \
+  --secrets api-key=<your-api-key> storage-connection-string=<storage-connection-string>
 ```
 
 Point Container Apps health probes at `GET /health`.

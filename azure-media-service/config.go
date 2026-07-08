@@ -9,13 +9,13 @@ import (
 // entirely from environment variables so the service stays stateless and
 // container-friendly.
 type Config struct {
-	// APIKey is the shared secret desktop clients must present as a Bearer
+	// APIKey is the shared secret desktop clients must present as a bearer
 	// token. Required — the service refuses to start without it.
 	APIKey string
 
-	// StorageAccountName is the Azure Storage account used for staging
-	// media blobs. Required.
-	StorageAccountName string
+	// StorageConnectionString is the Azure Storage connection string used for
+	// staging blobs and generating SAS URLs. Required.
+	StorageConnectionString string
 
 	// ContainerName is the default blob container used when a request does
 	// not specify one explicitly.
@@ -38,19 +38,19 @@ type Config struct {
 // required fields.
 func LoadConfig() (*Config, error) {
 	cfg := &Config{
-		APIKey:             os.Getenv("API_KEY"),
-		StorageAccountName: os.Getenv("STORAGE_ACCOUNT_NAME"),
-		ContainerName:      getEnvDefault("CONTAINER_NAME", "media-staging"),
-		Port:               getEnvDefault("PORT", "8080"),
-		CUEndpoint:         os.Getenv("CU_ENDPOINT"),
-		CUAPIKey:           os.Getenv("CU_API_KEY"),
+		APIKey:                  os.Getenv("API_KEY"),
+		StorageConnectionString: os.Getenv("STORAGE_CONNECTION_STRING"),
+		ContainerName:           getEnvDefault("CONTAINER_NAME", "media-staging"),
+		Port:                    getEnvDefault("PORT", "8080"),
+		CUEndpoint:              os.Getenv("CU_ENDPOINT"),
+		CUAPIKey:                os.Getenv("CU_API_KEY"),
 	}
 
 	if cfg.APIKey == "" {
 		return nil, fmt.Errorf("API_KEY environment variable is required")
 	}
-	if cfg.StorageAccountName == "" {
-		return nil, fmt.Errorf("STORAGE_ACCOUNT_NAME environment variable is required")
+	if cfg.StorageConnectionString == "" {
+		return nil, fmt.Errorf("STORAGE_CONNECTION_STRING environment variable is required")
 	}
 
 	return cfg, nil
@@ -67,10 +67,4 @@ func getEnvDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-// ServiceURL returns the Azure Blob Storage service endpoint for the
-// configured storage account.
-func (c *Config) ServiceURL() string {
-	return fmt.Sprintf("https://%s.blob.core.windows.net/", c.StorageAccountName)
 }
