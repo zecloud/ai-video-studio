@@ -9,6 +9,10 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 // @ts-ignore: Unused imports
 import * as settings$0 from "../settings/models.js";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
 export function Get(): $CancellablePromise<settings$0.AppSettings> {
     return $Call.ByID(2586417217).then(($result: any) => {
         return $$createType0($result);
@@ -22,6 +26,22 @@ export function Get(): $CancellablePromise<settings$0.AppSettings> {
  */
 export function GetMediaServiceEndpoint(): $CancellablePromise<string> {
     return $Call.ByID(2224009239);
+}
+
+export function GetMediaServiceStatus(): $CancellablePromise<$models.ProtectedEndpointStatus> {
+    return $Call.ByID(1323579772).then(($result: any) => {
+        return $$createType1($result);
+    });
+}
+
+export function GetVideoIndexerServiceEndpoint(): $CancellablePromise<string> {
+    return $Call.ByID(1690227955);
+}
+
+export function GetVideoIndexerServiceStatus(): $CancellablePromise<$models.ProtectedEndpointStatus> {
+    return $Call.ByID(1524802704).then(($result: any) => {
+        return $$createType1($result);
+    });
 }
 
 export function Save(next: settings$0.AppSettings): $CancellablePromise<settings$0.AppSettings> {
@@ -40,5 +60,10 @@ export function SetMediaServiceEndpoint(endpoint: string, apiKey: string): $Canc
     return $Call.ByID(2621727267, endpoint, apiKey);
 }
 
+export function SetVideoIndexerServiceEndpoint(endpoint: string, apiKey: string): $CancellablePromise<void> {
+    return $Call.ByID(85403167, endpoint, apiKey);
+}
+
 // Private type creation functions
 const $$createType0 = settings$0.AppSettings.createFrom;
+const $$createType1 = $models.ProtectedEndpointStatus.createFrom;

@@ -1,0 +1,9 @@
+*.md
+*.log
+*.json
+*.example
+*.test
+*_test.go
+.env
+.env.*
+testdata/

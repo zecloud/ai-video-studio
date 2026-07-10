@@ -5,6 +5,10 @@
 // @ts-ignore: Unused imports
 import { Create as $Create } from "@wailsio/runtime";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as videoindexerstudio$0 from "../videoindexerstudio/models.js";
+
 export class AppOverview {
     "name": string;
     "version": string;
@@ -37,3 +41,114 @@ export class AppOverview {
         return new AppOverview($$parsedSource as Partial<AppOverview>);
     }
 }
+
+export class ProtectedEndpointStatus {
+    "configured": boolean;
+    "endpoint"?: string;
+    "hasApiKey": boolean;
+    "message": string;
+
+    /** Creates a new ProtectedEndpointStatus instance. */
+    constructor($$source: Partial<ProtectedEndpointStatus> = {}) {
+        if (!("configured" in $$source)) {
+            this["configured"] = false;
+        }
+        if (!("hasApiKey" in $$source)) {
+            this["hasApiKey"] = false;
+        }
+        if (!("message" in $$source)) {
+            this["message"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProtectedEndpointStatus instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ProtectedEndpointStatus {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ProtectedEndpointStatus($$parsedSource as Partial<ProtectedEndpointStatus>);
+    }
+}
+
+export class VideoIndexerStudioJob {
+    "id": string;
+    "assetId": string;
+    "assetName": string;
+    "remoteJobId"?: string;
+    "remoteStatus"?: string;
+    "stage"?: string;
+    "status": string;
+    "errorMessage"?: string;
+    "retryable"?: boolean;
+    "suggestionId"?: string;
+    "projectId"?: string;
+    "videoIndexResult"?: videoindexerstudio$0.VideoIndexResult | null;
+    "editPlan"?: videoindexerstudio$0.EditPlan | null;
+    "timelineDrafts"?: videoindexerstudio$0.TimelineDraft[];
+    "checkpoints"?: videoindexerstudio$0.JobCheckpoint[];
+    "createdAt": string;
+    "updatedAt": string;
+    "startedAt"?: string | null;
+    "completedAt"?: string | null;
+    "claimedBy"?: string;
+
+    /** Creates a new VideoIndexerStudioJob instance. */
+    constructor($$source: Partial<VideoIndexerStudioJob> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("assetId" in $$source)) {
+            this["assetId"] = "";
+        }
+        if (!("assetName" in $$source)) {
+            this["assetName"] = "";
+        }
+        if (!("status" in $$source)) {
+            this["status"] = "";
+        }
+        if (!("createdAt" in $$source)) {
+            this["createdAt"] = "0001-01-01T00:00:00.000Z";
+        }
+        if (!("updatedAt" in $$source)) {
+            this["updatedAt"] = "0001-01-01T00:00:00.000Z";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new VideoIndexerStudioJob instance from a string or object.
+     */
+    static createFrom($$source: any = {}): VideoIndexerStudioJob {
+        const $$createField11_0 = $$createType1;
+        const $$createField12_0 = $$createType3;
+        const $$createField13_0 = $$createType5;
+        const $$createField14_0 = $$createType7;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("videoIndexResult" in $$parsedSource) {
+            $$parsedSource["videoIndexResult"] = $$createField11_0($$parsedSource["videoIndexResult"]);
+        }
+        if ("editPlan" in $$parsedSource) {
+            $$parsedSource["editPlan"] = $$createField12_0($$parsedSource["editPlan"]);
+        }
+        if ("timelineDrafts" in $$parsedSource) {
+            $$parsedSource["timelineDrafts"] = $$createField13_0($$parsedSource["timelineDrafts"]);
+        }
+        if ("checkpoints" in $$parsedSource) {
+            $$parsedSource["checkpoints"] = $$createField14_0($$parsedSource["checkpoints"]);
+        }
+        return new VideoIndexerStudioJob($$parsedSource as Partial<VideoIndexerStudioJob>);
+    }
+}
+
+// Private type creation functions
+const $$createType0 = videoindexerstudio$0.VideoIndexResult.createFrom;
+const $$createType1 = $Create.Nullable($$createType0);
+const $$createType2 = videoindexerstudio$0.EditPlan.createFrom;
+const $$createType3 = $Create.Nullable($$createType2);
+const $$createType4 = videoindexerstudio$0.TimelineDraft.createFrom;
+const $$createType5 = $Create.Array($$createType4);
+const $$createType6 = videoindexerstudio$0.JobCheckpoint.createFrom;
+const $$createType7 = $Create.Array($$createType6);

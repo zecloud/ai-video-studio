@@ -1,0 +1,22 @@
+{
+  "id": "video-root-err",
+  "state": "Processed",
+  "insights": {
+    "duration": "0:00:05.000",
+    "transcript": [
+      {
+        "id": 1,
+        "text": "Broken line",
+        "confidence": 0.5,
+        "speakerId": 1,
+        "language": "en-US",
+        "instances": [
+          {
+            "start": "not-a-timecode",
+            "end": "0:00:01.000"
+          }
+        ]
+      }
+    ]
+  }
+}

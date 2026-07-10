@@ -219,6 +219,11 @@ nav small {
   background: var(--surface-muted);
 }
 
+.button.small {
+  padding: 7px 10px;
+  font-size: 0.8rem;
+}
+
 .field {
   min-width: 180px;
   border: 1px solid var(--border);
@@ -462,6 +467,79 @@ td {
   display: grid;
   gap: 14px;
   padding: 16px 18px;
+}
+
+.detail-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.signal-grid,
+.split-columns {
+  display: grid;
+  gap: 10px;
+}
+
+.signal-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.split-columns {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.source-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.source-ref {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-muted);
+  padding: 3px 8px;
+  font-size: 0.74rem;
+}
+
+.timeline-draft,
+.checkpoint-row,
+.clip-preview {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-muted);
+  padding: 12px;
+}
+
+.clip-list,
+.ordered-clips {
+  display: grid;
+  gap: 10px;
+}
+
+.ordered-clips {
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+
+.ordered-clips li {
+  margin-bottom: 8px;
+}
+
+tr[data-selected="true"] td {
+  background: var(--accent-soft);
+}
+
+@media (max-width: 1280px) {
+  .signal-grid,
+  .split-columns {
+    grid-template-columns: 1fr;
+  }
 }
 
 .kv {

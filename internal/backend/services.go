@@ -25,6 +25,7 @@ import (
 	"github.com/zecloud/ai-video-studio/internal/onedrive"
 	"github.com/zecloud/ai-video-studio/internal/settings"
 	"github.com/zecloud/ai-video-studio/internal/transfer"
+	"github.com/zecloud/ai-video-studio/internal/videoindexerstudio"
 	"github.com/zecloud/ai-video-studio/internal/videoprocessing"
 )
 
@@ -700,12 +701,14 @@ func NewMediaServiceClient(store settings.Store) *mediaservice.Client {
 }
 
 type EditingService struct {
-	mu           sync.Mutex
-	projects     map[string]editing.EditProject
-	jobs         map[string]*editing.RenderJob
-	store        library.Store
+	mu            sync.Mutex
+	projects      map[string]editing.EditProject
+	jobs          map[string]*editing.RenderJob
+	store         library.Store
 	renderBackend RenderBackend
-	odClient     *onedrive.Client
+	odClient      *onedrive.Client
+	projectStore  editingProjectStore
+	loaded        bool
 }
 
 // RenderBackend is the subset of mediaservice.Client that editing needs.
@@ -713,23 +716,41 @@ type RenderBackend interface {
 	Render(ctx context.Context, req mediaservice.RenderRequest) (*mediaservice.RenderResult, error)
 }
 
-func NewEditingService(store library.Store, renderBackend RenderBackend, odClient *onedrive.Client) *EditingService {
-	return &EditingService{
+func NewEditingService(store library.Store, renderBackend RenderBackend, odClient *onedrive.Client, projectStore ...editingProjectStore) *EditingService {
+	service := &EditingService{
 		projects:      map[string]editing.EditProject{},
 		jobs:          map[string]*editing.RenderJob{},
 		store:         store,
 		renderBackend: renderBackend,
 		odClient:      odClient,
 	}
+	if len(projectStore) > 0 {
+		service.projectStore = projectStore[0]
+	} else {
+		service.projectStore = newDefaultEditingProjectStore()
+	}
+	if service.projectStore == nil {
+		service.loaded = true
+	}
+	return service
 }
 
 func (s *EditingService) ListProjects(_ context.Context) ([]editing.EditProject, error) {
+	if err := s.ensureProjectsLoaded(context.Background()); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	projects := make([]editing.EditProject, 0, len(s.projects))
 	for _, project := range s.projects {
 		projects = append(projects, project)
 	}
+	sort.Slice(projects, func(i, j int) bool {
+		if projects[i].Name == projects[j].Name {
+			return projects[i].ID < projects[j].ID
+		}
+		return projects[i].Name < projects[j].Name
+	})
 	return projects, nil
 }
 
@@ -754,26 +775,38 @@ func (s *EditingService) SaveProject(_ context.Context, project editing.EditProj
 	if len(project.Timeline.Tracks) == 0 {
 		project.Timeline.Tracks = []editing.Track{{ID: "video-1", Kind: "video"}}
 	}
+	if err := s.ensureProjectsLoaded(context.Background()); err != nil {
+		return editing.EditProject{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.projects == nil {
 		s.projects = map[string]editing.EditProject{}
 	}
 	s.projects[project.ID] = project
+	if err := s.persistProjectsLocked(context.Background()); err != nil {
+		return editing.EditProject{}, err
+	}
 	return project, nil
 }
 
 func (s *EditingService) DeleteProject(_ context.Context, projectID string) error {
+	if err := s.ensureProjectsLoaded(context.Background()); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.projects, projectID)
-	return nil
+	return s.persistProjectsLocked(context.Background())
 }
 
 // Render dispatches a render job to the Azure Container App. It blocks until
 // the remote service completes or fails, then stores the result.
 // Emits wails events "editing:render:progress" and "editing:render:completed".
 func (s *EditingService) Render(projectID string) (*editing.RenderJob, error) {
+	if err := s.ensureProjectsLoaded(context.Background()); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	project, ok := s.projects[projectID]
 	s.mu.Unlock()
@@ -892,6 +925,62 @@ func (s *EditingService) RenderJobs() ([]*editing.RenderJob, error) {
 		jobs = append(jobs, job)
 	}
 	return jobs, nil
+}
+
+func (s *EditingService) ensureProjectsLoaded(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	if s.loaded {
+		s.mu.Unlock()
+		return nil
+	}
+	store := s.projectStore
+	s.mu.Unlock()
+	if store == nil {
+		s.mu.Lock()
+		s.loaded = true
+		s.mu.Unlock()
+		return nil
+	}
+	projects, err := store.Load(ctx)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.loaded {
+		return nil
+	}
+	if s.projects == nil {
+		s.projects = map[string]editing.EditProject{}
+	}
+	for _, project := range projects {
+		if project.ID == "" {
+			continue
+		}
+		s.projects[project.ID] = project
+	}
+	s.loaded = true
+	return nil
+}
+
+func (s *EditingService) persistProjectsLocked(ctx context.Context) error {
+	if s == nil || s.projectStore == nil {
+		return nil
+	}
+	projects := make([]editing.EditProject, 0, len(s.projects))
+	for _, project := range s.projects {
+		projects = append(projects, project)
+	}
+	sort.Slice(projects, func(i, j int) bool {
+		if projects[i].Name == projects[j].Name {
+			return projects[i].ID < projects[j].ID
+		}
+		return projects[i].Name < projects[j].Name
+	})
+	return s.projectStore.Save(ctx, projects)
 }
 
 type VideoProcessingService struct {
@@ -1130,6 +1219,40 @@ func (s *ProjectLibraryService) GetAssetAnalysis(assetID string) (*library.Analy
 	return job, nil
 }
 
+type ProtectedEndpointStatus struct {
+	Configured bool   `json:"configured"`
+	Endpoint   string `json:"endpoint,omitempty"`
+	HasAPIKey  bool   `json:"hasApiKey"`
+	Message    string `json:"message"`
+}
+
+func protectedEndpointStatus(label, endpoint, apiKey string) ProtectedEndpointStatus {
+	status := ProtectedEndpointStatus{
+		Endpoint:  strings.TrimRight(strings.TrimSpace(endpoint), "/"),
+		HasAPIKey: strings.TrimSpace(apiKey) != "",
+	}
+	if status.Endpoint != "" {
+		normalized, err := videoindexerstudio.NormalizeEndpoint(status.Endpoint)
+		if err != nil {
+			status.Message = label + " endpoint is invalid."
+			return status
+		}
+		status.Endpoint = normalized
+	}
+	switch {
+	case status.Endpoint == "" && !status.HasAPIKey:
+		status.Message = label + " is not configured."
+	case status.Endpoint == "":
+		status.Message = "Set the " + label + " endpoint."
+	case !status.HasAPIKey:
+		status.Message = "Set the " + label + " API key."
+	default:
+		status.Configured = true
+		status.Message = label + " is configured."
+	}
+	return status
+}
+
 type SettingsService struct {
 	mu      sync.Mutex
 	current settings.AppSettings
@@ -1207,6 +1330,47 @@ func (s *SettingsService) SetMediaServiceEndpoint(ctx context.Context, endpoint 
 	current.MediaServiceEndpoint = strings.TrimSpace(endpoint)
 	if trimmed := strings.TrimSpace(apiKey); trimmed != "" {
 		current.MediaServiceAPIKey = trimmed
+	}
+	_, err = s.Save(ctx, current)
+	return err
+}
+
+func (s *SettingsService) GetMediaServiceStatus(ctx context.Context) (ProtectedEndpointStatus, error) {
+	current, err := s.Get(ctx)
+	if err != nil {
+		return ProtectedEndpointStatus{}, err
+	}
+	return protectedEndpointStatus("Media Service", current.MediaServiceEndpoint, current.MediaServiceAPIKey), nil
+}
+
+func (s *SettingsService) GetVideoIndexerServiceEndpoint(ctx context.Context) (string, error) {
+	current, err := s.Get(ctx)
+	if err != nil {
+		return "", err
+	}
+	return current.VideoIndexerServiceEndpoint, nil
+}
+
+func (s *SettingsService) GetVideoIndexerServiceStatus(ctx context.Context) (ProtectedEndpointStatus, error) {
+	current, err := s.Get(ctx)
+	if err != nil {
+		return ProtectedEndpointStatus{}, err
+	}
+	return protectedEndpointStatus("Video Indexer Studio", current.VideoIndexerServiceEndpoint, current.VideoIndexerServiceAPIKey), nil
+}
+
+func (s *SettingsService) SetVideoIndexerServiceEndpoint(ctx context.Context, endpoint string, apiKey string) error {
+	current, err := s.Get(ctx)
+	if err != nil {
+		return err
+	}
+	normalized, err := videoindexerstudio.NormalizeEndpoint(endpoint)
+	if err != nil {
+		return err
+	}
+	current.VideoIndexerServiceEndpoint = normalized
+	if trimmed := strings.TrimSpace(apiKey); trimmed != "" {
+		current.VideoIndexerServiceAPIKey = trimmed
 	}
 	_, err = s.Save(ctx, current)
 	return err

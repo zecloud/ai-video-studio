@@ -10,6 +10,8 @@ export class ClipSegment {
     "sourceAssetId": string;
     "inMs": number;
     "outMs": number;
+    "timelineStartMs"?: number;
+    "durationMs"?: number;
     "transition"?: Transition | null;
 
     /** Creates a new ClipSegment instance. */
@@ -34,10 +36,10 @@ export class ClipSegment {
      * Creates a new ClipSegment instance from a string or object.
      */
     static createFrom($$source: any = {}): ClipSegment {
-        const $$createField4_0 = $$createType1;
+        const $$createField6_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("transition" in $$parsedSource) {
-            $$parsedSource["transition"] = $$createField4_0($$parsedSource["transition"]);
+            $$parsedSource["transition"] = $$createField6_0($$parsedSource["transition"]);
         }
         return new ClipSegment($$parsedSource as Partial<ClipSegment>);
     }
@@ -49,6 +51,9 @@ export class EditProject {
     "assetIds": string[];
     "timeline": Timeline;
     "renderPreset"?: string;
+    "originJobId"?: string;
+    "suggestionId"?: string;
+    "promptVersion"?: string;
 
     /** Creates a new EditProject instance. */
     constructor($$source: Partial<EditProject> = {}) {

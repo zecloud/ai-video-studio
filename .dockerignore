@@ -1,0 +1,15 @@
+.git
+.github
+**/.env
+**/.env.local
+**/.env.*.local
+**/*.key
+**/*.pem
+**/*.pfx
+**/secrets/
+**/.secrets
+**/node_modules/
+**/dist/
+**/bin/
+**/coverage/
+**/*.log

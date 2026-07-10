@@ -19,6 +19,7 @@
     "apiVersion": "2025-11-01",
     "sourceMode": "https_url"
   },
+  "videoIndexerServiceEndpoint": "https://your-video-indexer-studio-resource.example.com",
   "ffmpegPath": "",
   "ffprobePath": "",
   "chunkSizeBytes": 10485760,

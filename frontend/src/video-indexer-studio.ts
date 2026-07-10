@@ -1,0 +1,918 @@
+import { Events } from "@wailsio/runtime";
+import {
+  ProjectLibraryService,
+  SettingsService,
+  VideoIndexerStudioService,
+} from "../bindings/github.com/zecloud/ai-video-studio/internal/backend/index.js";
+import * as BackendModels from "../bindings/github.com/zecloud/ai-video-studio/internal/backend/models.js";
+import * as EditingModels from "../bindings/github.com/zecloud/ai-video-studio/internal/editing/models.js";
+import * as LibraryModels from "../bindings/github.com/zecloud/ai-video-studio/internal/library/models.js";
+import * as VI from "../bindings/github.com/zecloud/ai-video-studio/internal/videoindexerstudio/models.js";
+
+const IN_FLIGHT_STATUSES = new Set(["pending", "submitted", "polling"]);
+
+export interface VideoIndexerStudioSettingsState {
+  endpoint: string;
+  apiKey: string;
+  status: BackendModels.ProtectedEndpointStatus | null;
+  message: string;
+  saving: boolean;
+}
+
+export interface VideoIndexerStudioViewState {
+  jobs: BackendModels.VideoIndexerStudioJob[];
+  assets: LibraryModels.ProjectAsset[];
+  selectedAssetIDs: string[];
+  selectedJobID: string | null;
+  polling: boolean;
+  message: string;
+  settings: VideoIndexerStudioSettingsState;
+}
+
+export function createVideoIndexerStudioState(): VideoIndexerStudioViewState {
+  return {
+    jobs: [],
+    assets: [],
+    selectedAssetIDs: [],
+    selectedJobID: null,
+    polling: false,
+    message: "",
+    settings: {
+      endpoint: "",
+      apiKey: "",
+      status: null,
+      message: "Configure the Video Indexer Studio endpoint and API key before submitting jobs.",
+      saving: false,
+    },
+  };
+}
+
+function escapeHTML(value: string): string {
+  return (value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function badge(label: string, tone: "success" | "warning" | "danger" | "info" | "neutral"): string {
+  return `<span class="badge ${tone}">${escapeHTML(label)}</span>`;
+}
+
+function formatMs(ms: number | undefined | null): string {
+  const total = Math.max(0, Math.round((ms ?? 0) / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function formatDurationNs(value: number | undefined | null): string {
+  if (!Number.isFinite(value ?? NaN) || !value) return "—";
+  const ms = Math.round((value ?? 0) / 1_000_000);
+  if (ms < 1000) return `${ms}ms`;
+  return formatMs(ms);
+}
+
+function formatDate(value: string | undefined): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString();
+}
+
+function formatRelative(value: string | undefined): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 0) return "just now";
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function firstNonEmpty(...values: Array<string | undefined | null>): string {
+  for (const value of values) {
+    if (value && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+}
+
+function stageLabel(status: string | undefined): string {
+  switch ((status || "").toLowerCase()) {
+    case "queued":
+      return "Queued";
+    case "staging":
+      return "Staging";
+    case "staged":
+      return "Staged";
+    case "processing":
+      return "Processing";
+    case "submitting":
+      return "Submitting";
+    case "indexing":
+      return "Indexing";
+    case "normalizing":
+      return "Normalizing";
+    case "generating":
+      return "Generating";
+    case "building_timeline":
+      return "Building timeline";
+    case "succeeded":
+      return "Succeeded";
+    case "failed":
+      return "Failed";
+    case "canceled":
+      return "Canceled";
+    case "running":
+      return "Running";
+    default:
+      return status || "Unknown";
+  }
+}
+
+function localStatusTone(status: string): "success" | "warning" | "danger" | "info" | "neutral" {
+  switch (status) {
+    case "succeeded":
+      return "success";
+    case "failed":
+      return "danger";
+    case "polling":
+      return "warning";
+    case "submitted":
+      return "info";
+    case "canceled":
+      return "neutral";
+    default:
+      return "neutral";
+  }
+}
+
+function inFlight(status: string): boolean {
+  return IN_FLIGHT_STATUSES.has(status);
+}
+
+function assetEligible(asset: LibraryModels.ProjectAsset): boolean {
+  return firstNonEmpty(asset.cloudAssetId).length > 0;
+}
+
+function latestJobByAsset(jobs: BackendModels.VideoIndexerStudioJob[]): Map<string, BackendModels.VideoIndexerStudioJob> {
+  const result = new Map<string, BackendModels.VideoIndexerStudioJob>();
+  const sorted = [...jobs].sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  for (const job of sorted) {
+    if (!result.has(job.assetId)) {
+      result.set(job.assetId, job);
+    }
+  }
+  return result;
+}
+
+function upsertJob(state: VideoIndexerStudioViewState, next: BackendModels.VideoIndexerStudioJob): void {
+  const index = state.jobs.findIndex((job) => job.id === next.id);
+  if (index >= 0) {
+    state.jobs[index] = next;
+  } else {
+    state.jobs.unshift(next);
+  }
+  state.jobs.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  state.polling = state.jobs.some((job) => inFlight(job.status));
+}
+
+function selectedAssets(state: VideoIndexerStudioViewState): LibraryModels.ProjectAsset[] {
+  if (state.selectedAssetIDs.length === 0) return [];
+  const selected = new Set(state.selectedAssetIDs);
+  return state.assets.filter((asset) => selected.has(asset.id));
+}
+
+function pendingAssets(state: VideoIndexerStudioViewState): LibraryModels.ProjectAsset[] {
+  const latest = latestJobByAsset(state.jobs);
+  return state.assets.filter((asset) => {
+    if (!assetEligible(asset)) return false;
+    const job = latest.get(asset.id);
+    return !job;
+  });
+}
+
+export async function loadVideoIndexerStudioState(state: VideoIndexerStudioViewState): Promise<void> {
+  try {
+    const [assets, jobs, endpoint, status] = await Promise.all([
+      ProjectLibraryService.ListAssets(),
+      VideoIndexerStudioService.IndexingJobs(),
+      SettingsService.GetVideoIndexerServiceEndpoint(),
+      SettingsService.GetVideoIndexerServiceStatus(),
+    ]);
+    state.assets = assets ?? [];
+    state.jobs = jobs ?? [];
+    state.selectedAssetIDs = state.selectedAssetIDs.filter((assetID) => state.assets.some((asset) => asset.id === assetID));
+    state.polling = state.jobs.some((job) => inFlight(job.status));
+    state.settings.endpoint = endpoint ?? "";
+    state.settings.apiKey = "";
+    state.settings.status = status ?? null;
+    state.settings.message = status?.message || state.settings.message;
+  } catch (error) {
+    state.message = error instanceof Error ? error.message : "Failed to load Video Indexer Studio data.";
+  }
+}
+
+export async function refreshVideoIndexerStudioState(state: VideoIndexerStudioViewState): Promise<void> {
+  await loadVideoIndexerStudioState(state);
+}
+
+export function toggleVideoIndexerAssetSelection(state: VideoIndexerStudioViewState, assetID: string): void {
+  const next = new Set(state.selectedAssetIDs);
+  if (next.has(assetID)) {
+    next.delete(assetID);
+  } else {
+    next.add(assetID);
+  }
+  state.selectedAssetIDs = Array.from(next);
+}
+
+export function selectVideoIndexerJob(state: VideoIndexerStudioViewState, jobID: string | null): void {
+  state.selectedJobID = jobID;
+}
+
+export async function submitVideoIndexerAssets(state: VideoIndexerStudioViewState, assetIDs?: string[]): Promise<{ submitted: number; failed: number }> {
+  const ids = assetIDs && assetIDs.length > 0 ? assetIDs : state.selectedAssetIDs;
+  const uniqueIDs = Array.from(new Set(ids));
+  const targets = uniqueIDs.length
+    ? state.assets.filter((asset) => uniqueIDs.includes(asset.id) && assetEligible(asset))
+    : pendingAssets(state);
+  let submitted = 0;
+  let failed = 0;
+  for (const asset of targets) {
+    try {
+      const job = await VideoIndexerStudioService.SubmitForIndexing(asset.id);
+      if (job) {
+        upsertJob(state, job);
+      }
+      submitted += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  state.polling = state.jobs.some((job) => inFlight(job.status));
+  return { submitted, failed };
+}
+
+export async function cancelVideoIndexerJob(state: VideoIndexerStudioViewState, jobID: string): Promise<void> {
+  const job = await VideoIndexerStudioService.CancelIndexing(jobID);
+  if (job) {
+    upsertJob(state, job);
+  }
+}
+
+export async function createEditProjectFromVideoIndexerJob(
+  state: VideoIndexerStudioViewState,
+  jobID: string,
+  suggestionID = "",
+): Promise<EditingModels.EditProject | null> {
+  const project = await VideoIndexerStudioService.CreateEditProject(jobID, suggestionID);
+  if (project) {
+    state.message = `Created edit project ${project.name || project.id}.`;
+    const found = state.jobs.find((job) => job.id === jobID);
+    if (found) {
+      found.projectId = project.id;
+      if (suggestionID.trim()) {
+        found.suggestionId = suggestionID.trim();
+      }
+    }
+  }
+  return project ?? null;
+}
+
+export async function saveVideoIndexerSettings(
+  state: VideoIndexerStudioViewState,
+  endpoint: string,
+  apiKey: string,
+): Promise<void> {
+  state.settings.saving = true;
+  state.settings.message = "Saving Video Indexer Studio settings...";
+  try {
+    await SettingsService.SetVideoIndexerServiceEndpoint(endpoint, apiKey);
+    state.settings.endpoint = endpoint.trim();
+    state.settings.apiKey = "";
+    state.settings.status = await SettingsService.GetVideoIndexerServiceStatus();
+    state.settings.message = state.settings.status?.message || "Video Indexer Studio settings saved.";
+  } catch (error) {
+    state.settings.message = error instanceof Error ? error.message : "Saving Video Indexer Studio settings failed.";
+  } finally {
+    state.settings.saving = false;
+  }
+}
+
+function renderAssetRows(state: VideoIndexerStudioViewState): string {
+  const latest = latestJobByAsset(state.jobs);
+  return state.assets.length
+    ? state.assets
+        .filter(assetEligible)
+        .map((asset) => {
+          const selected = state.selectedAssetIDs.includes(asset.id);
+          const job = latest.get(asset.id);
+          const tone = job ? localStatusTone(job.status) : "neutral";
+          return `
+            <tr>
+              <td><input class="check" type="checkbox" data-action="video-indexer-toggle-asset" data-asset-id="${escapeHTML(asset.id)}" ${selected ? "checked" : ""} aria-label="Select ${escapeHTML(asset.name || asset.id)}" /></td>
+              <td><strong>${escapeHTML(asset.name || asset.id)}</strong><br><span class="muted">${escapeHTML(asset.cloudAssetId || "No cloud asset ID")}</span></td>
+              <td>${badge(job ? stageLabel(job.status) : "Eligible", tone)}</td>
+              <td class="muted">${escapeHTML(formatRelative(job?.updatedAt || asset.createdAt))}</td>
+              <td><span class="path-cell">${escapeHTML(asset.id)}</span></td>
+            </tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="5" class="empty-state">No eligible library assets yet.</td></tr>`;
+}
+
+function renderJobsTable(state: VideoIndexerStudioViewState): string {
+  const rows = state.jobs.length
+    ? state.jobs
+        .map((job) => {
+          const selected = state.selectedJobID === job.id;
+          const asset = state.assets.find((item) => item.id === job.assetId);
+          return `
+            <tr ${selected ? 'data-selected="true"' : ""}>
+              <td>${escapeHTML(asset?.name || job.assetName || job.assetId)}</td>
+              <td>${badge(stageLabel(job.status), localStatusTone(job.status))}</td>
+              <td class="muted">${escapeHTML(firstNonEmpty(job.stage, job.remoteStatus, "—"))}</td>
+              <td class="muted">${escapeHTML(formatRelative(job.updatedAt || job.createdAt))}</td>
+              <td>
+                <div class="toolbar">
+                  <button type="button" class="button secondary small" data-action="video-indexer-view-job" data-job-id="${escapeHTML(job.id)}">View</button>
+                  ${
+                    inFlight(job.status)
+                      ? `<button type="button" class="button secondary small" data-action="video-indexer-cancel-job" data-job-id="${escapeHTML(job.id)}">Cancel</button>`
+                      : ""
+                  }
+                  ${
+                    job.status === "succeeded" && (job.timelineDrafts?.length || 0) === 1
+                      ? `<button type="button" class="button small" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}">Create edit project</button>`
+                      : ""
+                  }
+                </div>
+              </td>
+            </tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="5" class="empty-state">No Video Indexer jobs yet.</td></tr>`;
+  return `
+    <section class="panel" aria-labelledby="smart-edit-jobs-title">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Video Indexer jobs</p>
+          <h3 id="smart-edit-jobs-title">Queued and completed jobs</h3>
+        </div>
+        ${badge(`${state.jobs.length} job${state.jobs.length === 1 ? "" : "s"}`, state.jobs.length ? "info" : "neutral")}
+      </div>
+      <div class="table-wrap">
+        <table aria-label="Video Indexer jobs">
+          <thead>
+            <tr>
+              <th>Asset</th>
+              <th>Status</th>
+              <th>Stage</th>
+              <th>Updated</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="detail-body">
+        <p class="queue-message">${escapeHTML(state.message || "Submit selected or pending assets to start a smart-edit job.")}</p>
+      </div>
+    </section>`;
+}
+
+function renderSignals(signals?: VI.MediaSignals | null): string {
+  if (!signals) {
+    return `<div class="empty-state">No media signals were recorded for this job.</div>`;
+  }
+  const silenceRows = (signals.silences || [])
+    .map(
+      (silence) => `
+        <div class="kv">
+          <span>Silence</span>
+          <strong>${escapeHTML(formatDurationNs(silence.start))} – ${escapeHTML(formatDurationNs(silence.end))}</strong>
+        </div>`,
+    )
+    .join("");
+  return `
+    <div class="signal-grid">
+      <div class="kv"><span>Source URL</span><strong>${escapeHTML(signals.sourceUrl || "—")}</strong></div>
+      <div class="kv"><span>Duration</span><strong>${escapeHTML(formatDurationNs(signals.duration))}</strong></div>
+      <div class="kv"><span>Video</span><strong>${signals.video?.present ? "Present" : "Absent"} · ${escapeHTML(signals.video?.codec || "—")} · ${signals.video?.width || 0}×${signals.video?.height || 0}</strong></div>
+      <div class="kv"><span>Audio</span><strong>${signals.audio?.present ? "Present" : "Absent"} · ${escapeHTML(signals.audio?.codec || "—")} · ${signals.audio?.channels || 0} ch</strong></div>
+      ${silenceRows}
+    </div>`;
+}
+
+function renderSourceRefs(refs: VI.SourceRef[] | undefined): string {
+  if (!refs || refs.length === 0) {
+    return `<span class="muted">No source refs</span>`;
+  }
+  return refs
+    .map(
+      (ref) => `
+        <span class="source-ref" title="${escapeHTML(`${ref.sourceKind || "source"} · ${ref.sourceAssetId || "asset"}`)}">
+          ${escapeHTML(firstNonEmpty(ref.factKind, ref.sourceKind, ref.refId))}
+        </span>`,
+    )
+    .join("");
+}
+
+function renderTimelineDrafts(job: BackendModels.VideoIndexerStudioJob): string {
+  const drafts = job.timelineDrafts || [];
+  if (!drafts.length) {
+    return `<div class="empty-state">No timeline drafts yet.</div>`;
+  }
+  return drafts
+    .map((draft) => {
+      const clips = draft.primaryVideoTrack?.clips || [];
+      return `
+        <article class="timeline-draft">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Timeline draft</p>
+              <h3>${escapeHTML(firstNonEmpty(draft.suggestionId, draft.promptVersion, "Draft"))}</h3>
+            </div>
+            <div class="toolbar">
+              ${badge(`Schema ${draft.schemaVersion}`, "neutral")}
+              <button type="button" class="button" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}" data-suggestion-id="${escapeHTML(draft.suggestionId || "")}">Create edit project</button>
+            </div>
+          </div>
+          <div class="detail-body">
+            <div class="kv"><span>Origin job</span><strong>${escapeHTML(firstNonEmpty(draft.originJobId, job.id))}</strong></div>
+            <div class="kv"><span>Track</span><strong>${escapeHTML(firstNonEmpty(draft.primaryVideoTrack?.kind, "video"))}</strong></div>
+            <div class="clip-list" aria-label="Ordered clip preview">
+              ${
+                clips.length
+                  ? clips
+                      .map(
+                        (clip, index) => `
+                          <div class="clip-preview">
+                            <span class="badge neutral">${index + 1}</span>
+                            <div>
+                              <strong>${escapeHTML(firstNonEmpty(clip.id, `Clip ${index + 1}`))}</strong>
+                              <p class="muted">${escapeHTML(formatMs(clip.inMs))} – ${escapeHTML(formatMs(clip.outMs))} · ${escapeHTML(firstNonEmpty(clip.transition?.kind, "cut"))}</p>
+                              <p class="muted">${escapeHTML(firstNonEmpty(clip.sourceAssetId, job.assetId))}</p>
+                            </div>
+                          </div>`,
+                      )
+                      .join("")
+                  : `<div class="empty-state">No clips were generated for this draft.</div>`
+              }
+            </div>
+          </div>
+        </article>`;
+    })
+    .join("");
+}
+
+function renderJobDetails(job: BackendModels.VideoIndexerStudioJob | null, state: VideoIndexerStudioViewState): string {
+  if (!job) {
+    return `
+      <section class="panel" aria-labelledby="smart-edit-detail-title">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Job details</p>
+            <h3 id="smart-edit-detail-title">Select a job</h3>
+          </div>
+        </div>
+        <div class="detail-body">
+          <div class="empty-state">Choose a Video Indexer job to inspect scenes, transcript, OCR, labels, objects, highlights, suggestions, and timeline drafts.</div>
+        </div>
+      </section>`;
+  }
+
+  const result = job.videoIndexResult;
+  const editPlan = job.editPlan;
+  const latestAsset = state.assets.find((asset) => asset.id === job.assetId);
+  const selectedJobTone = localStatusTone(job.status);
+  return `
+    <section class="panel" aria-labelledby="smart-edit-detail-title">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Job details</p>
+          <h3 id="smart-edit-detail-title">${escapeHTML(job.assetName || latestAsset?.name || job.assetId)}</h3>
+        </div>
+        <div class="toolbar">
+          ${badge(stageLabel(job.status), selectedJobTone)}
+          ${job.retryable ? badge("Retryable failure", "warning") : ""}
+        </div>
+      </div>
+      <div class="detail-body">
+        <div class="kv"><span>Asset</span><strong>${escapeHTML(firstNonEmpty(latestAsset?.name, job.assetName, job.assetId))}</strong></div>
+        <div class="kv"><span>Status</span><strong>${escapeHTML(job.status)}</strong></div>
+        <div class="kv"><span>Stage</span><strong>${escapeHTML(firstNonEmpty(job.stage, job.remoteStatus, "—"))}</strong></div>
+        <div class="kv"><span>Created</span><strong>${escapeHTML(formatDate(job.createdAt))}</strong></div>
+        <div class="kv"><span>Updated</span><strong>${escapeHTML(formatDate(job.updatedAt))}</strong></div>
+        <div class="kv"><span>Error</span><strong>${escapeHTML(job.errorMessage || "—")}</strong></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Checkpoints</p>
+          <h3>Stage history</h3>
+        </div>
+      </div>
+      <div class="detail-body">
+        ${
+          job.checkpoints?.length
+            ? job.checkpoints
+                .map(
+                  (checkpoint) => `
+                    <div class="checkpoint-row">
+                      ${badge(firstNonEmpty(checkpoint.stage, "Checkpoint"), "neutral")}
+                      <div>
+                        <strong>${escapeHTML(firstNonEmpty(checkpoint.state, checkpoint.detail, "—"))}</strong>
+                        <p class="muted">${escapeHTML(formatDate(checkpoint.at))}${checkpoint.videoId ? ` · ${escapeHTML(checkpoint.videoId)}` : ""}</p>
+                      </div>
+                    </div>`,
+                )
+                .join("")
+            : `<div class="empty-state">No checkpoints are stored for this job yet.</div>`
+        }
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Video index result</p>
+          <h3>Scenes, shots, transcript, OCR, labels, objects</h3>
+        </div>
+      </div>
+      <div class="detail-body">
+        ${
+          result
+            ? `
+              <div class="signal-grid">
+                <div class="kv"><span>Video ID</span><strong>${escapeHTML(result.videoId || "—")}</strong></div>
+                <div class="kv"><span>Duration</span><strong>${escapeHTML(formatMs(result.durationMs))}</strong></div>
+                <div class="kv"><span>Detected language</span><strong>${escapeHTML(firstNonEmpty(result.detectedLanguage, result.sourceLanguage, "—"))}</strong></div>
+                <div class="kv"><span>Source IDs</span><strong>${escapeHTML((result.sourceIds || []).join(", ") || "—")}</strong></div>
+              </div>
+              <div class="detail-stack">
+                <div>
+                  <h4>Media signals</h4>
+                  ${renderSignals(result.technicalSignals)}
+                </div>
+                <div>
+                  <h4>Scenes</h4>
+                  ${
+                    result.insights?.scenes?.length
+                      ? `
+                        <table>
+                          <thead><tr><th>Time</th><th>Thumbnail</th><th>Confidence</th></tr></thead>
+                          <tbody>
+                            ${result.insights.scenes
+                              .map(
+                                (scene) => `
+                                  <tr>
+                                    <td>${escapeHTML(formatMs(scene.startMs))} – ${escapeHTML(formatMs(scene.endMs))}</td>
+                                    <td class="muted">${escapeHTML(firstNonEmpty(scene.thumbnail?.thumbnailId, scene.thumbnail?.url, scene.id))}</td>
+                                    <td>${Math.round((scene.confidence || 0) * 100)}%</td>
+                                  </tr>`,
+                              )
+                              .join("")}
+                          </tbody>
+                        </table>`
+                      : `<div class="empty-state">No scenes available.</div>`
+                  }
+                </div>
+                <div>
+                  <h4>Shots</h4>
+                  ${
+                    result.insights?.shots?.length
+                      ? `
+                        <table>
+                          <thead><tr><th>Time</th><th>Keyframes</th><th>Tags</th></tr></thead>
+                          <tbody>
+                            ${result.insights.shots
+                              .map(
+                                (shot) => `
+                                  <tr>
+                                    <td>${escapeHTML(formatMs(shot.startMs))} – ${escapeHTML(formatMs(shot.endMs))}</td>
+                                    <td class="muted">${escapeHTML((shot.keyframeIds || []).join(", ") || "—")}</td>
+                                    <td class="muted">${escapeHTML((shot.tags || []).join(", ") || "—")}</td>
+                                  </tr>`,
+                              )
+                              .join("")}
+                          </tbody>
+                        </table>`
+                      : `<div class="empty-state">No shots available.</div>`
+                  }
+                </div>
+                <div>
+                  <h4>Transcript and speakers</h4>
+                  ${
+                    result.insights?.transcript?.length
+                      ? `
+                        <table>
+                          <thead><tr><th>Time</th><th>Speaker</th><th>Text</th></tr></thead>
+                          <tbody>
+                            ${result.insights.transcript
+                              .map(
+                                (item) => `
+                                  <tr>
+                                    <td>${escapeHTML(formatMs(item.startMs))} – ${escapeHTML(formatMs(item.endMs))}</td>
+                                    <td class="muted">${escapeHTML(firstNonEmpty(item.speakerName, item.speakerId, "—"))}</td>
+                                    <td>${escapeHTML(item.text || "—")}</td>
+                                  </tr>`,
+                              )
+                              .join("")}
+                          </tbody>
+                        </table>`
+                      : `<div class="empty-state">No transcript available.</div>`
+                  }
+                  ${
+                    result.insights?.speakers?.length
+                      ? `
+                        <div class="source-chip-list">
+                          ${result.insights.speakers
+                            .map((speaker) => badge(firstNonEmpty(speaker.name, speaker.id), "info"))
+                            .join("")}
+                        </div>`
+                      : ""
+                  }
+                </div>
+                <div>
+                  <h4>OCR, labels, and objects</h4>
+                  <div class="split-columns">
+                    <div>
+                      <h5>OCR</h5>
+                      ${
+                        result.insights?.ocr?.length
+                          ? result.insights.ocr
+                              .map(
+                                (item) => `
+                                  <div class="kv">
+                                    <span>${escapeHTML(formatMs(item.startMs))}</span>
+                                    <strong>${escapeHTML(item.text || "—")}</strong>
+                                  </div>`,
+                              )
+                              .join("")
+                          : `<div class="empty-state">No OCR text.</div>`
+                      }
+                    </div>
+                    <div>
+                      <h5>Labels</h5>
+                      ${
+                        result.insights?.labels?.length
+                          ? result.insights.labels
+                              .map(
+                                (item) => `
+                                  <div class="kv">
+                                    <span>${escapeHTML(formatMs(item.startMs))}</span>
+                                    <strong>${escapeHTML(item.name || "—")}</strong>
+                                  </div>`,
+                              )
+                              .join("")
+                          : `<div class="empty-state">No labels.</div>`
+                      }
+                    </div>
+                    <div>
+                      <h5>Objects</h5>
+                      ${
+                        result.insights?.objects?.length
+                          ? result.insights.objects
+                              .map(
+                                (item) => `
+                                  <div class="kv">
+                                    <span>${escapeHTML(formatMs(item.startMs))}</span>
+                                    <strong>${escapeHTML(firstNonEmpty(item.displayName, item.type, item.id))}</strong>
+                                  </div>`,
+                              )
+                              .join("")
+                          : `<div class="empty-state">No detected objects.</div>`
+                      }
+                    </div>
+                  </div>
+                </div>
+              </div>`
+            : `<div class="empty-state">No detailed result payload is attached to this job yet.</div>`
+        }
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Grounded edit plan</p>
+          <h3>Highlights and ordered suggestions</h3>
+        </div>
+      </div>
+      <div class="detail-body">
+        ${
+          editPlan
+            ? `
+              <div class="kv"><span>Title</span><strong>${escapeHTML(editPlan.title || "—")}</strong></div>
+              <div class="kv"><span>Summary</span><strong>${escapeHTML(editPlan.summary || "—")}</strong></div>
+              <div class="detail-stack">
+                <div>
+                  <h4>Highlights</h4>
+                  ${
+                    editPlan.highlights?.length
+                      ? editPlan.highlights
+                          .map(
+                            (highlight) => `
+                              <article class="suggestion-card">
+                                <h4>${escapeHTML(highlight.title || highlight.id)}</h4>
+                                <p>${escapeHTML(highlight.reason || "—")}</p>
+                                <p class="muted">${escapeHTML(formatMs(highlight.startMs))} – ${escapeHTML(formatMs(highlight.endMs))} · ${Math.round((highlight.score || 0) * 100)}%</p>
+                                <div class="source-chip-list">${renderSourceRefs(highlight.sourceRefs)}</div>
+                              </article>`,
+                          )
+                          .join("")
+                      : `<div class="empty-state">No grounded highlights available.</div>`
+                  }
+                </div>
+                <div>
+                  <h4>Suggestions</h4>
+                  ${
+                    editPlan.suggestions?.length
+                      ? editPlan.suggestions
+                          .map(
+                            (suggestion) => `
+                              <article class="suggestion-card">
+                                <div class="toolbar">
+                                  <h4>${escapeHTML(suggestion.title || suggestion.id)}</h4>
+                                  <button type="button" class="button small" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}" data-suggestion-id="${escapeHTML(suggestion.id)}">Create edit project</button>
+                                </div>
+                                <p>${escapeHTML(suggestion.reason || "—")}</p>
+                                <p class="muted">${escapeHTML(formatMs(suggestion.startMs))} – ${escapeHTML(formatMs(suggestion.endMs))} · ${Math.round((suggestion.score || 0) * 100)}%</p>
+                                <div class="source-chip-list">${renderSourceRefs(suggestion.sourceRefs)}</div>
+                                ${
+                                  suggestion.clips?.length
+                                    ? `<ol class="ordered-clips">
+                                        ${suggestion.clips
+                                          .map(
+                                            (clip) => `
+                                              <li>
+                                                <strong>${escapeHTML(clip.title || clip.id)}</strong>
+                                                <p>${escapeHTML(formatMs(clip.startMs))} – ${escapeHTML(formatMs(clip.endMs))} · ${escapeHTML(clip.reason || "—")}</p>
+                                              </li>`,
+                                          )
+                                          .join("")}
+                                      </ol>`
+                                    : ""
+                                }
+                              </article>`,
+                          )
+                          .join("")
+                      : `<div class="empty-state">No edit suggestions available.</div>`
+                  }
+                </div>
+              </div>`
+            : `<div class="empty-state">No grounded edit plan has been attached yet.</div>`
+        }
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Timeline draft preview</p>
+          <h3>Non-destructive output preview</h3>
+        </div>
+      </div>
+      <div class="detail-body">
+        ${renderTimelineDrafts(job)}
+      </div>
+    </section>
+  `;
+}
+
+export function renderVideoIndexerStudioPanel(state: VideoIndexerStudioViewState): string {
+  const selectedAssetsList = selectedAssets(state);
+  const pending = pendingAssets(state);
+  const selectedJob = state.jobs.find((job) => job.id === state.selectedJobID) || state.jobs[0] || null;
+  return `
+    <section class="panel" aria-labelledby="smart-edit-title">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Azure AI Video Indexer</p>
+          <h3 id="smart-edit-title">Smart Edit Studio</h3>
+        </div>
+        <div class="toolbar">
+          ${badge(`${state.jobs.length} job${state.jobs.length === 1 ? "" : "s"}`, state.jobs.length ? "info" : "neutral")}
+          ${badge(`${pending.length} pending`, pending.length ? "warning" : "neutral")}
+        </div>
+      </div>
+      <div class="detail-body">
+        <div class="toolbar">
+          <button type="button" class="button" data-action="video-indexer-submit-selected" ${selectedAssetsList.length ? "" : "disabled"}>Submit selected</button>
+          <button type="button" class="button secondary" data-action="video-indexer-submit-pending" ${pending.length ? "" : "disabled"}>Submit pending</button>
+          <button type="button" class="button secondary" data-action="video-indexer-refresh">Refresh</button>
+        </div>
+        <p class="queue-message">${escapeHTML(state.message || "Select eligible library assets to submit them to Video Indexer.")}</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Eligible assets</p>
+          <h3>Library assets ready for indexing</h3>
+        </div>
+        ${badge(`${selectedAssetsList.length} selected`, selectedAssetsList.length ? "success" : "neutral")}
+      </div>
+      <div class="table-wrap">
+        <table aria-label="Eligible assets">
+          <thead>
+            <tr>
+              <th><span class="muted">Select</span></th>
+              <th>Asset</th>
+              <th>Current state</th>
+              <th>Updated</th>
+              <th>Asset ID</th>
+            </tr>
+          </thead>
+          <tbody>${renderAssetRows(state)}</tbody>
+        </table>
+      </div>
+    </section>
+
+    ${renderJobsTable(state)}
+    ${renderJobDetails(selectedJob, state)}
+  `;
+}
+
+export function renderVideoIndexerSettingsCard(state: VideoIndexerStudioViewState): string {
+  const status = state.settings.status;
+  return `
+    <section class="panel" aria-labelledby="smart-edit-settings-title">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Smart Edit Studio settings</p>
+          <h3 id="smart-edit-settings-title">Video Indexer connection</h3>
+        </div>
+        ${badge(status?.configured ? "Configured" : "Not configured", status?.configured ? "success" : "warning")}
+      </div>
+      <div class="detail-body">
+        <div class="settings-grid">
+          <label>
+            <span>Video Indexer endpoint</span>
+            <input class="field" data-setting="video-indexer-endpoint" value="${escapeHTML(state.settings.endpoint || "")}" placeholder="https://video-indexer.example" aria-label="Video Indexer endpoint" />
+          </label>
+          <label>
+            <span>Video Indexer API key</span>
+            <input class="field" data-setting="video-indexer-apikey" type="password" value="" placeholder="Paste to replace the stored key" autocomplete="new-password" aria-label="Video Indexer API key" />
+          </label>
+        </div>
+        <div class="kv"><span>Status</span><strong>${escapeHTML(status?.message || state.settings.message || "Not configured")}</strong></div>
+        <div class="kv"><span>Configured endpoint</span><strong>${escapeHTML(status?.endpoint || state.settings.endpoint || "—")}</strong></div>
+        <div class="kv"><span>Has API key</span><strong>${status?.hasApiKey ? "Yes" : "No"}</strong></div>
+        <div class="actions">
+          <button type="button" class="button secondary" data-action="video-indexer-save-settings" ${state.settings.saving ? "disabled" : ""}>${state.settings.saving ? "Saving..." : "Save Video Indexer settings"}</button>
+        </div>
+        <p class="queue-message">${escapeHTML(state.settings.message || "Updating the API key replaces the stored secret; leaving it blank keeps the current value.")}</p>
+      </div>
+    </section>
+  `;
+}
+
+let pollTimer: number | undefined;
+
+export function setupVideoIndexerStudioEvents(state: VideoIndexerStudioViewState, onChange: () => void = () => {}): () => void {
+  const offProgress = Events.On("video-indexer:progress", (event) => {
+    const job = BackendModels.VideoIndexerStudioJob.createFrom(event.data as Partial<BackendModels.VideoIndexerStudioJob>);
+    upsertJob(state, job);
+    onChange();
+  });
+  const offCompleted = Events.On("video-indexer:completed", (event) => {
+    const job = BackendModels.VideoIndexerStudioJob.createFrom(event.data as Partial<BackendModels.VideoIndexerStudioJob>);
+    upsertJob(state, job);
+    onChange();
+  });
+  const offFailed = Events.On("video-indexer:failed", (event) => {
+    const job = BackendModels.VideoIndexerStudioJob.createFrom(event.data as Partial<BackendModels.VideoIndexerStudioJob>);
+    upsertJob(state, job);
+    onChange();
+  });
+
+  if (pollTimer !== undefined) {
+    window.clearInterval(pollTimer);
+  }
+  pollTimer = window.setInterval(() => {
+    if (!state.polling) return;
+    void refreshVideoIndexerStudioState(state).then(onChange);
+  }, 5000);
+
+  return () => {
+    offProgress();
+    offCompleted();
+    offFailed();
+    if (pollTimer !== undefined) {
+      window.clearInterval(pollTimer);
+      pollTimer = undefined;
+    }
+  };
+}

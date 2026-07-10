@@ -3,6 +3,8 @@
 package settings
 
 import (
+	"encoding/hex"
+	"path/filepath"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -10,23 +12,30 @@ import (
 
 var isDPAPI = true
 
-const msKeyEntropy = "AI Video Studio Media Service key v1"
+const dpapiEntropyPrefix = "AI Video Studio secret:"
 
-func protectWithDPAPI(plaintext string) ([]byte, error) {
-	return cryptProtectMSKey([]byte(plaintext))
+func protectWithDPAPI(path, plaintext string) ([]byte, error) {
+	protected, err := cryptProtectSecret(path, []byte(plaintext))
+	if err != nil {
+		return nil, err
+	}
+	encoded := make([]byte, len(dpapiMarker)+hex.EncodedLen(len(protected)))
+	copy(encoded, dpapiMarker)
+	hex.Encode(encoded[len(dpapiMarker):], protected)
+	return encoded, nil
 }
 
-func unprotectWithDPAPI(ciphertext []byte) string {
-	plain, err := cryptUnprotectMSKey(ciphertext)
+func unprotectWithDPAPI(path string, ciphertext []byte) string {
+	plain, err := cryptUnprotectSecret(path, ciphertext)
 	if err != nil {
 		return ""
 	}
 	return string(plain)
 }
 
-func cryptProtectMSKey(data []byte) ([]byte, error) {
+func cryptProtectSecret(path string, data []byte) ([]byte, error) {
 	in := bytesToBlob(data)
-	entropyBytes := []byte(msKeyEntropy)
+	entropyBytes := []byte(dpapiEntropyPrefix + filepath.Base(path) + ":v1")
 	entropy := bytesToBlob(entropyBytes)
 	var out windows.DataBlob
 	if err := windows.CryptProtectData(&in, nil, &entropy, 0, nil, windows.CRYPTPROTECT_UI_FORBIDDEN, &out); err != nil {
@@ -36,9 +45,9 @@ func cryptProtectMSKey(data []byte) ([]byte, error) {
 	return blobToBytes(out), nil
 }
 
-func cryptUnprotectMSKey(data []byte) ([]byte, error) {
+func cryptUnprotectSecret(path string, data []byte) ([]byte, error) {
 	in := bytesToBlob(data)
-	entropyBytes := []byte(msKeyEntropy)
+	entropyBytes := []byte(dpapiEntropyPrefix + filepath.Base(path) + ":v1")
 	entropy := bytesToBlob(entropyBytes)
 	var out windows.DataBlob
 	if err := windows.CryptUnprotectData(&in, nil, &entropy, 0, nil, windows.CRYPTPROTECT_UI_FORBIDDEN, &out); err != nil {

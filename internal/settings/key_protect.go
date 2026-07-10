@@ -45,20 +45,20 @@ func loadOrCreateMasterKey(keyFilePath string) ([]byte, error) {
 
 // protectAPIKey encrypts the plaintext API key with AES-GCM using the given
 // raw key bytes. Returns an empty slice when plaintext is empty.
-func protectAPIKey(key, plaintext []byte) ([]byte, error) {
+func protectAPIKey(path string, key, plaintext []byte) ([]byte, error) {
 	if len(plaintext) == 0 {
 		return nil, nil
 	}
-	return seal(key, plaintext)
+	return seal(key, plaintext, []byte("ai-video-studio:"+filepath.Base(path)+":v1"))
 }
 
 // unprotectAPIKey decrypts a previously protected ciphertext with AES-GCM.
 // Returns an empty string when ciphertext is empty or decryption fails.
-func unprotectAPIKey(key, ciphertext []byte) string {
+func unprotectAPIKey(path string, key, ciphertext []byte) string {
 	if len(ciphertext) == 0 {
 		return ""
 	}
-	plain, err := open(key, ciphertext)
+	plain, err := open(key, ciphertext, []byte("ai-video-studio:"+filepath.Base(path)+":v1"))
 	if err != nil {
 		return ""
 	}
@@ -67,7 +67,7 @@ func unprotectAPIKey(key, ciphertext []byte) string {
 
 // ----- internal AES-GCM helpers -----
 
-func seal(key, plain []byte) ([]byte, error) {
+func seal(key, plain, ad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -80,12 +80,10 @@ func seal(key, plain []byte) ([]byte, error) {
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
 	}
-	// Include the application-level associated data bound to the file path.
-	ad := []byte("ai-video-studio:mediaservice.key:v1")
 	return aesGCM.Seal(nonce, nonce, plain, ad), nil
 }
 
-func open(key, sealed []byte) ([]byte, error) {
+func open(key, sealed, ad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -98,7 +96,6 @@ func open(key, sealed []byte) ([]byte, error) {
 		return nil, errors.New("ciphertext too short")
 	}
 	nonce, ciphertext := sealed[:aesGCM.NonceSize()], sealed[aesGCM.NonceSize():]
-	ad := []byte("ai-video-studio:mediaservice.key:v1")
 	return aesGCM.Open(nil, nonce, ciphertext, ad)
 }
 
@@ -108,82 +105,72 @@ func open(key, sealed []byte) ([]byte, error) {
 // On non-Windows platforms raw AES-GCM is used without a prefix.
 const dpapiMarker = "dpapi:v1:"
 
-// readProtectedAPIKey reads and decrypts the API key from the sidecar file.
-// On Windows: expects the "dpapi:v1:" marker + hex-encoded DPAPI blob.
-// On non-Windows: expects raw AES-GCM ciphertext.
-func (s *FileStore) readProtectedAPIKey() string {
-	path := s.keyPath()
-	if path == "" {
-		return ""
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return s.unprotectAPIKeyString(data)
+type secretProtector interface {
+	Protect(path string, plaintext []byte) ([]byte, error)
+	Unprotect(path string, ciphertext []byte) ([]byte, error)
 }
 
-// writeProtectedAPIKey encrypts the plaintext key and writes it to
-// the sidecar file. When plaintext is empty, the file is removed.
-func (s *FileStore) writeProtectedAPIKey(plaintext string) error {
-	path := s.keyPath()
-	if path == "" {
-		return nil
-	}
-	if plaintext == "" {
-		_ = os.Remove(path)
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
+type defaultSecretProtector struct{}
 
-	protected, err := s.protectAPIKeyString(plaintext)
-	if err != nil {
-		return err
+func (defaultSecretProtector) Protect(path string, plaintext []byte) ([]byte, error) {
+	if len(plaintext) == 0 {
+		return nil, nil
 	}
-
-	return os.WriteFile(path, protected, 0o600)
-}
-
-// protectAPIKeyString encrypts plaintext using DPAPI on Windows and
-// AES-GCM (with per-installation master key) on other platforms.
-func (s *FileStore) protectAPIKeyString(plaintext string) ([]byte, error) {
 	if isDPAPI {
-		protected, err := protectWithDPAPI(plaintext)
+		protected, err := protectWithDPAPI(path, string(plaintext))
 		if err != nil {
 			return nil, err
 		}
-		encoded := make([]byte, len(dpapiMarker)+hex.EncodedLen(len(protected)))
-		copy(encoded, dpapiMarker)
-		hex.Encode(encoded[len(dpapiMarker):], protected)
-		return encoded, nil
+		return protected, nil
 	}
-	key, err := loadOrCreateMasterKey(s.keyPath())
+	key, err := loadOrCreateMasterKey(path)
 	if err != nil {
 		return nil, err
 	}
-	return protectAPIKey(key, []byte(plaintext))
+	return protectAPIKey(path, key, plaintext)
 }
 
-// unprotectAPIKeyString decrypts data produced by protectAPIKeyString.
-func (s *FileStore) unprotectAPIKeyString(data []byte) string {
+func (defaultSecretProtector) Unprotect(path string, ciphertext []byte) ([]byte, error) {
+	if len(ciphertext) == 0 {
+		return nil, nil
+	}
 	if isDPAPI {
 		// On Windows, reject ciphertext that is not DPAPI-protected.
-		if len(data) < len(dpapiMarker) || string(data[:len(dpapiMarker)]) != dpapiMarker {
-			return ""
+		if len(ciphertext) < len(dpapiMarker) || string(ciphertext[:len(dpapiMarker)]) != dpapiMarker {
+			return nil, nil
 		}
-		hexData := data[len(dpapiMarker):]
+		hexData := ciphertext[len(dpapiMarker):]
 		dpapiBlob := make([]byte, hex.DecodedLen(len(hexData)))
 		n, err := hex.Decode(dpapiBlob, hexData)
 		if err != nil {
-			return ""
+			return nil, nil
 		}
-		return unprotectWithDPAPI(dpapiBlob[:n])
+		plain := unprotectWithDPAPI(path, dpapiBlob[:n])
+		if plain == "" {
+			return nil, nil
+		}
+		return []byte(plain), nil
 	}
-	key, err := loadOrCreateMasterKey(s.keyPath())
+	key, err := loadOrCreateMasterKey(path)
 	if err != nil {
-		return ""
+		return nil, err
 	}
-	return unprotectAPIKey(key, data)
+	plain := unprotectAPIKey(path, key, ciphertext)
+	return []byte(plain), nil
+}
+
+// readProtectedAPIKey reads and decrypts the media service API key from the
+// sidecar file.
+func (s *FileStore) readProtectedAPIKey() string { return s.readProtectedKey(mediaServiceKeyFileName) }
+
+func (s *FileStore) readProtectedVideoIndexerAPIKey() string {
+	return s.readProtectedKey(videoIndexerServiceKeyFileName)
+}
+
+func (s *FileStore) writeProtectedAPIKey(plaintext string) error {
+	return s.writeProtectedKey(mediaServiceKeyFileName, plaintext)
+}
+
+func (s *FileStore) writeProtectedVideoIndexerAPIKey(plaintext string) error {
+	return s.writeProtectedKey(videoIndexerServiceKeyFileName, plaintext)
 }

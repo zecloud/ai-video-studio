@@ -1,0 +1,723 @@
+package backend
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
+
+	"github.com/zecloud/ai-video-studio/internal/editing"
+	"github.com/zecloud/ai-video-studio/internal/library"
+	"github.com/zecloud/ai-video-studio/internal/onedrive"
+	"github.com/zecloud/ai-video-studio/internal/settings"
+	"github.com/zecloud/ai-video-studio/internal/videoindexerstudio"
+)
+
+const (
+	videoIndexerJobStatusPending   = "pending"
+	videoIndexerJobStatusSubmitted = "submitted"
+	videoIndexerJobStatusPolling   = "polling"
+	videoIndexerJobStatusSucceeded = "succeeded"
+	videoIndexerJobStatusFailed    = "failed"
+	videoIndexerJobStatusCanceled  = "canceled"
+)
+
+type videoIndexerClient interface {
+	CreateJob(context.Context, videoindexerstudio.CreateJobRequest) (*videoindexerstudio.JobResponse, error)
+	GetJob(context.Context, string) (*videoindexerstudio.JobResponse, error)
+	CancelJob(context.Context, string) (*videoindexerstudio.JobResponse, error)
+}
+
+type videoIndexerJobStore interface {
+	Load(context.Context) ([]VideoIndexerStudioJob, error)
+	Save(context.Context, []VideoIndexerStudioJob) error
+}
+
+type videoIndexerProjectSaver interface {
+	SaveProject(context.Context, editing.EditProject) (editing.EditProject, error)
+}
+
+type videoIndexerOneDriveSource interface {
+	DriveClient() *onedrive.Client
+}
+
+type VideoIndexerStudioJob struct {
+	ID                  string                               `json:"id"`
+	AssetID             string                               `json:"assetId"`
+	AssetName           string                               `json:"assetName"`
+	RemoteJobID         string                               `json:"remoteJobId,omitempty"`
+	RemoteStatus        string                               `json:"remoteStatus,omitempty"`
+	Stage               string                               `json:"stage,omitempty"`
+	Status              string                               `json:"status"`
+	ErrorMessage        string                               `json:"errorMessage,omitempty"`
+	Retryable           bool                                 `json:"retryable,omitempty"`
+	SuggestionID        string                               `json:"suggestionId,omitempty"`
+	ProjectID           string                               `json:"projectId,omitempty"`
+	VideoIndexerVideoID string                               `json:"videoIndexerVideoId,omitempty"`
+	VideoIndexResult    *videoindexerstudio.VideoIndexResult `json:"videoIndexResult,omitempty"`
+	EditPlan            *videoindexerstudio.EditPlan         `json:"editPlan,omitempty"`
+	TimelineDrafts      []videoindexerstudio.TimelineDraft   `json:"timelineDrafts,omitempty"`
+	Checkpoints         []videoindexerstudio.JobCheckpoint   `json:"checkpoints,omitempty"`
+	CreatedAt           time.Time                            `json:"createdAt"`
+	UpdatedAt           time.Time                            `json:"updatedAt"`
+	StartedAt           *time.Time                           `json:"startedAt,omitempty"`
+	CompletedAt         *time.Time                           `json:"completedAt,omitempty"`
+	ClaimedBy           string                               `json:"claimedBy,omitempty"`
+}
+
+type videoIndexerJobDocument struct {
+	Version int                     `json:"version"`
+	Jobs    []VideoIndexerStudioJob `json:"jobs"`
+}
+
+type VideoIndexerStudioService struct {
+	mu            sync.Mutex
+	library       library.Store
+	oneDrive      videoIndexerOneDriveSource
+	editing       videoIndexerProjectSaver
+	client        videoIndexerClient
+	clientFactory func(context.Context) (videoIndexerClient, error)
+	store         videoIndexerJobStore
+	jobs          map[string]VideoIndexerStudioJob
+	loaded        bool
+	now           func() time.Time
+	submissionSeq uint64
+}
+
+func NewVideoIndexerStudioService(libraryStore library.Store, oneDrive videoIndexerOneDriveSource, editingSvc videoIndexerProjectSaver, client videoIndexerClient, jobStore ...videoIndexerJobStore) *VideoIndexerStudioService {
+	return newVideoIndexerStudioService(libraryStore, oneDrive, editingSvc, nil, client, jobStore...)
+}
+
+func NewVideoIndexerStudioServiceFromSettings(libraryStore library.Store, oneDrive videoIndexerOneDriveSource, editingSvc videoIndexerProjectSaver, settingsStore settings.Store, jobStore ...videoIndexerJobStore) *VideoIndexerStudioService {
+	return newVideoIndexerStudioService(libraryStore, oneDrive, editingSvc, settingsStore, nil, jobStore...)
+}
+
+func newVideoIndexerStudioService(libraryStore library.Store, oneDrive videoIndexerOneDriveSource, editingSvc videoIndexerProjectSaver, settingsStore settings.Store, client videoIndexerClient, jobStore ...videoIndexerJobStore) *VideoIndexerStudioService {
+	service := &VideoIndexerStudioService{
+		library:  libraryStore,
+		oneDrive: oneDrive,
+		editing:  editingSvc,
+		client:   client,
+		now:      func() time.Time { return time.Now().UTC() },
+		jobs:     map[string]VideoIndexerStudioJob{},
+	}
+	if settingsStore != nil {
+		service.clientFactory = func(ctx context.Context) (videoIndexerClient, error) {
+			return newVideoIndexerClientFromSettings(ctx, settingsStore)
+		}
+	}
+	if len(jobStore) > 0 {
+		service.store = jobStore[0]
+	} else {
+		service.store = newDefaultVideoIndexerJobStore()
+	}
+	if service.store == nil {
+		service.loaded = true
+	}
+	return service
+}
+
+func (s *VideoIndexerStudioService) SubmitForIndexing(ctx context.Context, assetID string) (*VideoIndexerStudioJob, error) {
+	client, err := s.clientFor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	asset, err := s.resolveAsset(ctx, assetID)
+	if err != nil {
+		return nil, err
+	}
+	clientOneDrive := s.oneDriveClient()
+	if clientOneDrive == nil || clientOneDrive.TokenProvider == nil {
+		return nil, errors.New("OneDrive client is not configured")
+	}
+	oneDriveToken, err := clientOneDrive.TokenProvider.AccessToken(ctx, clientOneDrive.Scopes)
+	if err != nil {
+		return nil, fmt.Errorf("resolve OneDrive access token: %w", err)
+	}
+	if strings.TrimSpace(oneDriveToken) == "" {
+		return nil, errors.New("OneDrive access token is empty")
+	}
+
+	now := s.nowTime()
+	jobID := s.nextJobID(now)
+	localJob := VideoIndexerStudioJob{
+		ID:        jobID,
+		AssetID:   asset.ID,
+		AssetName: asset.Name,
+		Status:    videoIndexerJobStatusSubmitted,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	resp, err := client.CreateJob(ctx, videoindexerstudio.CreateJobRequest{
+		OneDriveItemID:      asset.CloudAssetID,
+		OneDriveAccessToken: oneDriveToken,
+		SourceName:          asset.Name,
+		CorrelationID:       localJob.ID,
+	})
+	if err != nil {
+		localJob.Status = videoIndexerJobStatusFailed
+		localJob.ErrorMessage, localJob.Retryable = videoIndexerErrorDetails(err, false)
+		localJob.UpdatedAt = s.nowTime()
+		_ = s.saveJob(ctx, localJob)
+		emitVideoIndexerEvent("video-indexer:failed", localJob)
+		return nil, fmt.Errorf("submit video indexer job: %w", err)
+	}
+	if resp != nil {
+		localJob = s.mergeRemoteJob(localJob, resp, false)
+	}
+	if err := s.saveJob(ctx, localJob); err != nil {
+		return nil, err
+	}
+	if localJob.Status == videoIndexerJobStatusSucceeded {
+		emitVideoIndexerEvent("video-indexer:completed", localJob)
+	} else if localJob.Status == videoIndexerJobStatusFailed || localJob.Status == videoIndexerJobStatusCanceled {
+		emitVideoIndexerEvent("video-indexer:failed", localJob)
+	} else {
+		emitVideoIndexerEvent("video-indexer:progress", localJob)
+	}
+	return &localJob, nil
+}
+
+func (s *VideoIndexerStudioService) nextJobID(now time.Time) string {
+	seq := atomic.AddUint64(&s.submissionSeq, 1)
+	return fmt.Sprintf("video-indexer-%d-%d", now.UTC().UnixNano(), seq)
+}
+
+func (s *VideoIndexerStudioService) IndexingJobs(ctx context.Context) ([]VideoIndexerStudioJob, error) {
+	if err := s.ensureJobsLoaded(ctx); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	jobs := make([]VideoIndexerStudioJob, 0, len(s.jobs))
+	for _, job := range s.jobs {
+		jobs = append(jobs, job)
+	}
+	s.mu.Unlock()
+
+	for i := range jobs {
+		if isTerminalVideoIndexerStatus(jobs[i].Status) {
+			continue
+		}
+		updated, err := s.refreshJob(ctx, jobs[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		jobs[i] = updated
+	}
+	sort.Slice(jobs, func(i, j int) bool {
+		if jobs[i].CreatedAt.Equal(jobs[j].CreatedAt) {
+			return jobs[i].ID > jobs[j].ID
+		}
+		return jobs[i].CreatedAt.After(jobs[j].CreatedAt)
+	})
+	return jobs, nil
+}
+
+func (s *VideoIndexerStudioService) IndexingJob(ctx context.Context, jobID string) (*VideoIndexerStudioJob, error) {
+	job, err := s.loadJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if isTerminalVideoIndexerStatus(job.Status) {
+		return &job, nil
+	}
+	updated, err := s.refreshJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	return &updated, nil
+}
+
+func (s *VideoIndexerStudioService) CancelIndexing(ctx context.Context, jobID string) (*VideoIndexerStudioJob, error) {
+	client, err := s.clientFor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	job, err := s.loadJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	remoteID := strings.TrimSpace(job.RemoteJobID)
+	if remoteID == "" {
+		remoteID = strings.TrimSpace(job.ID)
+	}
+	resp, err := client.CancelJob(ctx, remoteID)
+	if err != nil {
+		return nil, fmt.Errorf("cancel video indexer job: %w", err)
+	}
+	if resp != nil {
+		job = s.mergeRemoteJob(job, resp, true)
+		if job.Status == videoIndexerJobStatusSubmitted {
+			job.Status = videoIndexerJobStatusCanceled
+		}
+		if resp.Job.Status == videoindexerstudio.JobStatusCanceled {
+			job.Status = videoIndexerJobStatusCanceled
+		}
+	} else if !isTerminalVideoIndexerStatus(job.Status) {
+		job.Status = videoIndexerJobStatusCanceled
+	}
+	if err := s.saveJob(ctx, job); err != nil {
+		return nil, err
+	}
+	emitVideoIndexerEvent(videoIndexerEventName(job.Status), job)
+	return &job, nil
+}
+
+func (s *VideoIndexerStudioService) CreateEditProject(ctx context.Context, jobID, suggestionID string) (editing.EditProject, error) {
+	if s.editing == nil {
+		return editing.EditProject{}, errors.New("editing service is not configured")
+	}
+	job, err := s.loadJob(ctx, jobID)
+	if err != nil {
+		return editing.EditProject{}, err
+	}
+	draft, err := selectTimelineDraft(job, suggestionID)
+	if err != nil {
+		return editing.EditProject{}, err
+	}
+	project, err := editing.ProjectFromTimelineDraft(draft)
+	if err != nil {
+		return editing.EditProject{}, err
+	}
+
+	selectedSuggestionID := strings.TrimSpace(suggestionID)
+	if selectedSuggestionID == "" {
+		selectedSuggestionID = strings.TrimSpace(draft.SuggestionID)
+	}
+	project.ID = deterministicProjectID(jobID, selectedSuggestionID)
+	if project.Name == "" {
+		if name := strings.TrimSpace(job.AssetName); name != "" {
+			if selectedSuggestionID != "" {
+				project.Name = fmt.Sprintf("%s - %s", name, selectedSuggestionID)
+			} else {
+				project.Name = name
+			}
+		} else {
+			project.Name = fmt.Sprintf("Video Indexer %s", jobID)
+		}
+	}
+
+	saved, err := s.editing.SaveProject(ctx, project)
+	if err != nil {
+		return editing.EditProject{}, err
+	}
+	job.SuggestionID = selectedSuggestionID
+	job.ProjectID = saved.ID
+	job.UpdatedAt = s.nowTime()
+	if err := s.saveJob(ctx, job); err != nil {
+		return editing.EditProject{}, err
+	}
+	return saved, nil
+}
+
+func (s *VideoIndexerStudioService) loadJob(ctx context.Context, jobID string) (VideoIndexerStudioJob, error) {
+	if err := s.ensureJobsLoaded(ctx); err != nil {
+		return VideoIndexerStudioJob{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job, ok := s.jobs[strings.TrimSpace(jobID)]
+	if !ok {
+		return VideoIndexerStudioJob{}, fmt.Errorf("video indexer job %q not found", jobID)
+	}
+	return job, nil
+}
+
+func (s *VideoIndexerStudioService) saveJob(ctx context.Context, job VideoIndexerStudioJob) error {
+	if err := s.ensureJobsLoaded(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.jobs == nil {
+		s.jobs = map[string]VideoIndexerStudioJob{}
+	}
+	if job.ID == "" {
+		return errors.New("video indexer job id is required")
+	}
+	s.jobs[job.ID] = job
+	return s.persistJobsLocked(ctx)
+}
+
+func (s *VideoIndexerStudioService) ensureJobsLoaded(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	if s.loaded {
+		s.mu.Unlock()
+		return nil
+	}
+	store := s.store
+	s.mu.Unlock()
+	if store == nil {
+		s.mu.Lock()
+		s.loaded = true
+		s.mu.Unlock()
+		return nil
+	}
+	jobs, err := store.Load(ctx)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.loaded {
+		return nil
+	}
+	if s.jobs == nil {
+		s.jobs = map[string]VideoIndexerStudioJob{}
+	}
+	for _, job := range jobs {
+		if job.ID == "" {
+			continue
+		}
+		s.jobs[job.ID] = job
+	}
+	s.loaded = true
+	return nil
+}
+
+func (s *VideoIndexerStudioService) persistJobsLocked(ctx context.Context) error {
+	if s == nil || s.store == nil {
+		return nil
+	}
+	jobs := make([]VideoIndexerStudioJob, 0, len(s.jobs))
+	for _, job := range s.jobs {
+		jobs = append(jobs, job)
+	}
+	sort.Slice(jobs, func(i, j int) bool {
+		if jobs[i].CreatedAt.Equal(jobs[j].CreatedAt) {
+			return jobs[i].ID > jobs[j].ID
+		}
+		return jobs[i].CreatedAt.After(jobs[j].CreatedAt)
+	})
+	return s.store.Save(ctx, jobs)
+}
+
+func (s *VideoIndexerStudioService) refreshJob(ctx context.Context, jobID string) (VideoIndexerStudioJob, error) {
+	client, err := s.clientFor(ctx)
+	if err != nil {
+		return VideoIndexerStudioJob{}, err
+	}
+	job, err := s.loadJob(ctx, jobID)
+	if err != nil {
+		return VideoIndexerStudioJob{}, err
+	}
+	if isTerminalVideoIndexerStatus(job.Status) || strings.TrimSpace(job.RemoteJobID) == "" {
+		return job, nil
+	}
+
+	resp, err := client.GetJob(ctx, job.RemoteJobID)
+	if err != nil {
+		job.ErrorMessage, job.Retryable = videoIndexerErrorDetails(err, true)
+		job.UpdatedAt = s.nowTime()
+		if !job.Retryable {
+			job.Status = videoIndexerJobStatusFailed
+		}
+		if saveErr := s.saveJob(ctx, job); saveErr != nil {
+			return VideoIndexerStudioJob{}, saveErr
+		}
+		if job.Retryable {
+			emitVideoIndexerEvent("video-indexer:progress", job)
+		} else {
+			emitVideoIndexerEvent("video-indexer:failed", job)
+		}
+		return job, nil
+	}
+	job = s.mergeRemoteJob(job, resp, true)
+	if err := s.saveJob(ctx, job); err != nil {
+		return VideoIndexerStudioJob{}, err
+	}
+	emitVideoIndexerEvent(videoIndexerEventName(job.Status), job)
+	return job, nil
+}
+
+func (s *VideoIndexerStudioService) resolveAsset(ctx context.Context, assetID string) (library.ProjectAsset, error) {
+	if s == nil || s.library == nil {
+		return library.ProjectAsset{}, errors.New("library store is not configured")
+	}
+	assets, err := s.library.LoadAssets(ctx)
+	if err != nil {
+		return library.ProjectAsset{}, fmt.Errorf("load assets: %w", err)
+	}
+	for i := range assets {
+		if strings.TrimSpace(assets[i].ID) == strings.TrimSpace(assetID) {
+			if strings.TrimSpace(assets[i].CloudAssetID) == "" {
+				return library.ProjectAsset{}, fmt.Errorf("asset %q has no cloud asset id", assetID)
+			}
+			return assets[i], nil
+		}
+	}
+	return library.ProjectAsset{}, fmt.Errorf("asset %q not found", assetID)
+}
+
+func (s *VideoIndexerStudioService) oneDriveClient() *onedrive.Client {
+	if s == nil || s.oneDrive == nil {
+		return (&OneDriveService{}).DriveClient()
+	}
+	return s.oneDrive.DriveClient()
+}
+
+func (s *VideoIndexerStudioService) nowTime() time.Time {
+	if s == nil || s.now == nil {
+		return time.Now().UTC()
+	}
+	return s.now()
+}
+
+func (s *VideoIndexerStudioService) clientFor(ctx context.Context) (videoIndexerClient, error) {
+	if s == nil {
+		return nil, fmt.Errorf("%w: video indexer service is not configured", errNotConfigured)
+	}
+	s.mu.Lock()
+	client := s.client
+	factory := s.clientFactory
+	s.mu.Unlock()
+	if client != nil {
+		return client, nil
+	}
+	if factory != nil {
+		return factory(ctx)
+	}
+	return nil, fmt.Errorf("%w: video indexer service is not configured", errNotConfigured)
+}
+
+func newVideoIndexerClientFromSettings(ctx context.Context, store settings.Store) (videoIndexerClient, error) {
+	if store == nil {
+		return nil, fmt.Errorf("%w: video indexer service is not configured", errNotConfigured)
+	}
+	loaded, err := store.Load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := videoIndexerConfigFromSettings(loaded)
+	if err != nil {
+		return nil, err
+	}
+	client, err := videoindexerstudio.NewClient(cfg, nil)
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
+func videoIndexerConfigFromSettings(cfg settings.AppSettings) (videoindexerstudio.Config, error) {
+	endpoint, err := videoindexerstudio.NormalizeEndpoint(cfg.VideoIndexerServiceEndpoint)
+	if err != nil {
+		return videoindexerstudio.Config{}, err
+	}
+	apiKey := strings.TrimSpace(cfg.VideoIndexerServiceAPIKey)
+	if endpoint == "" || apiKey == "" {
+		return videoindexerstudio.Config{}, fmt.Errorf("%w: video indexer service endpoint and API key are not configured", errNotConfigured)
+	}
+	return videoindexerstudio.Config{Endpoint: endpoint, APIKey: apiKey}, nil
+}
+
+func isTerminalVideoIndexerStatus(status string) bool {
+	switch status {
+	case videoIndexerJobStatusSucceeded, videoIndexerJobStatusFailed, videoIndexerJobStatusCanceled:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *VideoIndexerStudioService) mergeRemoteJob(job VideoIndexerStudioJob, resp *videoindexerstudio.JobResponse, updateLifecycle bool) VideoIndexerStudioJob {
+	if resp == nil {
+		return job
+	}
+	remote := resp.Job
+	if remote.ID != "" {
+		job.RemoteJobID = remote.ID
+	}
+	job.RemoteStatus = string(remote.Status)
+	job.Stage = firstNonEmpty(remote.VideoIndexerState, string(remote.Status))
+	if remote.VideoIndexerVideoID != "" {
+		job.VideoIndexerVideoID = remote.VideoIndexerVideoID
+	}
+	if remote.VideoIndexResult != nil {
+		job.VideoIndexResult = remote.VideoIndexResult
+	}
+	if remote.EditPlan != nil {
+		job.EditPlan = remote.EditPlan
+	}
+	if remote.TimelineDrafts != nil {
+		job.TimelineDrafts = append([]videoindexerstudio.TimelineDraft(nil), remote.TimelineDrafts...)
+	}
+	if remote.Checkpoints != nil {
+		job.Checkpoints = append([]videoindexerstudio.JobCheckpoint(nil), remote.Checkpoints...)
+	}
+	if !remote.CreatedAt.IsZero() {
+		job.CreatedAt = remote.CreatedAt
+	}
+	if !remote.UpdatedAt.IsZero() {
+		job.UpdatedAt = remote.UpdatedAt
+	} else if updateLifecycle {
+		job.UpdatedAt = s.nowTime()
+	}
+	if remote.StartedAt != nil {
+		job.StartedAt = remote.StartedAt
+	}
+	if remote.CompletedAt != nil {
+		job.CompletedAt = remote.CompletedAt
+	}
+	if strings.TrimSpace(remote.ClaimedBy) != "" {
+		job.ClaimedBy = strings.TrimSpace(remote.ClaimedBy)
+	}
+	if remote.Error != nil {
+		job.ErrorMessage = strings.TrimSpace(videoIndexerSanitizeErrorMessage(remote.Error.Message))
+		job.Retryable = remote.Error.Retryable
+	} else if updateLifecycle {
+		job.ErrorMessage = ""
+		job.Retryable = false
+	}
+	if updateLifecycle {
+		job.Status = mapRemoteStatus(remote.Status, job.Status)
+		return job
+	}
+	switch remote.Status {
+	case videoindexerstudio.JobStatusSucceeded:
+		job.Status = videoIndexerJobStatusSucceeded
+	case videoindexerstudio.JobStatusFailed:
+		job.Status = videoIndexerJobStatusFailed
+	case videoindexerstudio.JobStatusCanceled:
+		job.Status = videoIndexerJobStatusCanceled
+	}
+	return job
+}
+
+func videoIndexerErrorDetails(err error, defaultRetryable bool) (string, bool) {
+	type apiErrorCarrier interface {
+		APIError() videoindexerstudio.APIErrorResponse
+	}
+	var carrier apiErrorCarrier
+	if errors.As(err, &carrier) {
+		apiErr := carrier.APIError()
+		if message := strings.TrimSpace(apiErr.Message); message != "" {
+			return videoIndexerSanitizeErrorMessage(message), apiErr.Retryable
+		}
+		return videoIndexerSanitizeErrorMessage(err.Error()), apiErr.Retryable
+	}
+	return videoIndexerSanitizeErrorMessage(err.Error()), defaultRetryable
+}
+
+func videoIndexerSanitizeErrorMessage(message string) string {
+	return strings.TrimSpace(message)
+}
+
+func videoIndexerEventName(status string) string {
+	switch status {
+	case videoIndexerJobStatusSucceeded:
+		return "video-indexer:completed"
+	case videoIndexerJobStatusFailed, videoIndexerJobStatusCanceled:
+		return "video-indexer:failed"
+	default:
+		return "video-indexer:progress"
+	}
+}
+
+func mapRemoteStatus(remote videoindexerstudio.JobStatus, current string) string {
+	switch remote {
+	case videoindexerstudio.JobStatusSucceeded:
+		return videoIndexerJobStatusSucceeded
+	case videoindexerstudio.JobStatusFailed:
+		return videoIndexerJobStatusFailed
+	case videoindexerstudio.JobStatusCanceled:
+		return videoIndexerJobStatusCanceled
+	case videoindexerstudio.JobStatusQueued,
+		videoindexerstudio.JobStatusStaging,
+		videoindexerstudio.JobStatusStaged,
+		videoindexerstudio.JobStatusProcessing,
+		videoindexerstudio.JobStatusSubmitting,
+		videoindexerstudio.JobStatusIndexing,
+		videoindexerstudio.JobStatusNormalizing,
+		videoindexerstudio.JobStatusGenerating,
+		videoindexerstudio.JobStatusBuildingTimeline,
+		videoindexerstudio.JobStatusRunning:
+		if current == videoIndexerJobStatusSubmitted {
+			return videoIndexerJobStatusPolling
+		}
+		return videoIndexerJobStatusPolling
+	default:
+		return current
+	}
+}
+
+func selectTimelineDraft(job VideoIndexerStudioJob, suggestionID string) (videoindexerstudio.TimelineDraft, error) {
+	if len(job.TimelineDrafts) == 0 {
+		return videoindexerstudio.TimelineDraft{}, fmt.Errorf("video indexer job %q has no timeline drafts", job.ID)
+	}
+	suggestionID = strings.TrimSpace(suggestionID)
+	if suggestionID == "" {
+		if len(job.TimelineDrafts) == 1 {
+			return job.TimelineDrafts[0], nil
+		}
+		for _, draft := range job.TimelineDrafts {
+			if strings.TrimSpace(draft.SuggestionID) == strings.TrimSpace(job.SuggestionID) && draft.SuggestionID != "" {
+				return draft, nil
+			}
+		}
+		return videoindexerstudio.TimelineDraft{}, fmt.Errorf("video indexer job %q requires an explicit suggestion id", job.ID)
+	}
+	for _, draft := range job.TimelineDrafts {
+		if strings.TrimSpace(draft.SuggestionID) == suggestionID {
+			return draft, nil
+		}
+	}
+	return videoindexerstudio.TimelineDraft{}, fmt.Errorf("video indexer job %q does not contain suggestion %q", job.ID, suggestionID)
+}
+
+func deterministicProjectID(jobID, suggestionID string) string {
+	jobID = sanitizeIdentifier(jobID)
+	suggestionID = sanitizeIdentifier(suggestionID)
+	if suggestionID == "" {
+		return "video-indexer-" + jobID
+	}
+	return "video-indexer-" + jobID + "-" + suggestionID
+}
+
+func sanitizeIdentifier(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= '0' && r <= '9':
+			return r
+		case r == '-', r == '_':
+			return r
+		default:
+			return '-'
+		}
+	}, value)
+	value = strings.Trim(value, "-_")
+	if value == "" {
+		return "item"
+	}
+	return value
+}
+
+func emitVideoIndexerEvent(name string, job VideoIndexerStudioJob) {
+	app := application.Get()
+	if app == nil || app.Event == nil {
+		return
+	}
+	app.Event.Emit(name, job)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}

@@ -1,13 +1,145 @@
 package settings
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	cu "github.com/zecloud/ai-video-studio/internal/contentunderstanding"
 )
 
 var ctx = context.Background()
+
+type testSecretProtector struct{}
+
+func (testSecretProtector) Protect(_ string, plaintext []byte) ([]byte, error) {
+	out := append([]byte("protected:"), plaintext...)
+	for i := len("protected:"); i < len(out); i++ {
+		out[i] ^= 0x5a
+	}
+	return out, nil
+}
+
+func (testSecretProtector) Unprotect(_ string, ciphertext []byte) ([]byte, error) {
+	if !bytes.HasPrefix(ciphertext, []byte("protected:")) {
+		return nil, nil
+	}
+	out := append([]byte(nil), ciphertext[len("protected:"):]...)
+	for i := range out {
+		out[i] ^= 0x5a
+	}
+	return out, nil
+}
+
+func TestSettingsJSONOmitsProtectedKeys(t *testing.T) {
+	data, err := json.Marshal(AppSettings{
+		MediaServiceEndpoint:        "https://media.example",
+		MediaServiceAPIKey:          "media-secret",
+		VideoIndexerServiceEndpoint: "https://video.example",
+		VideoIndexerServiceAPIKey:   "video-secret",
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if bytes.Contains(data, []byte("media-secret")) || bytes.Contains(data, []byte("video-secret")) {
+		t.Fatalf("settings JSON leaked a protected key: %s", data)
+	}
+}
+
+func TestProtectedKeysRoundTripWithFakeProtector(t *testing.T) {
+	tmp := t.TempDir()
+	store := &FileStore{
+		path:      filepath.Join(tmp, "settings.json"),
+		defaults:  AppSettings{AzureContentUnderstanding: cu.Config{Endpoint: "https://cu.example", AnalyzerID: "analyzer", APIVersion: "2025-11-01", SourceMode: "https_url"}},
+		protector: testSecretProtector{},
+	}
+
+	want := AppSettings{
+		MediaServiceEndpoint:        "https://media.example",
+		MediaServiceAPIKey:          "media-secret",
+		VideoIndexerServiceEndpoint: "https://video.example",
+		VideoIndexerServiceAPIKey:   "video-secret",
+		AzureContentUnderstanding:   cu.Config{Endpoint: "https://cu.example", AnalyzerID: "analyzer", APIVersion: "2025-11-01", SourceMode: "https_url"},
+	}
+
+	saved, err := store.Save(ctx, want)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if saved.MediaServiceAPIKey != want.MediaServiceAPIKey || saved.VideoIndexerServiceAPIKey != want.VideoIndexerServiceAPIKey {
+		t.Fatalf("Save returned %#v", saved)
+	}
+
+	for _, path := range []string{store.mediaServiceKeyPath(), store.videoIndexerServiceKeyPath()} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q): %v", path, err)
+		}
+		if bytes.Contains(raw, []byte("secret")) {
+			t.Fatalf("protected file %q leaked plaintext: %q", path, raw)
+		}
+	}
+
+	loaded, err := store.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.MediaServiceAPIKey != want.MediaServiceAPIKey || loaded.VideoIndexerServiceAPIKey != want.VideoIndexerServiceAPIKey {
+		t.Fatalf("Load returned %#v", loaded)
+	}
+	if loaded.AzureContentUnderstanding != want.AzureContentUnderstanding {
+		t.Fatalf("CU settings changed: %#v", loaded.AzureContentUnderstanding)
+	}
+}
+
+func TestLoadLegacySettingsMigratesNewFields(t *testing.T) {
+	tmp := t.TempDir()
+	store := &FileStore{
+		path:      filepath.Join(tmp, "settings.json"),
+		defaults:  AppSettings{AzureContentUnderstanding: cu.Config{Endpoint: "https://cu.example", AnalyzerID: "analyzer", APIVersion: "2025-11-01", SourceMode: "https_url"}},
+		protector: testSecretProtector{},
+	}
+	if err := store.writeProtectedAPIKey("media-secret"); err != nil {
+		t.Fatalf("writeProtectedAPIKey: %v", err)
+	}
+	if err := store.writeProtectedVideoIndexerAPIKey("video-secret"); err != nil {
+		t.Fatalf("writeProtectedVideoIndexerAPIKey: %v", err)
+	}
+
+	legacy := `{
+	  "tenantId":"organizations",
+	  "clientId":"client-id",
+	  "oneDriveFolder":"AI Video Studio",
+	  "graphAuth":{"tenantId":"organizations","clientId":"client-id","authFlow":"device_code","scopes":["Files.ReadWrite.AppFolder"]},
+	  "oneDriveDestination":{"mode":"app_folder","displayName":"AI Video Studio app folder","path":"/Apps/AI Video Studio"},
+	  "azureContentUnderstanding":{"endpoint":"https://cu.example","analyzerId":"legacy-analyzer","apiVersion":"2025-01-01","sourceMode":"https_url"},
+	  "chunkSizeBytes":10485760,
+	  "maxConcurrentImports":1
+	}`
+	if err := os.WriteFile(store.path, []byte(legacy), 0o600); err != nil {
+		t.Fatalf("WriteFile settings: %v", err)
+	}
+
+	loaded, err := store.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.MediaServiceAPIKey != "media-secret" {
+		t.Fatalf("unexpected media API key: %q", loaded.MediaServiceAPIKey)
+	}
+	if loaded.VideoIndexerServiceAPIKey != "video-secret" {
+		t.Fatalf("unexpected video API key: %q", loaded.VideoIndexerServiceAPIKey)
+	}
+	if loaded.VideoIndexerServiceEndpoint != "" {
+		t.Fatalf("legacy settings should not invent a video endpoint: %q", loaded.VideoIndexerServiceEndpoint)
+	}
+	if loaded.AzureContentUnderstanding.AnalyzerID != "legacy-analyzer" || loaded.AzureContentUnderstanding.APIVersion != "2025-01-01" {
+		t.Fatalf("CU settings not preserved: %#v", loaded.AzureContentUnderstanding)
+	}
+}
 
 func TestRoundTripAPIKey(t *testing.T) {
 	tmp := t.TempDir()
@@ -41,7 +173,7 @@ func TestRoundTripAPIKey(t *testing.T) {
 	}
 
 	// Verify the sidecar file is NOT plaintext.
-	keyFile := store.keyPath()
+	keyFile := store.mediaServiceKeyPath()
 	data, err := os.ReadFile(keyFile)
 	if err != nil {
 		t.Fatalf("ReadFile(%q): %v", keyFile, err)
@@ -58,33 +190,33 @@ func TestRoundTripAPIKey(t *testing.T) {
 	}
 
 	// Save empty key -> preserves existing key (by design: leaving blank
-		// in settings UI should not accidentally clear a saved key)
-		_ = mustSave("")
-		// Verify key file still exists (key preserved).
-		if _, err := os.Stat(keyFile); os.IsNotExist(err) {
-			t.Fatalf("key file should still exist after save with empty key")
-		}
-		// Load and verify old key is still recoverable.
-		loaded2 := mustLoad()
-		if loaded2.MediaServiceAPIKey != orig {
-			t.Fatalf("Load after empty save returned key=%q, want %q", loaded2.MediaServiceAPIKey, orig)
-		}
-		// Explicitly clear via writeProtectedAPIKey.
-		if err := store.writeProtectedAPIKey(""); err != nil {
-			t.Fatalf("writeProtectedAPIKey(\"\"): %v", err)
-		}
-		if _, err := os.Stat(keyFile); !os.IsNotExist(err) {
-			t.Fatalf("key file should be removed after explicit clear")
-		}
-		// Now reload with a fresh store to confirm removal.
-		s3 := &FileStore{path: filepath.Join(tmp, "settings.json"), defaults: AppSettings{}}
-		loaded3, err := s3.Load(ctx)
-		if err != nil {
-			t.Fatalf("Load after clear: %v", err)
-		}
-		if loaded3.MediaServiceAPIKey != "" {
-			t.Fatalf("Load after clear returned key=%q, want \"\"", loaded3.MediaServiceAPIKey)
-		}
+	// in settings UI should not accidentally clear a saved key)
+	_ = mustSave("")
+	// Verify key file still exists (key preserved).
+	if _, err := os.Stat(keyFile); os.IsNotExist(err) {
+		t.Fatalf("key file should still exist after save with empty key")
+	}
+	// Load and verify old key is still recoverable.
+	loaded2 := mustLoad()
+	if loaded2.MediaServiceAPIKey != orig {
+		t.Fatalf("Load after empty save returned key=%q, want %q", loaded2.MediaServiceAPIKey, orig)
+	}
+	// Explicitly clear via writeProtectedAPIKey.
+	if err := store.writeProtectedAPIKey(""); err != nil {
+		t.Fatalf("writeProtectedAPIKey(\"\"): %v", err)
+	}
+	if _, err := os.Stat(keyFile); !os.IsNotExist(err) {
+		t.Fatalf("key file should be removed after explicit clear")
+	}
+	// Now reload with a fresh store to confirm removal.
+	s3 := &FileStore{path: filepath.Join(tmp, "settings.json"), defaults: AppSettings{}}
+	loaded3, err := s3.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load after clear: %v", err)
+	}
+	if loaded3.MediaServiceAPIKey != "" {
+		t.Fatalf("Load after clear returned key=%q, want \"\"", loaded3.MediaServiceAPIKey)
+	}
 }
 
 func TestKeyPersistenceAcrossStoreInstances(t *testing.T) {
@@ -126,7 +258,7 @@ func TestWriteProtectedAPIKeyClearsOnEmpty(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	// Verify key file exists.
-	keyFile := store.keyPath()
+	keyFile := store.mediaServiceKeyPath()
 	if _, err := os.Stat(keyFile); os.IsNotExist(err) {
 		t.Fatalf("key file not found after save")
 	}
@@ -163,7 +295,7 @@ func TestCorruptedCiphertext(t *testing.T) {
 	}
 
 	// Corrupt the ciphertext by truncating it.
-	keyFile := store.keyPath()
+	keyFile := store.mediaServiceKeyPath()
 	data, err := os.ReadFile(keyFile)
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
@@ -200,7 +332,7 @@ func TestMasterKeyIsCreatedOnNonWindows(t *testing.T) {
 	}
 
 	// Verify master key exists and is 32 bytes.
-	masterPath := filepath.Join(filepath.Dir(store.keyPath()), masterKeyFileName)
+	masterPath := filepath.Join(filepath.Dir(store.mediaServiceKeyPath()), masterKeyFileName)
 	master, err := os.ReadFile(masterPath)
 	if err != nil {
 		t.Fatalf("master key file not created: %v", err)
