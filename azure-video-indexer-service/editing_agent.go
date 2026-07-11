@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"path"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -102,7 +102,11 @@ func newEditPlanner(cfg editPlannerConfig) (EditPlanner, error) {
 }
 
 func defaultManagedIdentityCredentialFactory() (azcore.TokenCredential, error) {
-	return azidentity.NewManagedIdentityCredential(nil)
+	options := &azidentity.ManagedIdentityCredentialOptions{}
+	if clientID := strings.TrimSpace(os.Getenv("AZURE_CLIENT_ID")); clientID != "" {
+		options.ID = azidentity.ClientID(clientID)
+	}
+	return azidentity.NewManagedIdentityCredential(options)
 }
 
 func newFoundryEditPlannerRunner(endpoint string, credential azcore.TokenCredential, modelDeployment, agentName, instructions string, obs *Observability) (editPlannerRunner, error) {
@@ -129,8 +133,8 @@ type agentTextRunner interface {
 }
 
 type foundryAgentRunner struct {
-	agent          agentTextRunner
-	obs            *Observability
+	agent           agentTextRunner
+	obs             *Observability
 	modelDeployment string
 	promptVersion   string
 }
