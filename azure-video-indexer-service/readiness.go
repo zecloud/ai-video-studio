@@ -71,6 +71,24 @@ type storageReadiness interface {
 	CheckUserDelegationCredential(context.Context) error
 }
 
+func newAPIReadinessChecker(cfg Config, blob storageReadiness) readinessReporter {
+	checks := []readinessCheckSpec{
+		{name: "config", fn: func(context.Context) error { return cfg.Validate() }},
+		{name: "storage.staging", fn: func(ctx context.Context) error {
+			if blob == nil {
+				return errors.New("storage is not configured")
+			}
+			return blob.CheckContainer(ctx, cfg.StagingContainer)
+		}},
+		{name: "storage.jobs", fn: func(ctx context.Context) error {
+			if blob == nil {
+				return errors.New("storage is not configured")
+			}
+			return blob.CheckContainer(ctx, cfg.JobContainer)
+		}},
+	}
+	return newCachedReadinessChecker(func() time.Time { return time.Now().UTC() }, defaultReadinessTimeout, defaultReadinessCacheTTL, checks)
+}
 func newDefaultReadinessChecker(cfg Config, blob storageReadiness, vi videoIndexerReadiness, planner EditPlanner, lookPath func(string) (string, error)) readinessReporter {
 	checks := []readinessCheckSpec{
 		{name: "config", fn: func(context.Context) error { return cfg.Validate() }},

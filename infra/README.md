@@ -2,19 +2,30 @@
 
 Ce dossier contient l'infrastructure Bicep du nouveau pipeline Smart Edit base sur Azure AI Video Indexer. Le pipeline Azure Content Understanding reste independant et n'est pas modifie par ce deploiement.
 
+## Architecture Durable Task Scheduler
+
+`main.bicep` deploys the Video Indexer pipeline as two separate Container Apps backed by Azure Durable Task Scheduler (DTS):
+
+- `azure-video-indexer-api` exposes the authenticated HTTP API, streams OneDrive sources into Blob staging, writes the public `JobDocument` projection, and schedules DTS orchestration instances;
+- `azure-video-indexer-worker` has no ingress and runs the durable orchestration and short activities for Video Indexer, normalization, Foundry planning, timeline generation, cleanup, and cancellation compensation;
+- a serverless/Consumption DTS scheduler and task hub are provisioned in the deployment region with the Container Apps environment and Storage account;
+- API and worker have separate user-assigned identities. Both use `minReplicas: 0`; the API uses HTTP scaling and the worker uses `azure-durabletask-scheduler` activity and orchestration scaler rules.
+
+The original OneDrive delegated token is used only while the API synchronously stages the source Blob. It is not included in DTS input, history, output, status, or logs. Blob `JobDocument` remains the public source of truth for GET/list status endpoints; DTS is the execution engine. Azure Content Understanding remains independent and is not modified by this deployment.
+
+The worker depends on the experimental `durabletask-go` DTS backend pinned to immutable commit `9fa0fcd1a58ca379c0257c0b21ec9ce04df11795` from PR #122. Do not upgrade it automatically: validate the backend and scaler APIs in a non-production subscription before moving to a released compatible version.
+
 ## Ce que le deploiement cree
 
-`main.bicep` cree une stack dediee dans le resource group cible :
+`main.bicep` creates a dedicated stack in the target resource group:
 
-- un Container App `azure-video-indexer-service` ;
-- une identite managée system-assigned pour le Container App ;
-- un Storage Account avec les containers `video-indexer-staging` et `video-indexer-jobs` ;
-- un workspace Log Analytics et une instance Application Insights ;
-- les role assignments ACR Pull, Storage Blob Data Contributor, Foundry/OpenAI User et Video Indexer ;
-- la configuration du conteneur, ses probes et son image ACR immuable.
+- API and worker Container Apps using the same immutable image with `SERVICE_ROLE=api` and `SERVICE_ROLE=worker`;
+- a serverless DTS scheduler and task hub, the two user-assigned identities, and their scoped RBAC assignments;
+- a Storage Account with `video-indexer-staging` and `video-indexer-jobs` containers;
+- Log Analytics and Application Insights;
+- ACR Pull, Storage Blob Data Contributor, Foundry/OpenAI User, Video Indexer, and the built-in `Durable Task Data Contributor` role assignments scoped to the DTS scheduler.
 
-Les comptes ACR, Foundry/Azure OpenAI, Video Indexer et l'environnement Container Apps sont des ressources existantes fournies en paramètres. Le template ne cree pas de nouveau compte de modele ni de compte Video Indexer.
-
+Only the API has ingress. The worker is started by DTS work items and must retain both scaler rules for scale-from-zero. The built-in `Durable Task Data Contributor` role (`0ad04412-c4d5-4796-b79c-f76d14c8d402`) is assigned by Bicep at scheduler scope; no GitHub variable is required.
 ## Prerequis Azure
 
 Installer et authentifier Azure CLI :
@@ -221,19 +232,29 @@ Le workflow effectue deja le smoke test `/ready`. Pour verifier manuellement :
 
 ```bash
 FQDN="$(az containerapp show \
-  --name azure-video-indexer-service \
+  --name azure-video-indexer-service-api \
   --resource-group "<RESOURCE_GROUP>" \
   --query properties.configuration.ingress.fqdn -o tsv)"
 curl --fail "https://${FQDN}/health"
 curl --fail "https://${FQDN}/ready"
 ```
 
-`/health` est une liveness legere. `/ready` verifie aussi Storage, la delegation SAS, Video Indexer, Foundry et `ffmpeg`/`ffprobe`. Un retour `503` indique qu'une dependance ou une permission de runtime n'est pas prete.
+`/health` est une liveness legere. `/ready` de l'API verifie sa configuration et les containers Storage; le worker n'a pas d'ingress et ne doit pas etre teste via HTTP. Un retour `503` indique qu'une dependance ou une permission de runtime n'est pas prete.
 
 ## Depannage courant
 
 - **`AuthorizationFailed` pendant Bicep** : l'identite OIDC n'a pas `Contributor` ou `User Access Administrator` sur l'un des scopes.
 - **`Unable to resolve Container Apps environment ID`** : le nom ou le resource group de l'environnement est incorrect.
 - **Echec du role Video Indexer** : le resource ID du role est incorrect pour le tenant ; verifier le role dans Azure avant de relancer.
-- **`/ready` retourne `503`** : consulter les logs du Container App et verifier les role assignments de l'identite system-assigned, le endpoint Foundry projet et le deploiement `gpt-5.4`.
+- **`/ready` retourne `503`** : consulter les logs du Container App et verifier les role assignments des identites gerees assignees par l'utilisateur, le endpoint Foundry projet et le deploiement `gpt-5.4`.
 - **Smoke test en timeout** : verifier l'ingress HTTPS, le quota Container Apps et les logs Application Insights. Ne pas rendre `/ready` public avec une cle dans l'URL.
+
+## DTS identity and network boundary
+
+Both apps use separate user-assigned managed identities. The deployment sets each app's `AZURE_CLIENT_ID`, which is honored by `DefaultAzureCredential` in the immutable experimental `durabletask-go` dependency pinned by this service. This selects the corresponding UAMI for Storage and DTS without putting credentials in DTS inputs.
+
+The DTS API requires a non-empty IP allowlist. `main.bicep` currently uses `0.0.0.0/0` because Container Apps has no stable outbound IP in this topology. DTS access is still protected by Entra authentication and the scheduler-scoped `Durable Task Data Contributor` role. Restrict this list only after validating a stable, supported Container Apps egress design in the target environment.
+
+## Scale-to-zero validation
+
+After a validation deployment, confirm both apps are at zero replicas, then send an authenticated `POST /api/v1/index-jobs` using a non-sensitive test OneDrive fixture. Confirm the API wakes for staging, DTS schedules the orchestration, and both worker scaler rules wake the worker for orchestration and activity work items. Verify the Blob `JobDocument` reaches a terminal state and both apps return to zero after draining. This repository does not deploy a fallback execution backend.

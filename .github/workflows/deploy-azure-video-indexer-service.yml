@@ -20,6 +20,7 @@
 #   VIDEO_INDEXER_ACCOUNT_RESOURCE_GROUP Optional; defaults to AZURE_RESOURCE_GROUP.
 #   VIDEO_INDEXER_ACCOUNT_SUBSCRIPTION_ID Optional; defaults to AZURE_SUBSCRIPTION_ID.
 #   VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID Existing Video Indexer role definition resource ID.
+#   The Durable Task Data Contributor built-in role is assigned by Bicep; no role ID variable is required.
 #
 # Deployment principal requirements
 #   Contributor on the target resource group and on the ACR resource group if separate.
@@ -97,6 +98,15 @@ jobs:
             fi
           done
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: azure-video-indexer-service/go.mod
+          cache-dependency-path: azure-video-indexer-service/go.sum
+
+      - name: Test durable Video Indexer service
+        run: go test ./...
+        working-directory: azure-video-indexer-service
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -129,6 +139,29 @@ jobs:
             "." \
             --only-show-errors
 
+      - name: Validate Bicep deployment
+        run: |
+          set -euo pipefail
+          az deployment group validate \
+            --name "validate-azure-video-indexer-service-${GITHUB_RUN_ID}" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --template-file "infra/main.bicep" \
+            --parameters \
+              location="$AZURE_LOCATION" \
+              containerAppsEnvironmentId="$CONTAINER_APPS_ENVIRONMENT_ID" \
+              containerRegistryName="$ACR_NAME" \
+              containerRegistryResourceGroupName="$ACR_RESOURCE_GROUP" \
+              foundryAccountName="$FOUNDRY_ACCOUNT_NAME" \
+              foundryProjectEndpoint="$FOUNDRY_PROJECT_ENDPOINT" \
+              foundryAccountResourceGroupName="$FOUNDRY_ACCOUNT_RESOURCE_GROUP" \
+              foundryAccountSubscriptionId="$FOUNDRY_ACCOUNT_SUBSCRIPTION_ID" \
+              videoIndexerAccountName="$VIDEO_INDEXER_ACCOUNT_NAME" \
+              videoIndexerAccountResourceGroupName="$VIDEO_INDEXER_ACCOUNT_RESOURCE_GROUP" \
+              videoIndexerAccountSubscriptionId="$VIDEO_INDEXER_ACCOUNT_SUBSCRIPTION_ID" \
+              videoIndexerRoleDefinitionResourceId="$VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID" \
+              containerImageTag="$GITHUB_SHA" \
+              serviceApiKey="$VIDEO_INDEXER_API_KEY" \
+            --only-show-errors
       - name: Deploy infrastructure and service
         run: |
           set -euo pipefail

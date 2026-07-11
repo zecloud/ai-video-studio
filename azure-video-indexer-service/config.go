@@ -11,13 +11,12 @@ import (
 )
 
 type Config struct {
+	ServiceRole                string
 	ListenAddr                 string
 	APIKey                     string
 	StorageURL                 string
 	StagingContainer           string
 	JobContainer               string
-	QueueSize                  int
-	WorkerConcurrency          int
 	SASValidity                time.Duration
 	GraphBaseURL               string
 	VideoIndexerSubscriptionID string
@@ -26,17 +25,20 @@ type Config struct {
 	VideoIndexerAccountID      string
 	VideoIndexerLocation       string
 	VideoIndexerTimeout        time.Duration
+	DTSEndpoint                string
+	DTSTaskHub                 string
+	DTSCancellationGrace       time.Duration
+	ManagedIdentityClientID    string
 }
 
 func LoadConfig() (Config, error) {
 	cfg := Config{
+		ServiceRole:                getEnvDefault("SERVICE_ROLE", "api"),
 		ListenAddr:                 getEnvDefault("LISTEN_ADDR", ":8080"),
 		APIKey:                     os.Getenv("API_KEY"),
 		StorageURL:                 os.Getenv("AZURE_STORAGE_URL"),
 		StagingContainer:           getEnvDefault("AZURE_STORAGE_STAGING_CONTAINER", getEnvDefault("STAGING_CONTAINER", "video-indexer-staging")),
 		JobContainer:               getEnvDefault("AZURE_STORAGE_JOBS_CONTAINER", getEnvDefault("JOB_CONTAINER", "video-indexer-jobs")),
-		QueueSize:                  getEnvInt("QUEUE_SIZE", 16),
-		WorkerConcurrency:          getEnvInt("WORKER_CONCURRENCY", 1),
 		SASValidity:                getEnvDuration("SAS_VALIDITY", 2*time.Hour),
 		GraphBaseURL:               getEnvDefault("GRAPH_BASE_URL", "https://graph.microsoft.com/v1.0"),
 		VideoIndexerSubscriptionID: strings.TrimSpace(os.Getenv("AZURE_VIDEO_INDEXER_SUBSCRIPTION_ID")),
@@ -45,6 +47,10 @@ func LoadConfig() (Config, error) {
 		VideoIndexerAccountID:      strings.TrimSpace(os.Getenv("AZURE_VIDEO_INDEXER_ACCOUNT_ID")),
 		VideoIndexerLocation:       strings.TrimSpace(os.Getenv("AZURE_VIDEO_INDEXER_LOCATION")),
 		VideoIndexerTimeout:        getEnvDuration("AZURE_VIDEO_INDEXER_TIMEOUT", 30*time.Minute),
+		DTSEndpoint:                strings.TrimSpace(os.Getenv("DTS_ENDPOINT")),
+		DTSTaskHub:                 strings.TrimSpace(os.Getenv("DTS_TASK_HUB")),
+		DTSCancellationGrace:       getEnvDuration("DTS_CANCELLATION_GRACE", 30*time.Second),
+		ManagedIdentityClientID:    strings.TrimSpace(os.Getenv("AZURE_CLIENT_ID")),
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -54,6 +60,7 @@ func LoadConfig() (Config, error) {
 
 func (c Config) Normalize() Config {
 	c.ListenAddr = strings.TrimSpace(c.ListenAddr)
+	c.ServiceRole = strings.ToLower(strings.TrimSpace(c.ServiceRole))
 	c.APIKey = strings.TrimSpace(c.APIKey)
 	c.StorageURL = strings.TrimSpace(c.StorageURL)
 	c.StagingContainer = strings.TrimSpace(c.StagingContainer)
@@ -64,31 +71,33 @@ func (c Config) Normalize() Config {
 	c.VideoIndexerAccountName = strings.TrimSpace(c.VideoIndexerAccountName)
 	c.VideoIndexerAccountID = strings.TrimSpace(c.VideoIndexerAccountID)
 	c.VideoIndexerLocation = strings.TrimSpace(c.VideoIndexerLocation)
-	if c.QueueSize <= 0 {
-		c.QueueSize = 16
-	}
-	if c.WorkerConcurrency <= 0 {
-		c.WorkerConcurrency = 1
-	}
+	c.ManagedIdentityClientID = strings.TrimSpace(c.ManagedIdentityClientID)
+
 	if c.SASValidity <= 0 {
 		c.SASValidity = 2 * time.Hour
 	}
 	if c.VideoIndexerTimeout <= 0 {
 		c.VideoIndexerTimeout = 30 * time.Minute
 	}
+	if c.DTSCancellationGrace <= 0 {
+		c.DTSCancellationGrace = 30 * time.Second
+	}
 	return c
 }
 
 func (c Config) Validate() error {
 	c = c.Normalize()
+	if c.ServiceRole != "api" && c.ServiceRole != "worker" {
+		return fmt.Errorf("SERVICE_ROLE must be api or worker")
+	}
 	if c.ListenAddr == "" {
 		return fmt.Errorf("LISTEN_ADDR is required")
 	}
 	if _, err := net.ResolveTCPAddr("tcp", c.ListenAddr); err != nil {
 		return fmt.Errorf("LISTEN_ADDR must be a valid TCP listen address")
 	}
-	if c.APIKey == "" {
-		return fmt.Errorf("API_KEY environment variable is required")
+	if c.ServiceRole == "api" && c.APIKey == "" {
+		return fmt.Errorf("API_KEY environment variable is required for the API role")
 	}
 	if c.StorageURL == "" {
 		return fmt.Errorf("AZURE_STORAGE_URL environment variable is required")
@@ -108,17 +117,28 @@ func (c Config) Validate() error {
 	if _, err := url.ParseRequestURI(c.GraphBaseURL); err != nil {
 		return fmt.Errorf("GRAPH_BASE_URL must be an absolute URL: %w", err)
 	}
-	if c.VideoIndexerSubscriptionID == "" {
-		return fmt.Errorf("AZURE_VIDEO_INDEXER_SUBSCRIPTION_ID is required")
+	if c.ServiceRole == "worker" {
+		if c.VideoIndexerSubscriptionID == "" {
+			return fmt.Errorf("AZURE_VIDEO_INDEXER_SUBSCRIPTION_ID is required for the worker role")
+		}
+		if c.VideoIndexerResourceGroup == "" {
+			return fmt.Errorf("AZURE_VIDEO_INDEXER_RESOURCE_GROUP is required for the worker role")
+		}
+		if c.VideoIndexerAccountName == "" {
+			return fmt.Errorf("AZURE_VIDEO_INDEXER_ACCOUNT_NAME is required for the worker role")
+		}
+		if c.VideoIndexerTimeout <= 0 {
+			return fmt.Errorf("AZURE_VIDEO_INDEXER_TIMEOUT must be positive")
+		}
+		if c.ManagedIdentityClientID == "" {
+			return fmt.Errorf("AZURE_CLIENT_ID is required for the worker role")
+		}
 	}
-	if c.VideoIndexerResourceGroup == "" {
-		return fmt.Errorf("AZURE_VIDEO_INDEXER_RESOURCE_GROUP is required")
+	if c.DTSEndpoint == "" || c.DTSTaskHub == "" {
+		return fmt.Errorf("DTS_ENDPOINT and DTS_TASK_HUB are required")
 	}
-	if c.VideoIndexerAccountName == "" {
-		return fmt.Errorf("AZURE_VIDEO_INDEXER_ACCOUNT_NAME is required")
-	}
-	if c.VideoIndexerTimeout <= 0 {
-		return fmt.Errorf("AZURE_VIDEO_INDEXER_TIMEOUT must be positive")
+	if u, err := url.ParseRequestURI(c.DTSEndpoint); err != nil || u.Scheme != "https" || u.Host == "" {
+		return fmt.Errorf("DTS_ENDPOINT must be an absolute https URL")
 	}
 	return nil
 }

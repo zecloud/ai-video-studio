@@ -150,6 +150,12 @@ type videoIndexerIndexResponse struct {
 	Raw     json.RawMessage `json:"-"`
 }
 
+type videoIndexerVideoListResponse struct {
+	Results []struct {
+		ID      string `json:"id"`
+		VideoID string `json:"videoId"`
+	} `json:"results"`
+}
 type VideoIndexData interface {
 	VideoID() string
 	State() string
@@ -192,8 +198,12 @@ func NewVideoIndexerClient(cfg VideoIndexerConfig, credential azcore.TokenCreden
 	}, nil
 }
 
-func NewManagedIdentityVideoIndexerClient(cfg VideoIndexerConfig, httpClient HTTPDoer) (*VideoIndexerClient, error) {
-	cred, err := azidentity.NewManagedIdentityCredential(nil)
+func NewManagedIdentityVideoIndexerClient(cfg VideoIndexerConfig, clientID string, httpClient HTTPDoer) (*VideoIndexerClient, error) {
+	options := &azidentity.ManagedIdentityCredentialOptions{}
+	if clientID = strings.TrimSpace(clientID); clientID != "" {
+		options.ID = azidentity.ClientID(clientID)
+	}
+	cred, err := azidentity.NewManagedIdentityCredential(options)
 	if err != nil {
 		return nil, fmt.Errorf("creating managed identity credential: %w", err)
 	}
@@ -212,6 +222,22 @@ func (c *VideoIndexerClient) PollTimeout() time.Duration {
 		return defaultPollTimeout
 	}
 	return c.cfg.PollTimeout
+}
+
+// GetVideoIndexOnce retrieves the current remote state without waiting. Durable
+// orchestrations use it with a durable timer instead of holding a worker while
+// Video Indexer is processing a video.
+func (c *VideoIndexerClient) GetVideoIndexOnce(ctx context.Context, videoID string) (VideoIndexData, error) {
+	account, err := c.ResolveAccount(ctx)
+	if err != nil {
+		return nil, err
+	}
+	accessToken, err := c.AccountAccessToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	index, _, err := c.getVideoIndex(ctx, account, videoID, accessToken)
+	return index, err
 }
 
 func (c *VideoIndexerClient) ResolveAccount(ctx context.Context) (ResolvedVideoIndexerAccount, error) {
@@ -289,6 +315,55 @@ func (c *VideoIndexerClient) ResolveAccount(ctx context.Context) (ResolvedVideoI
 	return account, nil
 }
 
+// FindVideoByExternalID reconciles an ambiguous upload before an activity retries
+// or replays. UploadVideoURL always uses the durable job ID as externalId.
+func (c *VideoIndexerClient) FindVideoByExternalID(ctx context.Context, externalID string) (string, error) {
+	if strings.TrimSpace(externalID) == "" {
+		return "", nil
+	}
+	account, err := c.ResolveAccount(ctx)
+	if err != nil {
+		return "", err
+	}
+	accessToken, err := c.AccountAccessToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	values := url.Values{}
+	values.Set("accessToken", accessToken)
+	values.Set("externalId", externalID)
+	lookupURL := fmt.Sprintf("%s/%s/Accounts/%s/Videos?%s",
+		c.cfg.APIBaseURL,
+		url.PathEscape(account.Location),
+		url.PathEscape(account.AccountID),
+		values.Encode(),
+	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, lookupURL, nil)
+	if err != nil {
+		return "", &ServiceError{Status: http.StatusInternalServerError, Code: "request_build_failed", Message: redactURLsInText(err.Error()), Retryable: false}
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", &ServiceError{Status: http.StatusBadGateway, Code: "video_indexer_lookup_failed", Message: redactURLsInText(err.Error()), Retryable: true}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", decodeHTTPError(resp, "Video Indexer video lookup")
+	}
+	var decoded videoIndexerVideoListResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRequestBodyBytes)).Decode(&decoded); err != nil {
+		return "", &ServiceError{Status: http.StatusInternalServerError, Code: "video_lookup_decode_failed", Message: redactURLsInText(err.Error()), Retryable: false}
+	}
+	if len(decoded.Results) == 0 {
+		return "", nil
+	}
+	videoID := firstNonEmpty(decoded.Results[0].ID, decoded.Results[0].VideoID)
+	if videoID == "" {
+		return "", newServiceError(http.StatusInternalServerError, "video_lookup_missing_video_id", "Video Indexer video lookup returned an empty video id", false)
+	}
+	return videoID, nil
+}
 func (c *VideoIndexerClient) UploadVideoURL(ctx context.Context, videoURL, videoName, externalID string) (videoID string, err error) {
 	account, err := c.ResolveAccount(ctx)
 	if err != nil {

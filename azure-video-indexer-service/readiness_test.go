@@ -77,6 +77,7 @@ func (readinessEditPlanner) Plan(context.Context, string) (EditPlan, error) { re
 
 func validReadinessConfig() Config {
 	return Config{
+		ServiceRole:                "api",
 		ListenAddr:                 ":8080",
 		APIKey:                     "test-api-key",
 		StorageURL:                 "https://storage.example.com",
@@ -87,6 +88,8 @@ func validReadinessConfig() Config {
 		VideoIndexerResourceGroup:  "rg-1",
 		VideoIndexerAccountName:    "acct-1",
 		VideoIndexerTimeout:        time.Minute,
+		DTSEndpoint:                "https://scheduler.example.com",
+		DTSTaskHub:                 "video-indexer",
 	}
 }
 

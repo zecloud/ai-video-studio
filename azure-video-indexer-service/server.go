@@ -15,7 +15,7 @@ import (
 
 type Server struct {
 	cfg           Config
-	manager       *JobManager
+	jobs          JobService
 	obs           *Observability
 	blobSvc       *AzureBlobService
 	videoIndexer  videoIndexerReadiness
@@ -25,10 +25,10 @@ type Server struct {
 	readinessOnce sync.Once
 }
 
-func NewServer(cfg Config, manager *JobManager) *Server {
+func NewServer(cfg Config, jobs JobService) *Server {
 	return &Server{
 		cfg:      cfg.Normalize(),
-		manager:  manager,
+		jobs:     jobs,
 		lookPath: exec.LookPath,
 	}
 }
@@ -65,8 +65,8 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
-	if s.manager == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "job manager is not configured", "service_unavailable", true)
+	if s.jobs == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "job service is not configured", "service_unavailable", true)
 		return
 	}
 	var req CreateIndexJobRequest
@@ -74,7 +74,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid JSON request body", "bad_request", false)
 		return
 	}
-	job, err := s.manager.CreateJob(r.Context(), req)
+	job, err := s.jobs.CreateJob(r.Context(), req)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -87,8 +87,8 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
-	if s.manager == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "job manager is not configured", "service_unavailable", true)
+	if s.jobs == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "job service is not configured", "service_unavailable", true)
 		return
 	}
 	filter := strings.TrimSpace(r.URL.Query().Get("status"))
@@ -101,7 +101,7 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		}
 		status = parsed
 	}
-	jobs, err := s.manager.ListJobs(r.Context(), status)
+	jobs, err := s.jobs.ListJobs(r.Context(), status)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -110,8 +110,8 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
-	if s.manager == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "job manager is not configured", "service_unavailable", true)
+	if s.jobs == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "job service is not configured", "service_unavailable", true)
 		return
 	}
 	jobID := strings.TrimSpace(r.PathValue("jobID"))
@@ -119,7 +119,7 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, err.Error(), "validation_failed", false)
 		return
 	}
-	job, err := s.manager.GetJob(r.Context(), jobID)
+	job, err := s.jobs.GetJob(r.Context(), jobID)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -131,8 +131,8 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
-	if s.manager == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "job manager is not configured", "service_unavailable", true)
+	if s.jobs == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "job service is not configured", "service_unavailable", true)
 		return
 	}
 	jobID := strings.TrimSpace(r.PathValue("jobID"))
@@ -140,7 +140,7 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, err.Error(), "validation_failed", false)
 		return
 	}
-	job, err := s.manager.CancelJob(r.Context(), jobID)
+	job, err := s.jobs.CancelJob(r.Context(), jobID)
 	if err != nil {
 		writeServiceError(w, err)
 		return

@@ -6,6 +6,8 @@ services:
   azure-video-indexer-service:
     host: containerapp
     project: .
+    # The direct Bicep/GitHub workflow deploys API and worker roles from this image.
+    # azd service discovery remains a single image build definition only.
     image: ai-video-indexer-service
     docker:
       path: ./azure-video-indexer-service/Dockerfile
