@@ -1,0 +1,12 @@
+name: ai-video-studio
+metadata:
+  template: azd-init
+
+services:
+  azure-video-indexer-service:
+    host: containerapp
+    project: .
+    image: ai-video-indexer-service
+    docker:
+      path: ./azure-video-indexer-service/Dockerfile
+      remoteBuild: true

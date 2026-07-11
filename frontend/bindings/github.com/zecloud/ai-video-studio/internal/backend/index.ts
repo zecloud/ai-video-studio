@@ -11,6 +11,7 @@ import * as OneDriveService from "./onedriveservice.js";
 import * as ProjectLibraryService from "./projectlibraryservice.js";
 import * as SettingsService from "./settingsservice.js";
 import * as TransferService from "./transferservice.js";
+import * as VideoIndexerStudioService from "./videoindexerstudioservice.js";
 import * as VideoProcessingService from "./videoprocessingservice.js";
 export {
     AppService,
@@ -23,9 +24,12 @@ export {
     ProjectLibraryService,
     SettingsService,
     TransferService,
+    VideoIndexerStudioService,
     VideoProcessingService
 };
 
 export {
-    AppOverview
+    AppOverview,
+    ProtectedEndpointStatus,
+    VideoIndexerStudioJob
 } from "./models.js";

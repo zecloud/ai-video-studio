@@ -1,0 +1,59 @@
+{
+  "apiError": {
+    "code": "service_unavailable",
+    "message": "video indexer processing is not implemented yet",
+    "retryable": true
+  },
+  "createJobRequest": {
+    "oneDriveItemId": "item-001",
+    "oneDriveAccessToken": "token-abc",
+    "sourceName": "action-4-clip.mp4",
+    "callbackUrl": "https://callbacks.example.com/video-indexer/jobs",
+    "correlationId": "batch-001"
+  },
+  "jobDocument": {
+    "schemaVersion": 1,
+    "id": "job-001",
+    "status": "queued",
+    "oneDriveItemId": "item-001",
+    "sourceName": "action-4-clip.mp4",
+    "correlationId": "batch-001",
+    "createdAt": "2026-07-10T13:46:09Z",
+    "updatedAt": "2026-07-10T13:46:09Z"
+  },
+  "jobResponse": {
+    "job": {
+      "id": "job-001",
+      "status": "queued",
+      "oneDriveItemId": "item-001",
+      "sourceName": "action-4-clip.mp4",
+      "createdAt": "2026-07-10T13:46:09Z",
+      "updatedAt": "2026-07-10T13:46:09Z"
+    }
+  },
+  "jobListResponse": {
+    "jobs": [
+      {
+        "id": "job-001",
+        "status": "queued",
+        "oneDriveItemId": "item-001",
+        "sourceName": "action-4-clip.mp4",
+        "createdAt": "2026-07-10T13:46:09Z",
+        "updatedAt": "2026-07-10T13:46:09Z"
+      },
+      {
+        "id": "job-002",
+        "status": "failed",
+        "oneDriveItemId": "item-002",
+        "sourceName": "ride.mp4",
+        "createdAt": "2026-07-10T13:40:09Z",
+        "updatedAt": "2026-07-10T13:41:09Z",
+        "error": {
+          "code": "source_unavailable",
+          "message": "source URL was not reachable",
+          "retryable": true
+        }
+      }
+    ]
+  }
+}

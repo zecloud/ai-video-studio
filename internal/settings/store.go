@@ -11,13 +11,14 @@ import (
 )
 
 const (
-	DefaultAppDirName       = "AI Video Studio"
-	DefaultSettingsName     = "settings.json"
-	DefaultOneDriveFolder   = "AI Video Studio"
-	DefaultChunkSizeBytes   = int64(10 * 1024 * 1024)
-	DefaultMaxConcurrency   = 1
-	DefaultDestinationMode  = "app_folder"
-	mediaServiceKeyFileName = "mediaservice.key"
+	DefaultAppDirName              = "AI Video Studio"
+	DefaultSettingsName            = "settings.json"
+	DefaultOneDriveFolder          = "AI Video Studio"
+	DefaultChunkSizeBytes          = int64(10 * 1024 * 1024)
+	DefaultMaxConcurrency          = 1
+	DefaultDestinationMode         = "app_folder"
+	mediaServiceKeyFileName        = "mediaservice.key"
+	videoIndexerServiceKeyFileName = "videoindexerstudio.key"
 )
 
 var ErrSettingsPathUnavailable = errors.New("settings path is unavailable")
@@ -29,8 +30,9 @@ type Store interface {
 }
 
 type FileStore struct {
-	path     string
-	defaults AppSettings
+	path      string
+	defaults  AppSettings
+	protector secretProtector
 }
 
 func NewFileStore(path string, defaults AppSettings) *FileStore {
@@ -55,14 +57,61 @@ func (s *FileStore) Path() string {
 	return s.path
 }
 
-// keyPath returns the sidecar file path used to persist the media service API
-// key. It is stored outside settings.json because MediaServiceAPIKey is
-// json:"-" and must never be serialized alongside the rest of AppSettings.
-func (s *FileStore) keyPath() string {
+func (s *FileStore) secretPath(fileName string) string {
 	if s == nil || s.path == "" {
 		return ""
 	}
-	return filepath.Join(filepath.Dir(s.path), mediaServiceKeyFileName)
+	return filepath.Join(filepath.Dir(s.path), fileName)
+}
+
+func (s *FileStore) mediaServiceKeyPath() string {
+	return s.secretPath(mediaServiceKeyFileName)
+}
+
+func (s *FileStore) videoIndexerServiceKeyPath() string {
+	return s.secretPath(videoIndexerServiceKeyFileName)
+}
+
+func (s *FileStore) secretProtector() secretProtector {
+	if s != nil && s.protector != nil {
+		return s.protector
+	}
+	return defaultSecretProtector{}
+}
+
+func (s *FileStore) readProtectedKey(fileName string) string {
+	path := s.secretPath(fileName)
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	plain, err := s.secretProtector().Unprotect(path, data)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(plain))
+}
+
+func (s *FileStore) writeProtectedKey(fileName, plaintext string) error {
+	path := s.secretPath(fileName)
+	if path == "" {
+		return nil
+	}
+	if strings.TrimSpace(plaintext) == "" {
+		_ = os.Remove(path)
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	protected, err := s.secretProtector().Protect(path, []byte(strings.TrimSpace(plaintext)))
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, protected, 0o600)
 }
 
 func (s *FileStore) Load(_ context.Context) (AppSettings, error) {
@@ -73,6 +122,7 @@ func (s *FileStore) Load(_ context.Context) (AppSettings, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		loaded := s.defaults
 		loaded.MediaServiceAPIKey = s.readProtectedAPIKey()
+		loaded.VideoIndexerServiceAPIKey = s.readProtectedVideoIndexerAPIKey()
 		return loaded, nil
 	}
 	if err != nil {
@@ -84,6 +134,7 @@ func (s *FileStore) Load(_ context.Context) (AppSettings, error) {
 	}
 	normalized := Normalize(mergeDefaults(s.defaults, loaded))
 	normalized.MediaServiceAPIKey = s.readProtectedAPIKey()
+	normalized.VideoIndexerServiceAPIKey = s.readProtectedVideoIndexerAPIKey()
 	return normalized, nil
 }
 
@@ -92,8 +143,10 @@ func (s *FileStore) Save(_ context.Context, next AppSettings) (AppSettings, erro
 		return AppSettings{}, ErrSettingsPathUnavailable
 	}
 	normalized := Normalize(mergeDefaults(s.defaults, next))
-	apiKey := strings.TrimSpace(normalized.MediaServiceAPIKey)
+	mediaAPIKey := strings.TrimSpace(normalized.MediaServiceAPIKey)
+	videoIndexerAPIKey := strings.TrimSpace(normalized.VideoIndexerServiceAPIKey)
 	normalized.MediaServiceAPIKey = ""
+	normalized.VideoIndexerServiceAPIKey = ""
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return AppSettings{}, err
 	}
@@ -106,13 +159,21 @@ func (s *FileStore) Save(_ context.Context, next AppSettings) (AppSettings, erro
 	}
 	// Only overwrite the stored API key when a new one was provided so that
 	// leaving the field blank in the UI does not clear a previously saved key.
-	if apiKey != "" {
-		if err := s.writeProtectedAPIKey(apiKey); err != nil {
+	if mediaAPIKey != "" {
+		if err := s.writeProtectedAPIKey(mediaAPIKey); err != nil {
 			return AppSettings{}, err
 		}
-		normalized.MediaServiceAPIKey = apiKey
+		normalized.MediaServiceAPIKey = mediaAPIKey
 	} else {
 		normalized.MediaServiceAPIKey = s.readProtectedAPIKey()
+	}
+	if videoIndexerAPIKey != "" {
+		if err := s.writeProtectedVideoIndexerAPIKey(videoIndexerAPIKey); err != nil {
+			return AppSettings{}, err
+		}
+		normalized.VideoIndexerServiceAPIKey = videoIndexerAPIKey
+	} else {
+		normalized.VideoIndexerServiceAPIKey = s.readProtectedVideoIndexerAPIKey()
 	}
 	return normalized, nil
 }
@@ -146,6 +207,8 @@ func Normalize(next AppSettings) AppSettings {
 	if next.OneDriveDestination.Path == "" {
 		next.OneDriveDestination.Path = "/Apps/" + next.OneDriveFolder
 	}
+	next.MediaServiceEndpoint = strings.TrimRight(strings.TrimSpace(next.MediaServiceEndpoint), "/")
+	next.VideoIndexerServiceEndpoint = strings.TrimRight(strings.TrimSpace(next.VideoIndexerServiceEndpoint), "/")
 	if next.ChunkSizeBytes <= 0 {
 		next.ChunkSizeBytes = DefaultChunkSizeBytes
 	}

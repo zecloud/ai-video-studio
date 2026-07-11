@@ -31,6 +31,21 @@ import {
   TransferJob,
 } from "../bindings/github.com/zecloud/ai-video-studio/internal/transfer/models.js";
 import {
+  createVideoIndexerStudioState,
+  createEditProjectFromVideoIndexerJob,
+  cancelVideoIndexerJob,
+  loadVideoIndexerStudioState,
+  renderVideoIndexerSettingsCard,
+  renderVideoIndexerStudioPanel,
+  saveVideoIndexerSettings,
+  selectVideoIndexerJob,
+  setupVideoIndexerStudioEvents,
+  submitVideoIndexerAssets,
+  refreshVideoIndexerStudioState,
+  toggleVideoIndexerAssetSelection,
+  VideoIndexerStudioViewState,
+} from "./video-indexer-studio.js";
+import {
   AnalysisViewState,
   createAnalysisState,
   refreshAnalysisState,
@@ -55,7 +70,7 @@ import {
 } from "./editing.js";
 
 type Tone = "success" | "warning" | "danger" | "info" | "neutral";
-type AppView = "camera" | "transfers" | "library" | "analysis" | "editing" | "settings";
+type AppView = "camera" | "transfers" | "library" | "analysis" | "smart-edit" | "editing" | "settings";
 
 type StatusItem = {
   label: string;
@@ -127,6 +142,7 @@ type AppState = {
     selectedAssetId: string | null;
     loading: boolean;
     analysis: AnalysisViewState;
+    smartEdit: VideoIndexerStudioViewState;
         editing: EditingViewState;
     };
 
@@ -198,6 +214,7 @@ const state: AppState = {
     selectedAssetId: null,
   loading: true,
   analysis: createAnalysisState(),
+    smartEdit: createVideoIndexerStudioState(),
     editing: createEditingState(),
   };
 
@@ -210,6 +227,7 @@ if (!app) {
 const root = app;
 let transferQueuePollID: number | undefined;
 let transferQueueRefreshInFlight = false;
+let mainDelegatedListenersInitialized = false;
 
 function escapeHTML(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
@@ -554,6 +572,7 @@ function renderSettingsPanel(): string {
         <p class="queue-message">The API key is never displayed once saved. Leave it blank to keep the stored key unchanged.</p>
       </div>
     </section>
+    ${renderVideoIndexerSettingsCard(state.smartEdit)}
     <section class="panel" id="settings-status" aria-labelledby="settings-status-title">
       <div class="panel-header">
         <div>
@@ -725,6 +744,30 @@ function renderDetailsPanel(destinationPath: string): string {
     `;
   }
 
+  if (state.activeView === "smart-edit") {
+    const selectedJob = state.smartEdit.jobs.find((job) => job.id === state.smartEdit.selectedJobID) || state.smartEdit.jobs[0] || null;
+    const selectedAssets = state.smartEdit.assets.filter((asset) => state.smartEdit.selectedAssetIDs.includes(asset.id));
+    const selectedAssetNames = selectedAssets.map((asset) => escapeHTML(asset.name || asset.id)).join(", ");
+    return `
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Smart Edit summary</p>
+            <h3>${selectedJob ? escapeHTML(selectedJob.assetName || selectedJob.assetId) : "No job selected"}</h3>
+          </div>
+          ${renderBadge(selectedJob ? selectedJob.status : "Empty", selectedJob ? (selectedJob.status === "succeeded" ? "success" : selectedJob.status === "failed" ? "danger" : "warning") : "neutral")}
+        </div>
+        <div class="detail-body">
+          <div class="kv"><span>Selected assets</span><strong>${selectedAssets.length ? selectedAssetNames : "None"}</strong></div>
+          <div class="kv"><span>Jobs</span><strong>${state.smartEdit.jobs.length}</strong></div>
+          <div class="kv"><span>Configured</span><strong>${state.smartEdit.settings.status?.configured ? "Yes" : "No"}</strong></div>
+          <div class="kv"><span>Endpoint</span><strong>${escapeHTML(state.smartEdit.settings.status?.endpoint || state.smartEdit.settings.endpoint || "—")}</strong></div>
+          <p class="queue-message">Create edit projects only when a timeline draft is ready. Rendering stays in the Editing Studio.</p>
+        </div>
+      </section>
+    `;
+  }
+
   return "";
 }
 
@@ -736,6 +779,8 @@ function renderActiveView(selectedCount: number): string {
       return `${renderLocalMediaTable()}${renderTransferQueuePanel()}`;
     case "settings":
       return renderSettingsPanel();
+    case "smart-edit":
+      return renderVideoIndexerStudioPanel(state.smartEdit);
     case "editing":
           return renderEditingPanelWrapper();
     case "library":
@@ -834,6 +879,8 @@ function renderLibraryAssetDetail(asset: ProjectAsset): string {
       return "Project library";
     case "analysis":
       return "Analysis studio";
+    case "smart-edit":
+      return "Smart Edit Studio";
     case "editing":
       return "Editing studio";
     case "settings":
@@ -865,6 +912,7 @@ function render(): void {
           <button type="button" data-action="navigate" data-view="transfers" aria-current="${state.activeView === "transfers" ? "page" : "false"}">Transfers <small>${queue.length} jobs</small></button>
           <button type="button" data-action="navigate" data-view="library" aria-current="${state.activeView === "library" ? "page" : "false"}">Library <small>${state.libraryAssets.length} assets</small></button>
           <button type="button" data-action="navigate" data-view="analysis" aria-current="${state.activeView === "analysis" ? "page" : "false"}">Analysis <small>${state.analysis.jobs.length} jobs</small></button>
+          <button type="button" data-action="navigate" data-view="smart-edit" aria-current="${state.activeView === "smart-edit" ? "page" : "false"}">Smart Edit Studio <small>${state.smartEdit.jobs.length} jobs</small></button>
           <button type="button" data-action="navigate" data-view="editing" aria-current="${state.activeView === "editing" ? "page" : "false"}">Editing <small>1 render</small></button>
           <button type="button" data-action="navigate" data-view="settings" aria-current="${state.activeView === "settings" ? "page" : "false"}">Settings <small>safe</small></button>
         </nav>
@@ -969,6 +1017,9 @@ progress=continue</pre>
     });
   });
 
+  if (!mainDelegatedListenersInitialized) {
+    mainDelegatedListenersInitialized = true;
+
     // Library table row clicks
     root.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
@@ -1034,6 +1085,106 @@ progress=continue</pre>
         if (assetId) {
           void resubmitAssetAndRefresh(assetId);
         }
+      }
+    });
+
+    // Smart Edit Studio actions
+    root.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+
+      if (target.closest("[data-action='video-indexer-save-settings']")) {
+        void saveVideoIndexerSettings(
+          state.smartEdit,
+          state.smartEdit.settings.endpoint,
+          state.smartEdit.settings.apiKey,
+        ).then(() => render());
+        return;
+      }
+
+      if (target.closest("[data-action='video-indexer-refresh']")) {
+        void refreshVideoIndexerStudioState(state.smartEdit).then(() => {
+          state.libraryAssets = state.smartEdit.assets;
+          render();
+        });
+        return;
+      }
+
+      if (target.closest("[data-action='video-indexer-submit-selected']")) {
+        void submitVideoIndexerAssets(state.smartEdit).then(({ submitted, failed }) => {
+          state.smartEdit.message =
+            submitted === 0 && failed === 0
+              ? "No eligible selected assets were found."
+              : `Submitted ${submitted} asset${submitted === 1 ? "" : "s"}${failed ? `, ${failed} failed` : ""}.`;
+          state.libraryAssets = state.smartEdit.assets;
+          render();
+        });
+        return;
+      }
+
+      if (target.closest("[data-action='video-indexer-submit-pending']")) {
+        void submitVideoIndexerAssets(state.smartEdit, []).then(({ submitted, failed }) => {
+          state.smartEdit.message =
+            submitted === 0 && failed === 0
+              ? "No pending assets were available."
+              : `Submitted ${submitted} pending asset${submitted === 1 ? "" : "s"}${failed ? `, ${failed} failed` : ""}.`;
+          state.libraryAssets = state.smartEdit.assets;
+          render();
+        });
+        return;
+      }
+
+      const toggleAsset = target.closest<HTMLButtonElement | HTMLInputElement>("[data-action='video-indexer-toggle-asset']");
+      if (toggleAsset) {
+        toggleVideoIndexerAssetSelection(state.smartEdit, toggleAsset.dataset.assetId || "");
+        render();
+        return;
+      }
+
+      const viewJob = target.closest<HTMLButtonElement>("[data-action='video-indexer-view-job']");
+      if (viewJob) {
+        selectVideoIndexerJob(state.smartEdit, viewJob.dataset.jobId || null);
+        render();
+        return;
+      }
+
+      const cancelJob = target.closest<HTMLButtonElement>("[data-action='video-indexer-cancel-job']");
+      if (cancelJob) {
+        const jobID = cancelJob.dataset.jobId || "";
+        if (jobID) {
+          void cancelVideoIndexerJob(state.smartEdit, jobID)
+            .then(() => {
+              state.smartEdit.selectedJobID = jobID;
+              render();
+            })
+            .catch((error) => {
+              state.smartEdit.message = error instanceof Error ? error.message : "Canceling the Video Indexer job failed.";
+              render();
+            });
+        }
+        return;
+      }
+
+      const createProject = target.closest<HTMLButtonElement>("[data-action='video-indexer-create-project']");
+      if (createProject) {
+        const jobID = createProject.dataset.jobId || "";
+        const suggestionID = createProject.dataset.suggestionId || "";
+        if (jobID) {
+          void createEditProjectFromVideoIndexerJob(state.smartEdit, jobID, suggestionID)
+            .then((project) => {
+              if (project) {
+                state.activeView = "editing";
+                state.editing.activeProject = project;
+                void loadEditingData(state.editing).then(() => render());
+                return;
+              }
+              render();
+            })
+            .catch((error) => {
+              state.smartEdit.message = error instanceof Error ? error.message : "Creating the edit project failed.";
+              render();
+            });
+        }
+        return;
       }
     });
 
@@ -1118,8 +1269,20 @@ progress=continue</pre>
           }
         });
 
-      root.querySelector<HTMLButtonElement>("[data-action='start-transfer']")?.addEventListener("click", () => {
-    void startSelectedTransfer();
+        root.addEventListener("input", (event) => {
+          const target = event.target as HTMLInputElement;
+          if (target.dataset.setting === "video-indexer-endpoint") {
+            state.smartEdit.settings.endpoint = target.value;
+            return;
+          }
+          if (target.dataset.setting === "video-indexer-apikey") {
+            state.smartEdit.settings.apiKey = target.value;
+          }
+        });
+  }
+
+  root.querySelector<HTMLButtonElement>("[data-action='start-transfer']")?.addEventListener("click", () => {
+        void startSelectedTransfer();
   });
 
   root.querySelectorAll<HTMLButtonElement>("[data-action='choose-local-files']").forEach((button) => {
@@ -1262,8 +1425,11 @@ async function readServiceStatus(): Promise<void> {
     { label: "FFmpeg", value: ffmpegStatus.value, tone: ffmpegStatus.tone },
     {
       label: "Active work",
-      value: `${visibleTransferQueue().length} transfers, 0 renders`,
-      tone: visibleTransferQueue().length ? "info" : "neutral",
+      value: `${visibleTransferQueue().length} transfers, 0 renders, ${state.smartEdit.jobs.filter((job) => job.status === "submitted" || job.status === "polling").length} VI jobs`,
+      tone:
+        visibleTransferQueue().length || state.smartEdit.jobs.filter((job) => job.status === "submitted" || job.status === "polling").length
+          ? "info"
+          : "neutral",
     },
   ];
 
@@ -1290,7 +1456,9 @@ async function refreshServiceStatus(): Promise<void> {
   render();
   await readServiceStatus();
   await refreshTransferJobs();
-  await loadLibraryAssets();
+  await refreshVideoIndexerStudioState(state.smartEdit);
+  state.libraryAssets = state.smartEdit.assets;
+  state.analysis.assets = state.smartEdit.assets;
   state.transferMessage = "Diagnostics refreshed from Wails services.";
   render();
 }
@@ -1360,8 +1528,16 @@ async function loadLibraryAssets(): Promise<void> {
   try {
     const lib = await ProjectLibraryService.Current();
     state.libraryAssets = lib.assets ?? [];
+    state.analysis.assets = state.libraryAssets;
+    state.smartEdit.assets = state.libraryAssets;
+    state.smartEdit.selectedAssetIDs = state.smartEdit.selectedAssetIDs.filter((assetID) =>
+      state.libraryAssets.some((asset) => asset.id === assetID),
+    );
   } catch {
     state.libraryAssets = [];
+    state.analysis.assets = [];
+    state.smartEdit.assets = [];
+    state.smartEdit.selectedAssetIDs = [];
   }
 }
 
@@ -1700,5 +1876,14 @@ render();
 void refreshServiceStatus();
 void refreshAnalysisState(state.analysis).then(() => render());
 setupAnalysisEvents(state.analysis, () => render());
+setupVideoIndexerStudioEvents(state.smartEdit, () => {
+  state.libraryAssets = state.smartEdit.assets;
+  state.analysis.assets = state.smartEdit.assets;
+  render();
+});
 setupEditingEvents(state.editing, () => render());
+void loadVideoIndexerStudioState(state.smartEdit).then(() => {
+  state.libraryAssets = state.smartEdit.assets;
+  render();
+});
 void loadEditingData(state.editing).then(() => render());

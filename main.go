@@ -24,6 +24,8 @@ func main() {
 	libraryStore := backend.NewLibraryStore()
 	cuService := backend.NewContentUnderstandingServiceFromSettings(settingsStore)
 	mediaClient := backend.NewMediaServiceClient(settingsStore)
+	editingService := backend.NewEditingService(libraryStore, mediaClient, oneDriveService.DriveClient())
+	videoIndexerService := backend.NewVideoIndexerStudioServiceFromSettings(libraryStore, oneDriveService, editingService, settingsStore)
 
 	app := application.New(application.Options{
 		Name:        "AI Video Studio",
@@ -35,7 +37,8 @@ func main() {
 			application.NewService(backend.NewTransferService(oneDriveService, libraryStore)),
 			application.NewService(oneDriveService),
 			application.NewService(cuService),
-			application.NewService(backend.NewEditingService(libraryStore, mediaClient, oneDriveService.DriveClient())),
+			application.NewService(editingService),
+			application.NewService(videoIndexerService),
 			application.NewService(backend.NewVideoProcessingService()),
 			application.NewService(backend.NewProjectLibraryService(libraryStore, oneDriveService, mediaClient)),
 			application.NewService(settingsService),

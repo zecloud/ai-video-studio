@@ -66,6 +66,99 @@ func TestCopyToBlob_Success(t *testing.T) {
 	}
 }
 
+func TestAnalyze_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/analyze" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			t.Fatalf("unexpected Content-Type header: %q", got)
+		}
+		if got := r.Header.Get("Accept"); got != "application/json" {
+			t.Fatalf("unexpected Accept header: %q", got)
+		}
+
+		var req AnalyzeRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("failed to decode request: %v", err)
+		}
+		wantReq := AnalyzeRequest{
+			OneDriveItemID: "item-123",
+			OneDriveToken:  "token-abc",
+			AssetID:        "asset-1",
+			AssetName:      "clip.mp4",
+		}
+		if req != wantReq {
+			t.Fatalf("unexpected request:\nwant: %#v\ngot:  %#v", wantReq, req)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(AnalyzeResult{
+			JobID:  "job-1",
+			Status: "Succeeded",
+			Scenes: []AnalyzeScene{{
+				ID:        "scene-1",
+				StartMS:   0,
+				EndMS:     1000,
+				Labels:    []string{"outdoor"},
+				Summary:   "opening",
+				Highlight: true,
+			}},
+			Transcript: []AnalyzeTranscript{{
+				StartMS: 0,
+				EndMS:   1000,
+				Text:    "hello",
+				Speaker: "speaker-1",
+				Score:   0.9,
+			}},
+			Highlights: []AnalyzeHighlight{{
+				ID:      "highlight-1",
+				StartMS: 0,
+				EndMS:   1000,
+				Reason:  "action",
+				Score:   0.8,
+			}},
+			Suggestions: []AnalyzeSuggestion{{
+				ID:          "suggestion-1",
+				Title:       "Trim intro",
+				Description: "Remove the first second.",
+				SceneIDs:    []string{"scene-1"},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(testConfig(server.URL), server.Client())
+	result, err := client.Analyze(context.Background(), AnalyzeRequest{
+		OneDriveItemID: "item-123",
+		OneDriveToken:  "token-abc",
+		AssetID:        "asset-1",
+		AssetName:      "clip.mp4",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.JobID != "job-1" || result.Status != "Succeeded" {
+		t.Fatalf("unexpected metadata: %+v", result)
+	}
+	if len(result.Scenes) != 1 || result.Scenes[0].ID != "scene-1" || !result.Scenes[0].Highlight {
+		t.Fatalf("unexpected scenes: %+v", result.Scenes)
+	}
+	if len(result.Transcript) != 1 || result.Transcript[0].Text != "hello" {
+		t.Fatalf("unexpected transcript: %+v", result.Transcript)
+	}
+	if len(result.Highlights) != 1 || result.Highlights[0].Reason != "action" {
+		t.Fatalf("unexpected highlights: %+v", result.Highlights)
+	}
+	if len(result.Suggestions) != 1 || result.Suggestions[0].Title != "Trim intro" {
+		t.Fatalf("unexpected suggestions: %+v", result.Suggestions)
+	}
+}
+
 func TestCopyToBlob_ServerError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

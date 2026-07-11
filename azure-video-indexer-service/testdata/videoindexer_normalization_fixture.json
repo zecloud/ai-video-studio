@@ -1,0 +1,227 @@
+{
+  "id": "video-root-001",
+  "videoId": "video-root-001",
+  "state": "Processed",
+  "duration": "0:00:12.500",
+  "language": "en-US",
+  "sourceLanguage": "en-US",
+  "sourceLanguages": ["en-US", "es-ES"],
+  "videos": [
+    {
+      "id": "source-video-1",
+      "sourceId": "source-a",
+      "duration": "0:00:12.500",
+      "language": "en-US",
+      "confidence": 0.98
+    },
+    {
+      "id": "source-video-2",
+      "sourceId": "source-b",
+      "duration": "0:00:04.000",
+      "language": "es-ES",
+      "confidence": 0.76,
+      "insights": {
+        "duration": "0:00:04.000",
+        "language": "es-ES",
+        "sourceLanguage": "es-ES",
+        "sourceLanguages": ["es-ES"],
+        "transcript": [
+          {
+            "id": 3,
+            "text": "Hola",
+            "confidence": 0.88,
+            "speakerId": 2,
+            "language": "es-ES",
+            "instances": [
+              {
+                "start": "0:00:00",
+                "end": "0:00:01.000"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "insights": {
+    "version": "1.0.0.0",
+    "duration": "0:00:12.500",
+    "sourceLanguage": "en-US",
+    "sourceLanguages": ["en-US", "es-ES"],
+    "language": "en-US",
+    "speakers": [
+      {"id": 1, "name": "Speaker #1"},
+      {"id": 2, "name": "Speaker #2"}
+    ],
+    "scenes": [
+      {
+        "id": 2,
+        "instances": [
+          {
+            "start": "0:00:05.500",
+            "end": "0:00:12.700"
+          }
+        ]
+      },
+      {
+        "id": 1,
+        "instances": [
+          {
+            "adjustedStart": "0:00:00",
+            "adjustedEnd": "0:00:05.600",
+            "start": "0:00:00",
+            "end": "0:00:05.600"
+          }
+        ]
+      }
+    ],
+    "shots": [
+      {
+        "id": 2,
+        "tags": ["Medium"],
+        "instances": [
+          {
+            "start": "0:00:05.500",
+            "end": "0:00:12.700"
+          }
+        ],
+        "keyFrames": [
+          {
+            "id": 4,
+            "instances": [
+              {
+                "thumbnailId": "thumb-4",
+                "thumbnailUrl": "https://thumbs.example.com/thumb-4.jpg?sig=secret-token&st=1",
+                "start": "0:00:08.000",
+                "end": "0:00:08.033"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 1,
+        "tags": ["Wide", "Medium"],
+        "instances": [
+          {
+            "start": "0:00:00",
+            "end": "0:00:05.500"
+          }
+        ],
+        "keyFrames": [
+          {
+            "id": 1,
+            "instances": [
+              {
+                "thumbnailId": "thumb-1",
+                "start": "0:00:00.000",
+                "end": "0:00:00.0333333"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "instances": [
+              {
+                "thumbnailId": "thumb-2",
+                "start": "0:00:01.000",
+                "end": "0:00:01.0333333"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "transcript": [
+      {
+        "id": 2,
+        "text": "Second line",
+        "confidence": 0.91,
+        "speakerId": 2,
+        "language": "en-US",
+        "instances": [
+          {
+            "start": "0:00:00.500",
+            "end": "0:00:02.200"
+          }
+        ]
+      },
+      {
+        "id": 1,
+        "text": "First line",
+        "confidence": 0.95,
+        "speakerId": 1,
+        "language": "en-US",
+        "instances": [
+          {
+            "start": "0:00:00",
+            "end": "0:00:01.000"
+          }
+        ]
+      },
+      {
+        "id": 1,
+        "text": "First line",
+        "confidence": 0.95,
+        "speakerId": 1,
+        "language": "en-US",
+        "instances": [
+          {
+            "start": "0:00:00",
+            "end": "0:00:01.000"
+          }
+        ]
+      }
+    ],
+    "ocr": [
+      {
+        "id": 1,
+        "text": "Hello",
+        "confidence": 0.8,
+        "left": 10,
+        "top": 20,
+        "width": 100,
+        "height": 30,
+        "angle": 0,
+        "language": "en-US",
+        "instances": [
+          {
+            "start": "0:00:02.000",
+            "end": "0:00:02.500"
+          }
+        ]
+      }
+    ],
+    "labels": [
+      {
+        "id": 1,
+        "name": "person",
+        "referenceId": "person",
+        "language": "en-US",
+        "instances": [
+          {
+            "confidence": 0.99,
+            "start": "0:00:00",
+            "end": "0:00:05.500"
+          }
+        ]
+      }
+    ],
+    "detectedObjects": [
+      {
+        "id": 1,
+        "type": "Car",
+        "thumbnailId": "obj-thumb-1",
+        "displayName": "car",
+        "wikiDataId": "Q1420",
+        "instances": [
+          {
+            "confidence": 0.46,
+            "start": "0:00:05.400",
+            "end": "0:00:12.600"
+          }
+        ]
+      }
+    ]
+  }
+}

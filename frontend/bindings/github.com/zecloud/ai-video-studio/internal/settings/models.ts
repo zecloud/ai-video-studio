@@ -26,6 +26,7 @@ export class AppSettings {
     "chunkSizeBytes": number;
     "maxConcurrentImports": number;
     "mediaServiceEndpoint"?: string;
+    "videoIndexerServiceEndpoint"?: string;
 
     /** Creates a new AppSettings instance. */
     constructor($$source: Partial<AppSettings> = {}) {
