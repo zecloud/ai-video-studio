@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -65,6 +66,76 @@ func TestDurableJobServiceStagesBeforeSchedulingWithoutDelegatedCredentials(t *t
 	}
 }
 
+type inspectingStager struct {
+	store     *memoryJobStore
+	container string
+	sawAsset  bool
+}
+
+func (s *inspectingStager) Stage(ctx context.Context, jobID, sourceName string, _ io.Reader) (StagedAsset, error) {
+	stored, err := s.store.Get(ctx, jobID)
+	if err != nil {
+		return StagedAsset{}, err
+	}
+	asset := StagedAsset{Container: s.container, BlobName: stageBlobName(jobID, sourceName)}
+	s.sawAsset = stored.Status == JobStatusStaging && stored.StagingContainer == asset.Container && stored.StagedBlobName == asset.BlobName
+	return asset, nil
+}
+
+func (s *inspectingStager) ReadURL(context.Context, StagedAsset) (string, error) { return "", nil }
+func (s *inspectingStager) Delete(context.Context, StagedAsset) error            { return nil }
+func (s *inspectingStager) StagingContainer() string                             { return s.container }
+
+func TestDurableJobServicePersistsStagedAssetReferenceBeforeUpload(t *testing.T) {
+	store := newMemoryJobStore()
+	stager := &inspectingStager{store: store, container: "video-indexer-staging"}
+	graph := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("video-bytes"))
+	}))
+	defer graph.Close()
+
+	service := NewDurableJobService(store, NewOneDriveClient(graph.URL, graph.Client()), stager, &recordingScheduler{}, fixedClock{now: time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)})
+	_, err := service.CreateJob(context.Background(), CreateIndexJobRequest{
+		OneDriveItemID:      "item-123",
+		OneDriveAccessToken: "delegated-token",
+		SourceName:          "clip.mp4",
+		CorrelationID:       "persist-before-upload",
+	})
+	if err != nil {
+		t.Fatalf("CreateJob() error = %v", err)
+	}
+	if !stager.sawAsset {
+		t.Fatal("staging JobDocument did not contain the deterministic asset reference before upload")
+	}
+}
+
+func TestDurableJobServiceReturnsOriginalStagingFailure(t *testing.T) {
+	store := newMemoryJobStore()
+	graph := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
+	}))
+	defer graph.Close()
+
+	service := NewDurableJobService(store, NewOneDriveClient(graph.URL, graph.Client()), &fakeStager{}, &recordingScheduler{}, fixedClock{now: time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)})
+	correlationID := "failed-staging"
+	_, err := service.CreateJob(context.Background(), CreateIndexJobRequest{
+		OneDriveItemID:      "item-123",
+		OneDriveAccessToken: "delegated-token",
+		SourceName:          "clip.mp4",
+		CorrelationID:       correlationID,
+	})
+	if err == nil || serviceErrorCode(err) == "" {
+		t.Fatalf("CreateJob() error = %v, want original staging failure", err)
+	}
+	stored, getErr := store.Get(context.Background(), newJobID(correlationID))
+	if getErr != nil {
+		t.Fatalf("Get() error = %v", getErr)
+	}
+	if stored.Status != JobStatusFailed || stored.Error == nil || stored.Error.Code != serviceErrorCode(err) {
+		t.Fatalf("unexpected failed projection: %#v", stored.JobDocument)
+	}
+}
 func TestDurableJobServiceReconcileCancellationDeletesBeforeTerminalProjection(t *testing.T) {
 	store := newMemoryJobStore()
 	clock := fixedClock{now: time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)}

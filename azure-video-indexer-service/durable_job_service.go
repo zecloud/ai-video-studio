@@ -77,6 +77,8 @@ func (s *DurableJobService) CreateJob(ctx context.Context, req CreateIndexJobReq
 		OrchestrationID:      jobID,
 		OrchestrationName:    videoIndexerOrchestrationName,
 		OrchestrationVersion: videoIndexerOrchestrationVersion,
+		StagingContainer:     strings.TrimSpace(s.stager.StagingContainer()),
+		StagedBlobName:       stageBlobName(jobID, req.SourceName),
 		CreatedAt:            now,
 		UpdatedAt:            now,
 	}
@@ -98,16 +100,16 @@ func (s *DurableJobService) CreateJob(ctx context.Context, req CreateIndexJobReq
 
 	reader, _, err := s.oneDrive.OpenItem(ctx, req.OneDriveItemID, req.OneDriveAccessToken)
 	if err != nil {
-		return Job{}, s.failAndReturn(ctx, job.ID, serviceErrorCode(err), serviceErrorMessage(err), durableServiceRetryable(err))
+		return Job{}, s.failAndReturn(ctx, job.ID, err)
 	}
 	asset, stageErr := s.stager.Stage(ctx, job.ID, req.SourceName, reader)
 	closeErr := reader.Close()
 	if stageErr != nil {
-		return Job{}, s.failAndReturn(ctx, job.ID, serviceErrorCode(stageErr), serviceErrorMessage(stageErr), durableServiceRetryable(stageErr))
+		return Job{}, s.failAndReturn(ctx, job.ID, stageErr)
 	}
 	if closeErr != nil {
 		_ = s.cleanup(context.Background(), asset)
-		return Job{}, s.failAndReturn(ctx, job.ID, "onedrive_stream_close_failed", closeErr.Error(), true)
+		return Job{}, s.failAndReturn(ctx, job.ID, newServiceError(http.StatusBadGateway, "onedrive_stream_close_failed", closeErr.Error(), true))
 	}
 
 	stored, err := s.transition(ctx, job.ID, JobStatusStaged, func(doc *JobDocument) {
@@ -255,11 +257,18 @@ func (s *DurableJobService) ReconcileCancellation(ctx context.Context, jobID str
 	})
 	return err
 }
-func (s *DurableJobService) failAndReturn(ctx context.Context, jobID, code, message string, retryable bool) error {
-	_, err := s.transition(ctx, jobID, JobStatusFailed, func(doc *JobDocument) {
-		doc.Error = &APIErrorResponse{Code: code, Message: redactURLsInText(message), Retryable: retryable}
+func (s *DurableJobService) failAndReturn(ctx context.Context, jobID string, failure error) error {
+	_, projectionErr := s.transition(ctx, jobID, JobStatusFailed, func(doc *JobDocument) {
+		doc.Error = &APIErrorResponse{
+			Code:      serviceErrorCode(failure),
+			Message:   serviceErrorMessage(failure),
+			Retryable: durableServiceRetryable(failure),
+		}
 	})
-	return err
+	if projectionErr != nil {
+		return errors.Join(failure, fmt.Errorf("persisting failed job projection: %w", projectionErr))
+	}
+	return failure
 }
 
 func (s *DurableJobService) transition(ctx context.Context, jobID string, desired JobStatus, mutate func(*JobDocument)) (StoredJob, error) {

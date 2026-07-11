@@ -170,7 +170,7 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
           { type: 'liveness' httpGet: { path: '/health' port: 8080 } initialDelaySeconds: 10 periodSeconds: 30 failureThreshold: 3 }
         ]
       }]
-      scale: { minReplicas: 0 maxReplicas: apiMaxReplicas rules: [{ name: 'http' http: { metadata: { concurrentRequests: '10' } }] }
+      scale: { minReplicas: 0 maxReplicas: apiMaxReplicas rules: [{ name: 'http' http: { metadata: { concurrentRequests: '10' } } }] }
     }
   }
 }
