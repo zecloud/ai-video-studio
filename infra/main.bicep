@@ -9,7 +9,8 @@ param foundryAccountName string
 param foundryAccountResourceGroupName string
 param foundryAccountSubscriptionId string = subscription().subscriptionId
 param foundryProjectEndpoint string
-param videoIndexerAccountName string
+@description('Azure AI Video Indexer account name. Override this value when the default is already in use.')
+param videoIndexerAccountName string = 'videoindexer-prod'
 param videoIndexerRoleDefinitionResourceId string
 param foundryDeploymentName string = 'gpt-5.4'
 @secure()

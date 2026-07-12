@@ -162,7 +162,7 @@ Cette cle n'est pas une cle Azure Video Indexer : elle protege l'API privee du n
 | `ACR_NAME` | Nom facultatif de l'ACR cree par Bicep dans le resource group cible. Si la variable n'est pas definie, le workflow et Bicep utilisent `acrvideostudio`. | `acrvideostudio` |
 | `FOUNDRY_ACCOUNT_NAME` | Nom du compte Foundry/Azure OpenAI existant | `oai-video-studio` |
 | `FOUNDRY_PROJECT_ENDPOINT` | Endpoint du projet Foundry, pas l'endpoint generique du compte | `https://<resource>.services.ai.azure.com/api/projects/<project>` |
-| `VIDEO_INDEXER_ACCOUNT_NAME` | Nom du compte Azure AI Video Indexer a creer dans le resource group cible | `videoindexer-prod` |
+| `VIDEO_INDEXER_ACCOUNT_NAME` | Nom facultatif du compte Azure AI Video Indexer a creer dans le resource group cible. Si la variable n'est pas definie, le workflow et Bicep utilisent `videoindexer-prod`. | `videoindexer-prod` |
 | `VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID` | Resource ID du role Video Indexer verifie dans le tenant | `/subscriptions/<id>/providers/Microsoft.Authorization/roleDefinitions/<guid>` |
 
 ### Variables optionnelles
@@ -304,6 +304,7 @@ gh variable set AZURE_CONTAINER_APPS_ENV --env production --body "<CONTAINER_APP
 gh variable set ACR_NAME --env production --body "<ACR_NAME>"
 gh variable set FOUNDRY_ACCOUNT_NAME --env production --body "<FOUNDRY_ACCOUNT_NAME>"
 gh variable set FOUNDRY_PROJECT_ENDPOINT --env production --body "<FOUNDRY_PROJECT_ENDPOINT>"
+# Facultatif : omettre cette variable pour utiliser la valeur par defaut.
 gh variable set VIDEO_INDEXER_ACCOUNT_NAME --env production --body "<VIDEO_INDEXER_ACCOUNT_NAME>"
 gh variable set VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID --env production --body "<VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID>"
 ```
