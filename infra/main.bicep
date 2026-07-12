@@ -387,7 +387,6 @@ resource workerApp 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: acr.properties.loginServer
-          identity: workerIdentity.id
         }
       ]
       secrets: [
@@ -434,7 +433,6 @@ resource workerApp 'Microsoft.App/containerApps@2024-03-01' = {
                 taskhubName: taskHub.name
                 workItemType: 'Orchestration'
               }
-              identity: workerIdentity.id
             }
           }
           {
@@ -447,7 +445,6 @@ resource workerApp 'Microsoft.App/containerApps@2024-03-01' = {
                 taskhubName: taskHub.name
                 workItemType: 'Activity'
               }
-              identity: workerIdentity.id
             }
           }
         ]
