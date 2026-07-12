@@ -119,10 +119,18 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Register Video Indexer resource provider
+      - name: Verify Video Indexer resource provider
         run: |
           set -euo pipefail
-          az provider register --namespace Microsoft.VideoIndexer --wait
+          registration_state="$(az provider show \
+            --namespace Microsoft.VideoIndexer \
+            --query registrationState \
+            --output tsv)"
+          if [ "$registration_state" != "Registered" ]; then
+            echo "Microsoft.VideoIndexer is not registered (state: ${registration_state:-unknown})." >&2
+            echo "Register it at subscription scope before running this workflow." >&2
+            exit 1
+          fi
 
       - name: Resolve Video Indexer role definition
         run: |
