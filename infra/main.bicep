@@ -5,13 +5,14 @@ param location string = resourceGroup().location
 param containerAppsEnvironmentId string
 @description('Azure Container Registry name. Override this value when the default is already in use globally.')
 param containerRegistryName string = 'acrvideostudio'
+@description('Azure AI Foundry account name created in the target resource group.')
 param foundryAccountName string
-param foundryAccountResourceGroupName string
-param foundryAccountSubscriptionId string = subscription().subscriptionId
-param foundryProjectEndpoint string
+@description('Azure AI Foundry project name created under the account.')
+param foundryProjectName string = 'soraproject'
 @description('Azure AI Video Indexer account name. Override this value when the default is already in use.')
 param videoIndexerAccountName string = 'videoindexer-prod'
 param videoIndexerRoleDefinitionResourceId string
+@description('Model deployment name and model name used by the editing worker.')
 param foundryDeploymentName string = 'gpt-5.4'
 @secure()
 param serviceApiKey string
@@ -47,10 +48,49 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   }
 }
 
-resource foundryAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = {
+resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
   name: foundryAccountName
-  scope: resourceGroup(foundryAccountSubscriptionId, foundryAccountResourceGroupName)
+  location: location
+  identity: {
+    type: 'SystemAssigned'
+  }
+  sku: {
+    name: 'S0'
+  }
+  kind: 'AIServices'
+  properties: {
+    allowProjectManagement: true
+    customSubDomainName: foundryAccountName
+    disableLocalAuth: false
+  }
 }
+
+resource foundryProject 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = {
+  parent: foundryAccount
+  name: foundryProjectName
+  location: location
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {}
+}
+
+resource foundryModelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+  parent: foundryAccount
+  name: foundryDeploymentName
+  sku: {
+    name: 'GlobalStandard'
+    capacity: 1
+  }
+  properties: {
+    model: {
+      name: foundryDeploymentName
+      format: 'OpenAI'
+    }
+  }
+}
+
+var foundryProjectEndpoint = '${foundryAccount.properties.endpoint}api/projects/${foundryProjectName}'
 
 resource videoIndexerAccount 'Microsoft.VideoIndexer/accounts@2025-04-01' = {
   name: videoIndexerAccountName
@@ -481,7 +521,6 @@ module workerAcrPull 'acr-role-assignment.bicep' = {
 
 module workerFoundryRole 'foundry-role-assignment.bicep' = {
   name: 'worker-foundry-user'
-  scope: resourceGroup(foundryAccountSubscriptionId, foundryAccountResourceGroupName)
   params: {
     accountName: foundryAccountName
     principalId: workerIdentity.properties.principalId
@@ -492,7 +531,6 @@ module workerFoundryRole 'foundry-role-assignment.bicep' = {
 
 module videoIndexerFoundryRole 'foundry-role-assignment.bicep' = {
   name: 'video-indexer-foundry-user'
-  scope: resourceGroup(foundryAccountSubscriptionId, foundryAccountResourceGroupName)
   params: {
     accountName: foundryAccountName
     principalId: videoIndexerAccount.identity.principalId

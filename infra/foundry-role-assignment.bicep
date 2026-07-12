@@ -5,7 +5,7 @@ param principalId string
 param roleDefinitionId string
 param assignmentSeed string
 
-resource account 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = {
+resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
   name: accountName
 }
 

@@ -12,9 +12,7 @@
 #   AZURE_CONTAINER_APPS_ENV            Existing Container Apps environment name.
 #   ACR_NAME                            Optional Azure Container Registry name; defaults to acrvideostudio.
 #   FOUNDRY_ACCOUNT_NAME               Azure AI Foundry / Azure OpenAI account name.
-#   FOUNDRY_PROJECT_ENDPOINT           Azure AI Foundry project endpoint.
-#   FOUNDRY_ACCOUNT_RESOURCE_GROUP      Optional; defaults to AZURE_RESOURCE_GROUP.
-#   FOUNDRY_ACCOUNT_SUBSCRIPTION_ID     Optional; defaults to AZURE_SUBSCRIPTION_ID.
+#   FOUNDRY_PROJECT_NAME               Optional Foundry project name; defaults to soraproject.
 #   VIDEO_INDEXER_ACCOUNT_NAME          Optional Azure AI Video Indexer account name; defaults to videoindexer-prod.
 #   VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID Optional override; otherwise resolved after Azure Login.
 #   The Durable Task Data Contributor built-in role is assigned by Bicep; no role ID variable is required.
@@ -60,9 +58,7 @@ jobs:
       ACR_NAME: ${{ vars.ACR_NAME || 'acrvideostudio' }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       FOUNDRY_ACCOUNT_NAME: ${{ vars.FOUNDRY_ACCOUNT_NAME }}
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
-      FOUNDRY_ACCOUNT_RESOURCE_GROUP: ${{ vars.FOUNDRY_ACCOUNT_RESOURCE_GROUP || vars.FOUNDRY_RESOURCE_GROUP || vars.AZURE_RESOURCE_GROUP }}
-      FOUNDRY_ACCOUNT_SUBSCRIPTION_ID: ${{ vars.FOUNDRY_ACCOUNT_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
+      FOUNDRY_PROJECT_NAME: ${{ vars.FOUNDRY_PROJECT_NAME || 'soraproject' }}
       VIDEO_INDEXER_ACCOUNT_NAME: ${{ vars.VIDEO_INDEXER_ACCOUNT_NAME || 'videoindexer-prod' }}
       VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID: ${{ vars.VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID }}
       VIDEO_INDEXER_API_KEY: ${{ secrets.AZURE_VIDEO_INDEXER_API_KEY }}
@@ -80,7 +76,6 @@ jobs:
             AZURE_CONTAINER_APPS_ENV \
             AZURE_SUBSCRIPTION_ID \
             FOUNDRY_ACCOUNT_NAME \
-            FOUNDRY_PROJECT_ENDPOINT \
             VIDEO_INDEXER_API_KEY
           do
             if [ -z "${!name:-}" ]; then
@@ -209,9 +204,7 @@ jobs:
               containerAppsEnvironmentId="$CONTAINER_APPS_ENVIRONMENT_ID" \
               containerRegistryName="$ACR_NAME" \
               foundryAccountName="$FOUNDRY_ACCOUNT_NAME" \
-              foundryProjectEndpoint="$FOUNDRY_PROJECT_ENDPOINT" \
-              foundryAccountResourceGroupName="$FOUNDRY_ACCOUNT_RESOURCE_GROUP" \
-              foundryAccountSubscriptionId="$FOUNDRY_ACCOUNT_SUBSCRIPTION_ID" \
+              foundryProjectName="$FOUNDRY_PROJECT_NAME" \
               videoIndexerAccountName="$VIDEO_INDEXER_ACCOUNT_NAME" \
               videoIndexerRoleDefinitionResourceId="$VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID" \
               containerImageTag="$GITHUB_SHA" \
@@ -230,9 +223,7 @@ jobs:
                 containerAppsEnvironmentId="$CONTAINER_APPS_ENVIRONMENT_ID" \
                 containerRegistryName="$ACR_NAME" \
                 foundryAccountName="$FOUNDRY_ACCOUNT_NAME" \
-                foundryProjectEndpoint="$FOUNDRY_PROJECT_ENDPOINT" \
-                foundryAccountResourceGroupName="$FOUNDRY_ACCOUNT_RESOURCE_GROUP" \
-                foundryAccountSubscriptionId="$FOUNDRY_ACCOUNT_SUBSCRIPTION_ID" \
+                foundryProjectName="$FOUNDRY_PROJECT_NAME" \
                 videoIndexerAccountName="$VIDEO_INDEXER_ACCOUNT_NAME" \
                 videoIndexerRoleDefinitionResourceId="$VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID" \
                 containerImageTag="$GITHUB_SHA" \
