@@ -50,12 +50,19 @@ resource foundryAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' existi
   scope: resourceGroup(foundryAccountSubscriptionId, foundryAccountResourceGroupName)
 }
 
-resource videoIndexerAccount 'Microsoft.VideoIndexer/accounts@2024-01-01' = {
+resource videoIndexerAccount 'Microsoft.VideoIndexer/accounts@2025-04-01' = {
   name: videoIndexerAccountName
   location: location
   identity: { type: 'SystemAssigned' }
   properties: {
-    storageServices: { resourceId: storageAccount.id }
+    storageServices: {
+      resourceId: storageAccount.id
+      userAssignedIdentity: ''
+    }
+    openAiServices: {
+      resourceId: foundryAccount.id
+      userAssignedIdentity: ''
+    }
   }
 }
 
@@ -260,6 +267,12 @@ module workerFoundryRole 'foundry-role-assignment.bicep' = {
   name: 'worker-foundry-user'
   scope: resourceGroup(foundryAccountSubscriptionId, foundryAccountResourceGroupName)
   params: { accountName: foundryAccountName principalId: workerIdentity.principalId roleDefinitionId: cognitiveServicesOpenAIUserRoleDefinitionId assignmentSeed: workerAppName }
+}
+
+module videoIndexerFoundryRole 'foundry-role-assignment.bicep' = {
+  name: 'video-indexer-foundry-user'
+  scope: resourceGroup(foundryAccountSubscriptionId, foundryAccountResourceGroupName)
+  params: { accountName: foundryAccountName principalId: videoIndexerAccount.identity.principalId roleDefinitionId: cognitiveServicesOpenAIUserRoleDefinitionId assignmentSeed: videoIndexerAccountName }
 }
 
 module workerVideoIndexerRole 'video-indexer-role-assignment.bicep' = {

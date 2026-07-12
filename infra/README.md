@@ -22,10 +22,10 @@ The worker depends on the experimental `durabletask-go` DTS backend pinned to im
 - API and worker Container Apps using the same immutable image with `SERVICE_ROLE=api` and `SERVICE_ROLE=worker`;
 - a serverless DTS scheduler and task hub, the two user-assigned identities, and their scoped RBAC assignments;
 - a Storage Account with `video-indexer-staging` and `video-indexer-jobs` containers;
-- an Azure AI Video Indexer account with a system-assigned identity, connected to the same Standard StorageV2 account used for staging and jobs by the Container Apps;
+- an Azure AI Video Indexer account with a system-assigned identity, connected to the same Standard StorageV2 account used for staging and jobs by the Container Apps and to the existing Foundry/Azure OpenAI account;
 - Log Analytics and Application Insights;
 - an Azure Container Registry Basic dans le resource group cible ;
-- ACR Pull, Storage Blob Data Contributor, Foundry/OpenAI User, Video Indexer, and the built-in `Durable Task Data Contributor` role assignments scoped to the DTS scheduler. Bicep also grants the Video Indexer system identity `Storage Blob Data Contributor` on the shared application storage account.
+- ACR Pull, Storage Blob Data Contributor, Foundry/OpenAI User, Video Indexer, and the built-in `Durable Task Data Contributor` role assignments scoped to the DTS scheduler. Bicep grants the Video Indexer system identity `Storage Blob Data Contributor` on the shared application storage account and `Cognitive Services OpenAI User` on the connected Foundry/Azure OpenAI account.
 
 Only the API has ingress. The worker is started by DTS work items and must retain both scaler rules for scale-from-zero. The built-in `Durable Task Data Contributor` role (`0ad04412-c4d5-4796-b79c-f76d14c8d402`) is assigned by Bicep at scheduler scope; no GitHub variable is required.
 ## Prerequis Azure
@@ -43,7 +43,7 @@ Le deploiement doit utiliser une identite ayant :
 
 - `Contributor` sur le resource group cible ;
 - `User Access Administrator` ou `Owner` sur le resource group cible et sur le scope Foundry s'il est externe, car Bicep cree des affectations RBAC ;
-- acces de lecture aux ressources existantes passees au template. Le compte Video Indexer est cree dans le resource group cible et utilise le Storage Account de la stack.
+- Acces de lecture aux ressources existantes passees au template. Le compte Video Indexer est cree dans le resource group cible, utilise le Storage Account de la stack et est connecte au compte Foundry/Azure OpenAI.
 
 Verifier avant le deploiement :
 
@@ -63,6 +63,12 @@ az role definition list \
   --query "[?contains(to_string(roleName), 'Video Indexer')].{name:roleName,id:id}" \
   --output table
 ```
+
+### Connexion Video Indexer et Azure OpenAI
+
+`main.bicep` utilise l'API `Microsoft.VideoIndexer/accounts@2025-04-01` pour relier directement le compte Video Indexer au compte Foundry/Azure OpenAI fourni par `FOUNDRY_ACCOUNT_NAME`. La connexion est faite avec l'identite system-assigned du compte Video Indexer, sans cle OpenAI. Bicep lui attribue `Cognitive Services OpenAI User` sur le compte Foundry/Azure OpenAI.
+
+Cette connexion active les capacites natives Video Indexer qui utilisent Azure OpenAI. Elle ne remplace pas l'acces du worker : celui-ci conserve sa propre affectation `Cognitive Services OpenAI User` et utilise `FOUNDRY_PROJECT_ENDPOINT` avec `FOUNDRY_DEPLOYMENT_NAME` pour le planning d'edition. Microsoft recommande de placer Video Indexer et Azure OpenAI dans la meme region.
 
 ## Deploiement local avec Azure CLI
 
