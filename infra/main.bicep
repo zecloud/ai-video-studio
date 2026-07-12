@@ -69,7 +69,7 @@ resource videoIndexerAccount 'Microsoft.VideoIndexer/accounts@2025-04-01' = {
 }
 
 resource videoIndexerStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, videoIndexerAccount.identity.principalId, storageBlobDataContributorRoleDefinitionId)
+  name: guid(storageAccount.id, videoIndexerAccount.id, storageBlobDataContributorRoleDefinitionId)
   scope: storageAccount
   properties: {
     principalId: videoIndexerAccount.identity.principalId
@@ -215,31 +215,115 @@ var workerEnvironment = concat(storageEnvironment, [
 resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: apiAppName
   location: location
-  identity: { type: 'UserAssigned' userAssignedIdentities: { '${apiIdentity.id}': {} } }
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${apiIdentity.id}': {}
+    }
+  }
   properties: {
     environmentId: containerAppsEnvironmentId
     configuration: {
       activeRevisionsMode: 'Single'
-      ingress: { external: true allowInsecure: false targetPort: 8080 transport: 'auto' }
-      registries: [{ server: acr.properties.loginServer identity: apiIdentity.id }]
+      ingress: {
+        external: true
+        allowInsecure: false
+        targetPort: 8080
+        transport: 'auto'
+      }
+      registries: [
+        {
+          server: acr.properties.loginServer
+          identity: apiIdentity.id
+        }
+      ]
       secrets: [
-        { name: 'appinsights-connection-string' value: appInsights.properties.ConnectionString }
-        { name: 'service-api-key' value: serviceApiKey }
+        {
+          name: 'appinsights-connection-string'
+          value: appInsights.properties.ConnectionString
+        }
+        {
+          name: 'service-api-key'
+          value: serviceApiKey
+        }
       ]
     }
     template: {
       containers: [{
         name: 'api'
         image: image
-        env: concat(storageEnvironment, [{ name: 'AZURE_CLIENT_ID' value: apiIdentity.properties.clientId }, { name: 'API_KEY' secretRef: 'service-api-key' }, { name: 'SERVICE_ROLE' value: 'api' }, { name: 'LISTEN_ADDR' value: ':8080' }, { name: 'OTEL_SERVICE_NAME' value: apiAppName }])
-        resources: { cpu: json('0.5') memory: '1Gi' }
+        env: concat(storageEnvironment, [
+          {
+            name: 'AZURE_CLIENT_ID'
+            value: apiIdentity.properties.clientId
+          }
+          {
+            name: 'API_KEY'
+            secretRef: 'service-api-key'
+          }
+          {
+            name: 'SERVICE_ROLE'
+            value: 'api'
+          }
+          {
+            name: 'LISTEN_ADDR'
+            value: ':8080'
+          }
+          {
+            name: 'OTEL_SERVICE_NAME'
+            value: apiAppName
+          }
+        ])
+        resources: {
+          cpu: json('0.5')
+          memory: '1Gi'
+        }
         probes: [
-          { type: 'startup' httpGet: { path: '/health' port: 8080 } periodSeconds: 10 failureThreshold: 30 }
-          { type: 'readiness' httpGet: { path: '/ready' port: 8080 } initialDelaySeconds: 5 periodSeconds: 10 failureThreshold: 3 }
-          { type: 'liveness' httpGet: { path: '/health' port: 8080 } initialDelaySeconds: 10 periodSeconds: 30 failureThreshold: 3 }
+          {
+            type: 'startup'
+            httpGet: {
+              path: '/health'
+              port: 8080
+            }
+            periodSeconds: 10
+            failureThreshold: 30
+          }
+          {
+            type: 'readiness'
+            httpGet: {
+              path: '/ready'
+              port: 8080
+            }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          }
+          {
+            type: 'liveness'
+            httpGet: {
+              path: '/health'
+              port: 8080
+            }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          }
         ]
       }]
-      scale: { minReplicas: 0 maxReplicas: apiMaxReplicas rules: [{ name: 'http' http: { metadata: { concurrentRequests: '10' } } }] }
+      scale: {
+        minReplicas: 0
+        maxReplicas: apiMaxReplicas
+        rules: [
+          {
+            name: 'http'
+            http: {
+              metadata: {
+                concurrentRequests: '10'
+              }
+            }
+          }
+        ]
+      }
     }
   }
 }
@@ -247,20 +331,51 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
 resource workerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: workerAppName
   location: location
-  identity: { type: 'UserAssigned' userAssignedIdentities: { '${workerIdentity.id}': {} } }
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${workerIdentity.id}': {}
+    }
+  }
   properties: {
     environmentId: containerAppsEnvironmentId
     configuration: {
       activeRevisionsMode: 'Single'
-      registries: [{ server: acr.properties.loginServer identity: workerIdentity.id }]
-      secrets: [{ name: 'appinsights-connection-string' value: appInsights.properties.ConnectionString }]
+      registries: [
+        {
+          server: acr.properties.loginServer
+          identity: workerIdentity.id
+        }
+      ]
+      secrets: [
+        {
+          name: 'appinsights-connection-string'
+          value: appInsights.properties.ConnectionString
+        }
+      ]
     }
     template: {
       containers: [{
         name: 'worker'
         image: image
-        env: concat(workerEnvironment, [{ name: 'AZURE_CLIENT_ID' value: workerIdentity.properties.clientId }, { name: 'SERVICE_ROLE' value: 'worker' }, { name: 'OTEL_SERVICE_NAME' value: workerAppName }])
-        resources: { cpu: json('0.5') memory: '1Gi' }
+        env: concat(workerEnvironment, [
+          {
+            name: 'AZURE_CLIENT_ID'
+            value: workerIdentity.properties.clientId
+          }
+          {
+            name: 'SERVICE_ROLE'
+            value: 'worker'
+          }
+          {
+            name: 'OTEL_SERVICE_NAME'
+            value: workerAppName
+          }
+        ])
+        resources: {
+          cpu: json('0.5')
+          memory: '1Gi'
+        }
       }]
       scale: {
         minReplicas: 0
@@ -299,7 +414,7 @@ resource workerApp 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 resource apiStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, apiIdentity.properties.principalId, storageBlobDataContributorRoleDefinitionId)
+  name: guid(storageAccount.id, apiIdentity.id, storageBlobDataContributorRoleDefinitionId)
   scope: storageAccount
   properties: {
     principalId: apiIdentity.properties.principalId
@@ -309,7 +424,7 @@ resource apiStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 }
 
 resource workerStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, workerIdentity.properties.principalId, storageBlobDataContributorRoleDefinitionId)
+  name: guid(storageAccount.id, workerIdentity.id, storageBlobDataContributorRoleDefinitionId)
   scope: storageAccount
   properties: {
     principalId: workerIdentity.properties.principalId
@@ -319,7 +434,7 @@ resource workerStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' 
 }
 
 resource apiDtsRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(scheduler.id, apiIdentity.properties.principalId, durableTaskDataContributorRoleDefinitionId)
+  name: guid(scheduler.id, apiIdentity.id, durableTaskDataContributorRoleDefinitionId)
   scope: scheduler
   properties: {
     principalId: apiIdentity.properties.principalId
@@ -329,7 +444,7 @@ resource apiDtsRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 }
 
 resource workerDtsRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(scheduler.id, workerIdentity.properties.principalId, durableTaskDataContributorRoleDefinitionId)
+  name: guid(scheduler.id, workerIdentity.id, durableTaskDataContributorRoleDefinitionId)
   scope: scheduler
   properties: {
     principalId: workerIdentity.properties.principalId
