@@ -3,16 +3,14 @@ targetScope = 'resourceGroup'
 @description('Azure region shared by Container Apps, Storage, and Durable Task Scheduler.')
 param location string = resourceGroup().location
 param containerAppsEnvironmentId string
-param containerRegistryName string
-param containerRegistryResourceGroupName string = resourceGroup().name
-param containerRegistrySubscriptionId string = subscription().subscriptionId
+@description('Azure Container Registry name. Override this value when the default is already in use globally.')
+param containerRegistryName string = 'acrvideostudio'
 param foundryAccountName string
 param foundryAccountResourceGroupName string
 param foundryAccountSubscriptionId string = subscription().subscriptionId
 param foundryProjectEndpoint string
-param videoIndexerAccountName string
-param videoIndexerAccountResourceGroupName string
-param videoIndexerAccountSubscriptionId string = subscription().subscriptionId
+@description('Azure AI Video Indexer account name. Override this value when the default is already in use.')
+param videoIndexerAccountName string = 'videoindexer-prod'
 param videoIndexerRoleDefinitionResourceId string
 param foundryDeploymentName string = 'gpt-5.4'
 @secure()
@@ -39,9 +37,14 @@ var storageBlobDataContributorRoleDefinitionId = 'ba92f5b4-2d11-453d-a403-e96b00
 var cognitiveServicesOpenAIUserRoleDefinitionId = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
 var durableTaskDataContributorRoleDefinitionId = '0ad04412-c4d5-4796-b79c-f76d14c8d402'
 
-resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
+resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   name: containerRegistryName
-  scope: resourceGroup(containerRegistrySubscriptionId, containerRegistryResourceGroupName)
+  location: location
+  sku: { name: 'Basic' }
+  properties: {
+    adminUserEnabled: false
+    publicNetworkAccess: 'Enabled'
+  }
 }
 
 resource foundryAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = {
@@ -49,9 +52,30 @@ resource foundryAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' existi
   scope: resourceGroup(foundryAccountSubscriptionId, foundryAccountResourceGroupName)
 }
 
-resource videoIndexerAccount 'Microsoft.VideoIndexer/accounts@2024-01-01' existing = {
+resource videoIndexerAccount 'Microsoft.VideoIndexer/accounts@2025-04-01' = {
   name: videoIndexerAccountName
-  scope: resourceGroup(videoIndexerAccountSubscriptionId, videoIndexerAccountResourceGroupName)
+  location: location
+  identity: { type: 'SystemAssigned' }
+  properties: {
+    storageServices: {
+      resourceId: storageAccount.id
+      userAssignedIdentity: ''
+    }
+    openAiServices: {
+      resourceId: foundryAccount.id
+      userAssignedIdentity: ''
+    }
+  }
+}
+
+resource videoIndexerStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, videoIndexerAccount.identity.principalId, storageBlobDataContributorRoleDefinitionId)
+  scope: storageAccount
+  properties: {
+    principalId: videoIndexerAccount.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleDefinitionId)
+  }
 }
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -135,8 +159,8 @@ var storageEnvironment = [
 ]
 
 var workerEnvironment = concat(storageEnvironment, [
-  { name: 'AZURE_VIDEO_INDEXER_SUBSCRIPTION_ID' value: videoIndexerAccountSubscriptionId }
-  { name: 'AZURE_VIDEO_INDEXER_RESOURCE_GROUP' value: videoIndexerAccountResourceGroupName }
+  { name: 'AZURE_VIDEO_INDEXER_SUBSCRIPTION_ID' value: subscription().subscriptionId }
+  { name: 'AZURE_VIDEO_INDEXER_RESOURCE_GROUP' value: resourceGroup().name }
   { name: 'AZURE_VIDEO_INDEXER_ACCOUNT_NAME' value: videoIndexerAccount.name }
   { name: 'AZURE_VIDEO_INDEXER_ACCOUNT_ID' value: videoIndexerAccount.properties.accountId }
   { name: 'AZURE_VIDEO_INDEXER_LOCATION' value: videoIndexerAccount.location }
@@ -231,13 +255,13 @@ resource workerDtsRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 
 module apiAcrPull 'acr-role-assignment.bicep' = {
   name: 'api-acr-pull'
-  scope: resourceGroup(containerRegistrySubscriptionId, containerRegistryResourceGroupName)
+  dependsOn: [acr]
   params: { registryName: containerRegistryName principalId: apiIdentity.principalId roleDefinitionId: acrPullRoleDefinitionId assignmentSeed: apiAppName }
 }
 
 module workerAcrPull 'acr-role-assignment.bicep' = {
   name: 'worker-acr-pull'
-  scope: resourceGroup(containerRegistrySubscriptionId, containerRegistryResourceGroupName)
+  dependsOn: [acr]
   params: { registryName: containerRegistryName principalId: workerIdentity.principalId roleDefinitionId: acrPullRoleDefinitionId assignmentSeed: workerAppName }
 }
 
@@ -247,9 +271,18 @@ module workerFoundryRole 'foundry-role-assignment.bicep' = {
   params: { accountName: foundryAccountName principalId: workerIdentity.principalId roleDefinitionId: cognitiveServicesOpenAIUserRoleDefinitionId assignmentSeed: workerAppName }
 }
 
+module videoIndexerFoundryRole 'foundry-role-assignment.bicep' = {
+  name: 'video-indexer-foundry-user'
+  scope: resourceGroup(foundryAccountSubscriptionId, foundryAccountResourceGroupName)
+  params: { accountName: foundryAccountName principalId: videoIndexerAccount.identity.principalId roleDefinitionId: cognitiveServicesOpenAIUserRoleDefinitionId assignmentSeed: videoIndexerAccountName }
+}
+
 module workerVideoIndexerRole 'video-indexer-role-assignment.bicep' = {
   name: 'worker-video-indexer'
-  scope: resourceGroup(videoIndexerAccountSubscriptionId, videoIndexerAccountResourceGroupName)
+  scope: resourceGroup()
+  dependsOn: [
+    videoIndexerAccount
+  ]
   params: { accountName: videoIndexerAccountName principalId: workerIdentity.principalId roleDefinitionResourceId: videoIndexerRoleDefinitionResourceId assignmentSeed: workerAppName }
 }
 
