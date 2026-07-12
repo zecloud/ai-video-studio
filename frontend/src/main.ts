@@ -1538,6 +1538,7 @@ async function loadLibraryAssets(): Promise<void> {
     state.analysis.assets = [];
     state.smartEdit.assets = [];
     state.smartEdit.selectedAssetIDs = [];
+    state.transferMessage = "Project library could not be loaded.";
   }
 }
 
@@ -1776,7 +1777,7 @@ async function saveSettingsFromForm(): Promise<void> {
   const clientId = settingValue("client");
   const folder = settingValue("folder") || "AI Video Studio";
   const chunkSize = Number(settingValue("chunk")) || 10 * 1024 * 1024;
-  const destinationPath = `/Apps/${folder}`;
+  const destinationPath = `/Apps/${folder}/Imports`;
   const mediaServiceEndpoint = settingValue("media-endpoint");
   const mediaServiceApiKey = settingValue("media-apikey");
 

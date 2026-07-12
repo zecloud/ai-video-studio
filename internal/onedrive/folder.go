@@ -31,8 +31,8 @@ type graphChildrenResponse struct {
 
 // ListFolderItems lists all files and folders at the given OneDrive path.
 // If the client is configured for app-folder access (Destination.Mode == "app_folder"),
-// the path is resolved relative to /me/drive/special/approot and the destination
-// path prefix is automatically stripped (e.g. "Apps/AI Video Studio/Imports" → "Imports").
+// the path is resolved relative to /me/drive/special/approot. A configured
+// destination prefix is stripped only when it is an exact path prefix.
 // Otherwise it uses /me/drive/root:.
 func (c *Client) ListFolderItems(ctx context.Context, folderPath string) ([]DriveItem, error) {
 	if c == nil {
@@ -48,33 +48,39 @@ func (c *Client) ListFolderItems(ctx context.Context, folderPath string) ([]Driv
 
 	var currentURL string
 	if c.Destination.Mode == "app_folder" {
-		// Strip the destination prefix so the path is relative to approot.
-		destPrefix := strings.Trim(strings.TrimPrefix(c.Destination.Path, "/"), "/")
-		folderPath = strings.TrimPrefix(folderPath, destPrefix)
+		folderPath = appFolderRelativePath(folderPath)
 		folderPath = strings.Trim(folderPath, "/")
 		if folderPath == "" {
-				// Root of app folder: no colon segment needed, just list children.
-				currentURL = fmt.Sprintf("%s/me/drive/special/approot/children", baseURL)
-				} else {
-				encoded := encodePathSegment(folderPath)
-				currentURL = fmt.Sprintf("%s/me/drive/special/approot:/%s:/children", baseURL, encoded)
-				}
-			} else {
-				encoded := encodePathSegment(folderPath)
-				currentURL = fmt.Sprintf("%s/me/drive/root:/%s:/children", baseURL, encoded)
-			}
+			// Root of app folder: no colon segment needed, just list children.
+			currentURL = fmt.Sprintf("%s/me/drive/special/approot/children", baseURL)
+		} else {
+			encoded := encodePathSegment(folderPath)
+			currentURL = fmt.Sprintf("%s/me/drive/special/approot:/%s:/children", baseURL, encoded)
+		}
+	} else {
+		encoded := encodePathSegment(folderPath)
+		currentURL = fmt.Sprintf("%s/me/drive/root:/%s:/children", baseURL, encoded)
+	}
 
 	var items []DriveItem
-		for currentURL != "" {
-			page, nextLink, err := fetchChildrenPage(ctx, c, currentURL)
-			if err != nil {
-				return nil, err
-			}
-			items = append(items, page...)
-			currentURL = nextLink
+	for currentURL != "" {
+		page, nextLink, err := fetchChildrenPage(ctx, c, currentURL)
+		if err != nil {
+			return nil, err
 		}
+		items = append(items, page...)
+		currentURL = nextLink
+	}
 
 	return items, nil
+}
+
+func appFolderRelativePath(folderPath string) string {
+	parts := strings.Split(strings.Trim(folderPath, "/"), "/")
+	if len(parts) >= 3 && strings.EqualFold(parts[0], "Apps") {
+		return strings.Join(parts[2:], "/")
+	}
+	return strings.Trim(folderPath, "/")
 }
 
 // encodePathSegment encodes a OneDrive path for use in the colon-based Graph URL:

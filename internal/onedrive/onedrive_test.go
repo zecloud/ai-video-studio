@@ -84,9 +84,11 @@ func TestBuildCreateUploadSessionMetadataUsesAppFolderPathAndLeastPrivilegeShape
 	if err != nil {
 		t.Fatalf("BuildCreateUploadSessionMetadata returned error: %v", err)
 	}
+
 	if meta.Method != "POST" {
 		t.Fatalf("expected POST, got %s", meta.Method)
 	}
+
 	wantURL := "https://graph.microsoft.com/v1.0/me/drive/special/approot:/Imports/clip%2001.MP4:/createUploadSession"
 	if meta.URL != wantURL {
 		t.Fatalf("unexpected URL:\nwant %s\n got %s", wantURL, meta.URL)
@@ -98,6 +100,39 @@ func TestBuildCreateUploadSessionMetadataUsesAppFolderPathAndLeastPrivilegeShape
 	}
 	if body["item"]["@microsoft.graph.conflictBehavior"] != ConflictBehaviorRename {
 		t.Fatalf("unexpected conflict behavior body: %s", string(meta.Body))
+	}
+}
+
+type testTokenProvider struct{}
+
+func (testTokenProvider) AccessToken(context.Context, []string) (string, error) {
+	return "unit-test-token", nil
+}
+
+func TestListFolderItemsResolvesConfiguredAppFolderPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/me/drive/special/approot:/Imports:/children" {
+			t.Fatalf("path = %q, want app-folder Imports path", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer unit-test-token" {
+			t.Fatalf("missing authorization header")
+		}
+		_, _ = w.Write([]byte(`{"value":[{"id":"file-1","name":"clip.mp4","file":{"mimeType":"video/mp4"}}]}`))
+	}))
+	defer server.Close()
+
+	items, err := (&Client{
+		HTTPClient:    server.Client(),
+		TokenProvider: testTokenProvider{},
+		GraphBaseURL:  server.URL,
+		Scopes:        []string{GraphScopeFilesReadWriteAppFolder},
+		Destination:   OneDriveDestination{Mode: "app_folder", Path: "/Apps/AI Video Studio/Imports"},
+	}).ListFolderItems(context.Background(), "/Apps/AI Video Studio/Imports")
+	if err != nil {
+		t.Fatalf("ListFolderItems returned error: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "file-1" {
+		t.Fatalf("unexpected items: %+v", items)
 	}
 }
 
