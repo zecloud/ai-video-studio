@@ -11,8 +11,6 @@ param foundryAccountResourceGroupName string
 param foundryAccountSubscriptionId string = subscription().subscriptionId
 param foundryProjectEndpoint string
 param videoIndexerAccountName string
-param videoIndexerAccountResourceGroupName string
-param videoIndexerAccountSubscriptionId string = subscription().subscriptionId
 param videoIndexerRoleDefinitionResourceId string
 param foundryDeploymentName string = 'gpt-5.4'
 @secure()
@@ -49,9 +47,23 @@ resource foundryAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' existi
   scope: resourceGroup(foundryAccountSubscriptionId, foundryAccountResourceGroupName)
 }
 
-resource videoIndexerAccount 'Microsoft.VideoIndexer/accounts@2024-01-01' existing = {
+resource videoIndexerAccount 'Microsoft.VideoIndexer/accounts@2024-01-01' = {
   name: videoIndexerAccountName
-  scope: resourceGroup(videoIndexerAccountSubscriptionId, videoIndexerAccountResourceGroupName)
+  location: location
+  identity: { type: 'SystemAssigned' }
+  properties: {
+    storageServices: { resourceId: storageAccount.id }
+  }
+}
+
+resource videoIndexerStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, videoIndexerAccount.identity.principalId, storageBlobDataContributorRoleDefinitionId)
+  scope: storageAccount
+  properties: {
+    principalId: videoIndexerAccount.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleDefinitionId)
+  }
 }
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -135,8 +147,8 @@ var storageEnvironment = [
 ]
 
 var workerEnvironment = concat(storageEnvironment, [
-  { name: 'AZURE_VIDEO_INDEXER_SUBSCRIPTION_ID' value: videoIndexerAccountSubscriptionId }
-  { name: 'AZURE_VIDEO_INDEXER_RESOURCE_GROUP' value: videoIndexerAccountResourceGroupName }
+  { name: 'AZURE_VIDEO_INDEXER_SUBSCRIPTION_ID' value: subscription().subscriptionId }
+  { name: 'AZURE_VIDEO_INDEXER_RESOURCE_GROUP' value: resourceGroup().name }
   { name: 'AZURE_VIDEO_INDEXER_ACCOUNT_NAME' value: videoIndexerAccount.name }
   { name: 'AZURE_VIDEO_INDEXER_ACCOUNT_ID' value: videoIndexerAccount.properties.accountId }
   { name: 'AZURE_VIDEO_INDEXER_LOCATION' value: videoIndexerAccount.location }
@@ -249,7 +261,7 @@ module workerFoundryRole 'foundry-role-assignment.bicep' = {
 
 module workerVideoIndexerRole 'video-indexer-role-assignment.bicep' = {
   name: 'worker-video-indexer'
-  scope: resourceGroup(videoIndexerAccountSubscriptionId, videoIndexerAccountResourceGroupName)
+  scope: resourceGroup()
   params: { accountName: videoIndexerAccountName principalId: workerIdentity.principalId roleDefinitionResourceId: videoIndexerRoleDefinitionResourceId assignmentSeed: workerAppName }
 }
 

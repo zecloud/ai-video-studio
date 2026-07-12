@@ -17,8 +17,6 @@
 #   FOUNDRY_ACCOUNT_RESOURCE_GROUP      Optional; defaults to AZURE_RESOURCE_GROUP.
 #   FOUNDRY_ACCOUNT_SUBSCRIPTION_ID     Optional; defaults to AZURE_SUBSCRIPTION_ID.
 #   VIDEO_INDEXER_ACCOUNT_NAME          Azure AI Video Indexer account name.
-#   VIDEO_INDEXER_ACCOUNT_RESOURCE_GROUP Optional; defaults to AZURE_RESOURCE_GROUP.
-#   VIDEO_INDEXER_ACCOUNT_SUBSCRIPTION_ID Optional; defaults to AZURE_SUBSCRIPTION_ID.
 #   VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID Existing Video Indexer role definition resource ID.
 #   The Durable Task Data Contributor built-in role is assigned by Bicep; no role ID variable is required.
 #
@@ -68,8 +66,6 @@ jobs:
       FOUNDRY_ACCOUNT_RESOURCE_GROUP: ${{ vars.FOUNDRY_ACCOUNT_RESOURCE_GROUP || vars.AZURE_RESOURCE_GROUP }}
       FOUNDRY_ACCOUNT_SUBSCRIPTION_ID: ${{ vars.FOUNDRY_ACCOUNT_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
       VIDEO_INDEXER_ACCOUNT_NAME: ${{ vars.VIDEO_INDEXER_ACCOUNT_NAME }}
-      VIDEO_INDEXER_ACCOUNT_RESOURCE_GROUP: ${{ vars.VIDEO_INDEXER_ACCOUNT_RESOURCE_GROUP || vars.AZURE_RESOURCE_GROUP }}
-      VIDEO_INDEXER_ACCOUNT_SUBSCRIPTION_ID: ${{ vars.VIDEO_INDEXER_ACCOUNT_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
       VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID: ${{ vars.VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID }}
       VIDEO_INDEXER_API_KEY: ${{ secrets.AZURE_VIDEO_INDEXER_API_KEY }}
 
@@ -156,8 +152,6 @@ jobs:
               foundryAccountResourceGroupName="$FOUNDRY_ACCOUNT_RESOURCE_GROUP" \
               foundryAccountSubscriptionId="$FOUNDRY_ACCOUNT_SUBSCRIPTION_ID" \
               videoIndexerAccountName="$VIDEO_INDEXER_ACCOUNT_NAME" \
-              videoIndexerAccountResourceGroupName="$VIDEO_INDEXER_ACCOUNT_RESOURCE_GROUP" \
-              videoIndexerAccountSubscriptionId="$VIDEO_INDEXER_ACCOUNT_SUBSCRIPTION_ID" \
               videoIndexerRoleDefinitionResourceId="$VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID" \
               containerImageTag="$GITHUB_SHA" \
               serviceApiKey="$VIDEO_INDEXER_API_KEY" \
@@ -180,8 +174,6 @@ jobs:
                 foundryAccountResourceGroupName="$FOUNDRY_ACCOUNT_RESOURCE_GROUP" \
                 foundryAccountSubscriptionId="$FOUNDRY_ACCOUNT_SUBSCRIPTION_ID" \
                 videoIndexerAccountName="$VIDEO_INDEXER_ACCOUNT_NAME" \
-                videoIndexerAccountResourceGroupName="$VIDEO_INDEXER_ACCOUNT_RESOURCE_GROUP" \
-                videoIndexerAccountSubscriptionId="$VIDEO_INDEXER_ACCOUNT_SUBSCRIPTION_ID" \
                 videoIndexerRoleDefinitionResourceId="$VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID" \
                 containerImageTag="$GITHUB_SHA" \
                 serviceApiKey="$VIDEO_INDEXER_API_KEY" \
