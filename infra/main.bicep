@@ -434,9 +434,7 @@ resource workerApp 'Microsoft.App/containerApps@2024-03-01' = {
                 taskhubName: taskHub.name
                 workItemType: 'Orchestration'
               }
-              authentication: {
-                identity: workerIdentity.id
-              }
+              identity: workerIdentity.id
             }
           }
           {
@@ -449,9 +447,7 @@ resource workerApp 'Microsoft.App/containerApps@2024-03-01' = {
                 taskhubName: taskHub.name
                 workItemType: 'Activity'
               }
-              authentication: {
-                identity: workerIdentity.id
-              }
+              identity: workerIdentity.id
             }
           }
         ]
