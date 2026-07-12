@@ -167,7 +167,7 @@ Cette cle n'est pas une cle Azure Video Indexer : elle protege l'API privee du n
 | `AZURE_LOCATION` | Region Azure de la stack | `westeurope` |
 | `AZURE_CONTAINER_APPS_ENV` | Nom de l'environnement Container Apps existant | `cae-ai-video-studio` |
 | `ACR_NAME` | Nom facultatif de l'ACR cree par Bicep dans le resource group cible. Si la variable n'est pas definie, le workflow et Bicep utilisent `acrvideostudio`. | `acrvideostudio` |
-| `FOUNDRY_ACCOUNT_NAME` | Nom du compte Foundry/Azure OpenAI cree par Bicep dans le resource group cible | `oai-video-studio` |
+| `FOUNDRY_ACCOUNT_NAME` | Nom du compte Foundry/Azure OpenAI cree par Bicep dans le resource group cible. Il doit etre globalement disponible comme nom de sous-domaine. | `aivideoindexerfoundry` |
 | `FOUNDRY_PROJECT_NAME` | Nom du projet Foundry cree par Bicep | `video-indexer-project` |
 | `VIDEO_INDEXER_ACCOUNT_NAME` | Nom facultatif du compte Azure AI Video Indexer a creer dans le resource group cible. Si la variable n'est pas definie, le workflow et Bicep utilisent `videoindexer-prod`. | `videoindexer-prod` |
 | `VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID` | Variable facultative permettant de forcer le Resource ID du role Video Indexer. Si elle est absente, le workflow le recherche apres la connexion Azure et echoue si la recherche ne renvoie pas exactement un role. | `/subscriptions/<id>/providers/Microsoft.Authorization/roleDefinitions/<guid>` |
