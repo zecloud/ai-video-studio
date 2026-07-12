@@ -14,6 +14,8 @@ param videoIndexerAccountName string = 'videoindexer-prod'
 param videoIndexerRoleDefinitionResourceId string
 @description('Model deployment name and model name used by the editing worker.')
 param foundryDeploymentName string = 'gpt-5.4'
+@description('Azure model version for the GPT-5.4 deployment.')
+param foundryModelVersion string = '2026-03-05'
 @secure()
 param serviceApiKey string
 param containerImageRepository string = 'ai-video-indexer-service'
@@ -85,6 +87,7 @@ resource foundryModelDeployment 'Microsoft.CognitiveServices/accounts/deployment
   properties: {
     model: {
       name: foundryDeploymentName
+      version: foundryModelVersion
       format: 'OpenAI'
     }
   }
