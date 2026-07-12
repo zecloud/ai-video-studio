@@ -280,6 +280,9 @@ module videoIndexerFoundryRole 'foundry-role-assignment.bicep' = {
 module workerVideoIndexerRole 'video-indexer-role-assignment.bicep' = {
   name: 'worker-video-indexer'
   scope: resourceGroup()
+  dependsOn: [
+    videoIndexerAccount
+  ]
   params: { accountName: videoIndexerAccountName principalId: workerIdentity.principalId roleDefinitionResourceId: videoIndexerRoleDefinitionResourceId assignmentSeed: workerAppName }
 }
 

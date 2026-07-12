@@ -52,7 +52,15 @@ az group show --name "<RESOURCE_GROUP>"
 az containerapp env show --name "<CONTAINER_APPS_ENV>" --resource-group "<RESOURCE_GROUP>"
 az acr show --name "<ACR_NAME>" --resource-group "<RESOURCE_GROUP>"
 az cognitiveservices account show --name "<FOUNDRY_ACCOUNT_NAME>" --resource-group "<FOUNDRY_ACCOUNT_RESOURCE_GROUP>"
-az resource show --resource-group "<RESOURCE_GROUP>" --resource-type Microsoft.VideoIndexer/accounts --name "<VIDEO_INDEXER_ACCOUNT_NAME>"
+```
+
+Le compte Video Indexer est cree par `main.bicep`. Verifier son existence apres le deploiement avec :
+
+```bash
+az resource show \
+  --resource-group "<RESOURCE_GROUP>" \
+  --resource-type Microsoft.VideoIndexer/accounts \
+  --name "<VIDEO_INDEXER_ACCOUNT_NAME>"
 ```
 
 Le role Video Indexer n'est pas suppose universel entre tenants. Recuperer puis verifier son resource ID dans le tenant cible avant de renseigner `VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID` :
