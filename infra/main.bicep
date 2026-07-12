@@ -388,6 +388,7 @@ resource workerApp 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: acr.properties.loginServer
+          identity: workerIdentity.id
         }
       ]
       secrets: [
