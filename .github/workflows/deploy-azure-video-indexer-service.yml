@@ -127,18 +127,24 @@ jobs:
             exit 0
           fi
 
+          target_role_name='Video Indexer Account Contributor'
           mapfile -t role_ids < <(
             az role definition list \
               --custom-role-only false \
-              --query "[?contains(roleName, 'Video Indexer')].id" \
+              --query "[?roleName=='${target_role_name}'].id" \
               --output tsv
           )
-          if [ "${#role_ids[@]}" -ne 1 ] || [ -z "${role_ids[0]}" ]; then
-            echo "Expected exactly one Video Indexer role definition, found ${#role_ids[@]}." >&2
+          if [ "${#role_ids[@]}" -eq 0 ] || [ -z "${role_ids[0]}" ]; then
+            echo "Required Video Indexer role definition not found: ${target_role_name}." >&2
             az role definition list \
               --custom-role-only false \
               --query "[?contains(roleName, 'Video Indexer')].{name:roleName,id:id}" \
               --output table >&2
+            exit 1
+          fi
+          if [ "${#role_ids[@]}" -ne 1 ]; then
+            echo "Expected exactly one '${target_role_name}' role definition, found ${#role_ids[@]}." >&2
+            printf '%s\n' "${role_ids[@]}" >&2
             exit 1
           fi
           echo "VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID=${role_ids[0]}" >> "$GITHUB_ENV"
