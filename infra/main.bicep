@@ -81,14 +81,20 @@ resource videoIndexerStorageRole 'Microsoft.Authorization/roleAssignments@2022-0
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: logAnalyticsWorkspaceName
   location: location
-  properties: { sku: { name: 'PerGB2018' } retentionInDays: 30 }
+  properties: {
+    sku: { name: 'PerGB2018' }
+    retentionInDays: 30
+  }
 }
 
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   name: appInsightsName
   location: location
   kind: 'web'
-  properties: { Application_Type: 'web' WorkspaceResourceId: logAnalytics.id }
+  properties: {
+    Application_Type: 'web'
+    WorkspaceResourceId: logAnalytics.id
+  }
 }
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
@@ -149,23 +155,62 @@ resource workerIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-0
 
 var image = '${acr.properties.loginServer}/${containerImageRepository}:${containerImageTag}'
 var storageEnvironment = [
-  { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING' secretRef: 'appinsights-connection-string' }
-  { name: 'AZURE_STORAGE_URL' value: storageAccount.properties.primaryEndpoints.blob }
-  { name: 'AZURE_STORAGE_STAGING_CONTAINER' value: stagingContainerName }
-  { name: 'AZURE_STORAGE_JOBS_CONTAINER' value: jobsContainerName }
-  { name: 'DTS_ENDPOINT' value: scheduler.properties.endpoint }
-  { name: 'DTS_TASK_HUB' value: taskHub.name }
+  {
+    name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+    secretRef: 'appinsights-connection-string'
+  }
+  {
+    name: 'AZURE_STORAGE_URL'
+    value: storageAccount.properties.primaryEndpoints.blob
+  }
+  {
+    name: 'AZURE_STORAGE_STAGING_CONTAINER'
+    value: stagingContainerName
+  }
+  {
+    name: 'AZURE_STORAGE_JOBS_CONTAINER'
+    value: jobsContainerName
+  }
+  {
+    name: 'DTS_ENDPOINT'
+    value: scheduler.properties.endpoint
+  }
+  {
+    name: 'DTS_TASK_HUB'
+    value: taskHub.name
+  }
   // The pinned Go backend uses DefaultAzureCredential; AZURE_CLIENT_ID selects this app's UAMI.
 ]
 
 var workerEnvironment = concat(storageEnvironment, [
-  { name: 'AZURE_VIDEO_INDEXER_SUBSCRIPTION_ID' value: subscription().subscriptionId }
-  { name: 'AZURE_VIDEO_INDEXER_RESOURCE_GROUP' value: resourceGroup().name }
-  { name: 'AZURE_VIDEO_INDEXER_ACCOUNT_NAME' value: videoIndexerAccount.name }
-  { name: 'AZURE_VIDEO_INDEXER_ACCOUNT_ID' value: videoIndexerAccount.properties.accountId }
-  { name: 'AZURE_VIDEO_INDEXER_LOCATION' value: videoIndexerAccount.location }
-  { name: 'AZURE_FOUNDRY_ENDPOINT' value: foundryProjectEndpoint }
-  { name: 'AZURE_FOUNDRY_DEPLOYMENT_NAME' value: foundryDeploymentName }
+  {
+    name: 'AZURE_VIDEO_INDEXER_SUBSCRIPTION_ID'
+    value: subscription().subscriptionId
+  }
+  {
+    name: 'AZURE_VIDEO_INDEXER_RESOURCE_GROUP'
+    value: resourceGroup().name
+  }
+  {
+    name: 'AZURE_VIDEO_INDEXER_ACCOUNT_NAME'
+    value: videoIndexerAccount.name
+  }
+  {
+    name: 'AZURE_VIDEO_INDEXER_ACCOUNT_ID'
+    value: videoIndexerAccount.properties.accountId
+  }
+  {
+    name: 'AZURE_VIDEO_INDEXER_LOCATION'
+    value: videoIndexerAccount.location
+  }
+  {
+    name: 'AZURE_FOUNDRY_ENDPOINT'
+    value: foundryProjectEndpoint
+  }
+  {
+    name: 'AZURE_FOUNDRY_DEPLOYMENT_NAME'
+    value: foundryDeploymentName
+  }
 ])
 resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: apiAppName
@@ -221,8 +266,32 @@ resource workerApp 'Microsoft.App/containerApps@2024-03-01' = {
         minReplicas: 0
         maxReplicas: workerMaxReplicas
         rules: [
-          { name: 'dts-orchestration' custom: { type: 'azure-durabletask-scheduler' metadata: { endpoint: scheduler.properties.endpoint maxConcurrentWorkItemsCount: '1' taskhubName: taskHub.name workItemType: 'Orchestration' } identity: workerIdentity.id } }
-          { name: 'dts-activity' custom: { type: 'azure-durabletask-scheduler' metadata: { endpoint: scheduler.properties.endpoint maxConcurrentWorkItemsCount: '5' taskhubName: taskHub.name workItemType: 'Activity' } identity: workerIdentity.id } }
+          {
+            name: 'dts-orchestration'
+            custom: {
+              type: 'azure-durabletask-scheduler'
+              metadata: {
+                endpoint: scheduler.properties.endpoint
+                maxConcurrentWorkItemsCount: '1'
+                taskhubName: taskHub.name
+                workItemType: 'Orchestration'
+              }
+              identity: workerIdentity.id
+            }
+          }
+          {
+            name: 'dts-activity'
+            custom: {
+              type: 'azure-durabletask-scheduler'
+              metadata: {
+                endpoint: scheduler.properties.endpoint
+                maxConcurrentWorkItemsCount: '5'
+                taskhubName: taskHub.name
+                workItemType: 'Activity'
+              }
+              identity: workerIdentity.id
+            }
+          }
         ]
       }
     }
@@ -230,51 +299,87 @@ resource workerApp 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 resource apiStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, apiIdentity.principalId, storageBlobDataContributorRoleDefinitionId)
+  name: guid(storageAccount.id, apiIdentity.properties.principalId, storageBlobDataContributorRoleDefinitionId)
   scope: storageAccount
-  properties: { principalId: apiIdentity.principalId principalType: 'ServicePrincipal' roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleDefinitionId) }
+  properties: {
+    principalId: apiIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleDefinitionId)
+  }
 }
 
 resource workerStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, workerIdentity.principalId, storageBlobDataContributorRoleDefinitionId)
+  name: guid(storageAccount.id, workerIdentity.properties.principalId, storageBlobDataContributorRoleDefinitionId)
   scope: storageAccount
-  properties: { principalId: workerIdentity.principalId principalType: 'ServicePrincipal' roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleDefinitionId) }
+  properties: {
+    principalId: workerIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleDefinitionId)
+  }
 }
 
 resource apiDtsRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(scheduler.id, apiIdentity.principalId, durableTaskDataContributorRoleDefinitionId)
+  name: guid(scheduler.id, apiIdentity.properties.principalId, durableTaskDataContributorRoleDefinitionId)
   scope: scheduler
-  properties: { principalId: apiIdentity.principalId principalType: 'ServicePrincipal' roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', durableTaskDataContributorRoleDefinitionId) }
+  properties: {
+    principalId: apiIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', durableTaskDataContributorRoleDefinitionId)
+  }
 }
 
 resource workerDtsRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(scheduler.id, workerIdentity.principalId, durableTaskDataContributorRoleDefinitionId)
+  name: guid(scheduler.id, workerIdentity.properties.principalId, durableTaskDataContributorRoleDefinitionId)
   scope: scheduler
-  properties: { principalId: workerIdentity.principalId principalType: 'ServicePrincipal' roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', durableTaskDataContributorRoleDefinitionId) }
+  properties: {
+    principalId: workerIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', durableTaskDataContributorRoleDefinitionId)
+  }
 }
 
 module apiAcrPull 'acr-role-assignment.bicep' = {
   name: 'api-acr-pull'
   dependsOn: [acr]
-  params: { registryName: containerRegistryName principalId: apiIdentity.principalId roleDefinitionId: acrPullRoleDefinitionId assignmentSeed: apiAppName }
+  params: {
+    registryName: containerRegistryName
+    principalId: apiIdentity.properties.principalId
+    roleDefinitionId: acrPullRoleDefinitionId
+    assignmentSeed: apiAppName
+  }
 }
 
 module workerAcrPull 'acr-role-assignment.bicep' = {
   name: 'worker-acr-pull'
   dependsOn: [acr]
-  params: { registryName: containerRegistryName principalId: workerIdentity.principalId roleDefinitionId: acrPullRoleDefinitionId assignmentSeed: workerAppName }
+  params: {
+    registryName: containerRegistryName
+    principalId: workerIdentity.properties.principalId
+    roleDefinitionId: acrPullRoleDefinitionId
+    assignmentSeed: workerAppName
+  }
 }
 
 module workerFoundryRole 'foundry-role-assignment.bicep' = {
   name: 'worker-foundry-user'
   scope: resourceGroup(foundryAccountSubscriptionId, foundryAccountResourceGroupName)
-  params: { accountName: foundryAccountName principalId: workerIdentity.principalId roleDefinitionId: cognitiveServicesOpenAIUserRoleDefinitionId assignmentSeed: workerAppName }
+  params: {
+    accountName: foundryAccountName
+    principalId: workerIdentity.properties.principalId
+    roleDefinitionId: cognitiveServicesOpenAIUserRoleDefinitionId
+    assignmentSeed: workerAppName
+  }
 }
 
 module videoIndexerFoundryRole 'foundry-role-assignment.bicep' = {
   name: 'video-indexer-foundry-user'
   scope: resourceGroup(foundryAccountSubscriptionId, foundryAccountResourceGroupName)
-  params: { accountName: foundryAccountName principalId: videoIndexerAccount.identity.principalId roleDefinitionId: cognitiveServicesOpenAIUserRoleDefinitionId assignmentSeed: videoIndexerAccountName }
+  params: {
+    accountName: foundryAccountName
+    principalId: videoIndexerAccount.identity.principalId
+    roleDefinitionId: cognitiveServicesOpenAIUserRoleDefinitionId
+    assignmentSeed: videoIndexerAccountName
+  }
 }
 
 module workerVideoIndexerRole 'video-indexer-role-assignment.bicep' = {
@@ -283,7 +388,12 @@ module workerVideoIndexerRole 'video-indexer-role-assignment.bicep' = {
   dependsOn: [
     videoIndexerAccount
   ]
-  params: { accountName: videoIndexerAccountName principalId: workerIdentity.principalId roleDefinitionResourceId: videoIndexerRoleDefinitionResourceId assignmentSeed: workerAppName }
+  params: {
+    accountName: videoIndexerAccountName
+    principalId: workerIdentity.properties.principalId
+    roleDefinitionResourceId: videoIndexerRoleDefinitionResourceId
+    assignmentSeed: workerAppName
+  }
 }
 
 output containerAppName string = apiApp.name
