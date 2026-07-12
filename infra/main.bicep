@@ -31,8 +31,8 @@ param apiMaxReplicas int = 5
 param workerMaxReplicas int = 10
 
 var serviceName = 'azure-video-indexer-service'
-var apiAppName = '${serviceName}-api'
-var workerAppName = '${serviceName}-worker'
+var apiAppName = 'video-indexer-api'
+var workerAppName = 'video-indexer-worker'
 var stagingContainerName = 'video-indexer-staging'
 var jobsContainerName = 'video-indexer-jobs'
 var acrPullRoleDefinitionId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
