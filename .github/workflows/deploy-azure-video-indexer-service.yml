@@ -119,6 +119,11 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Register Video Indexer resource provider
+        run: |
+          set -euo pipefail
+          az provider register --namespace Microsoft.VideoIndexer --wait
+
       - name: Resolve Video Indexer role definition
         run: |
           set -euo pipefail

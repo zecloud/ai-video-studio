@@ -480,6 +480,8 @@ module workerFoundryRole 'foundry-role-assignment.bicep' = {
   scope: resourceGroup(foundryAccountSubscriptionId, foundryAccountResourceGroupName)
   params: {
     accountName: foundryAccountName
+    accountResourceGroupName: foundryAccountResourceGroupName
+    accountSubscriptionId: foundryAccountSubscriptionId
     principalId: workerIdentity.properties.principalId
     roleDefinitionId: cognitiveServicesOpenAIUserRoleDefinitionId
     assignmentSeed: workerAppName
@@ -491,6 +493,8 @@ module videoIndexerFoundryRole 'foundry-role-assignment.bicep' = {
   scope: resourceGroup(foundryAccountSubscriptionId, foundryAccountResourceGroupName)
   params: {
     accountName: foundryAccountName
+    accountResourceGroupName: foundryAccountResourceGroupName
+    accountSubscriptionId: foundryAccountSubscriptionId
     principalId: videoIndexerAccount.identity.principalId
     roleDefinitionId: cognitiveServicesOpenAIUserRoleDefinitionId
     assignmentSeed: videoIndexerAccountName
