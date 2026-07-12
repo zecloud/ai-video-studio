@@ -8,7 +8,7 @@ param containerRegistryName string = 'acrvideostudio'
 @description('Azure AI Foundry account name created in the target resource group.')
 param foundryAccountName string
 @description('Azure AI Foundry project name created under the account.')
-param foundryProjectName string = 'soraproject'
+param foundryProjectName string = 'video-indexer-project'
 @description('Azure AI Video Indexer account name. Override this value when the default is already in use.')
 param videoIndexerAccountName string = 'videoindexer-prod'
 param videoIndexerRoleDefinitionResourceId string

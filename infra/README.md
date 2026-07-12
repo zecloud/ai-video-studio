@@ -121,7 +121,7 @@ az deployment group validate \
     containerAppsEnvironmentId="$CONTAINER_APPS_ENVIRONMENT_ID" \
     containerRegistryName="<ACR_NAME>" \
     foundryAccountName="<FOUNDRY_ACCOUNT_NAME>" \
-    foundryProjectName="soraproject" \
+    foundryProjectName="video-indexer-project" \
     videoIndexerAccountName="<VIDEO_INDEXER_ACCOUNT_NAME>" \
     videoIndexerRoleDefinitionResourceId="<VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID>" \
     containerImageTag="local" \
@@ -135,7 +135,7 @@ az deployment group create \
     containerAppsEnvironmentId="$CONTAINER_APPS_ENVIRONMENT_ID" \
     containerRegistryName="<ACR_NAME>" \
     foundryAccountName="<FOUNDRY_ACCOUNT_NAME>" \
-    foundryProjectName="soraproject" \
+    foundryProjectName="video-indexer-project" \
     videoIndexerAccountName="<VIDEO_INDEXER_ACCOUNT_NAME>" \
     videoIndexerRoleDefinitionResourceId="<VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID>" \
     containerImageTag="local" \
@@ -168,7 +168,7 @@ Cette cle n'est pas une cle Azure Video Indexer : elle protege l'API privee du n
 | `AZURE_CONTAINER_APPS_ENV` | Nom de l'environnement Container Apps existant | `cae-ai-video-studio` |
 | `ACR_NAME` | Nom facultatif de l'ACR cree par Bicep dans le resource group cible. Si la variable n'est pas definie, le workflow et Bicep utilisent `acrvideostudio`. | `acrvideostudio` |
 | `FOUNDRY_ACCOUNT_NAME` | Nom du compte Foundry/Azure OpenAI cree par Bicep dans le resource group cible | `oai-video-studio` |
-| `FOUNDRY_PROJECT_NAME` | Nom du projet Foundry cree par Bicep | `soraproject` |
+| `FOUNDRY_PROJECT_NAME` | Nom du projet Foundry cree par Bicep | `video-indexer-project` |
 | `VIDEO_INDEXER_ACCOUNT_NAME` | Nom facultatif du compte Azure AI Video Indexer a creer dans le resource group cible. Si la variable n'est pas definie, le workflow et Bicep utilisent `videoindexer-prod`. | `videoindexer-prod` |
 | `VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID` | Variable facultative permettant de forcer le Resource ID du role Video Indexer. Si elle est absente, le workflow le recherche apres la connexion Azure et echoue si la recherche ne renvoie pas exactement un role. | `/subscriptions/<id>/providers/Microsoft.Authorization/roleDefinitions/<guid>` |
 
@@ -303,7 +303,7 @@ gh variable set AZURE_CONTAINER_APPS_ENV --env production --body "<CONTAINER_APP
 # Facultatif : omettre cette variable pour utiliser la valeur par defaut.
 gh variable set ACR_NAME --env production --body "<ACR_NAME>"
 gh variable set FOUNDRY_ACCOUNT_NAME --env production --body "<FOUNDRY_ACCOUNT_NAME>"
-gh variable set FOUNDRY_PROJECT_NAME --env production --body "soraproject"
+gh variable set FOUNDRY_PROJECT_NAME --env production --body "video-indexer-project"
 # Facultatif : omettre cette variable pour utiliser la valeur par defaut.
 gh variable set VIDEO_INDEXER_ACCOUNT_NAME --env production --body "<VIDEO_INDEXER_ACCOUNT_NAME>"
 # Facultatif : le workflow peut rechercher automatiquement l'unique role contenant
