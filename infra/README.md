@@ -163,7 +163,7 @@ Cette cle n'est pas une cle Azure Video Indexer : elle protege l'API privee du n
 | `FOUNDRY_ACCOUNT_NAME` | Nom du compte Foundry/Azure OpenAI existant | `oai-video-studio` |
 | `FOUNDRY_PROJECT_ENDPOINT` | Endpoint du projet Foundry, pas l'endpoint generique du compte | `https://<resource>.services.ai.azure.com/api/projects/<project>` |
 | `VIDEO_INDEXER_ACCOUNT_NAME` | Nom facultatif du compte Azure AI Video Indexer a creer dans le resource group cible. Si la variable n'est pas definie, le workflow et Bicep utilisent `videoindexer-prod`. | `videoindexer-prod` |
-| `VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID` | Resource ID du role Video Indexer verifie dans le tenant | `/subscriptions/<id>/providers/Microsoft.Authorization/roleDefinitions/<guid>` |
+| `VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID` | Variable facultative permettant de forcer le Resource ID du role Video Indexer. Si elle est absente, le workflow le recherche apres la connexion Azure et echoue si la recherche ne renvoie pas exactement un role. | `/subscriptions/<id>/providers/Microsoft.Authorization/roleDefinitions/<guid>` |
 
 ### Variables optionnelles
 
@@ -306,6 +306,8 @@ gh variable set FOUNDRY_ACCOUNT_NAME --env production --body "<FOUNDRY_ACCOUNT_N
 gh variable set FOUNDRY_PROJECT_ENDPOINT --env production --body "<FOUNDRY_PROJECT_ENDPOINT>"
 # Facultatif : omettre cette variable pour utiliser la valeur par defaut.
 gh variable set VIDEO_INDEXER_ACCOUNT_NAME --env production --body "<VIDEO_INDEXER_ACCOUNT_NAME>"
+# Facultatif : le workflow peut rechercher automatiquement l'unique role contenant
+# "Video Indexer" apres Azure Login. Definir cette variable seulement pour forcer un ID.
 gh variable set VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID --env production --body "<VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID>"
 ```
 

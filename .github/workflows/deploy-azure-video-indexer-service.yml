@@ -16,7 +16,7 @@
 #   FOUNDRY_ACCOUNT_RESOURCE_GROUP      Optional; defaults to AZURE_RESOURCE_GROUP.
 #   FOUNDRY_ACCOUNT_SUBSCRIPTION_ID     Optional; defaults to AZURE_SUBSCRIPTION_ID.
 #   VIDEO_INDEXER_ACCOUNT_NAME          Optional Azure AI Video Indexer account name; defaults to videoindexer-prod.
-#   VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID Existing Video Indexer role definition resource ID.
+#   VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID Optional override; otherwise resolved after Azure Login.
 #   The Durable Task Data Contributor built-in role is assigned by Bicep; no role ID variable is required.
 #
 # Deployment principal requirements
@@ -81,7 +81,6 @@ jobs:
             AZURE_SUBSCRIPTION_ID \
             FOUNDRY_ACCOUNT_NAME \
             FOUNDRY_PROJECT_ENDPOINT \
-            VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID \
             VIDEO_INDEXER_API_KEY
           do
             if [ -z "${!name:-}" ]; then
@@ -105,6 +104,30 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve Video Indexer role definition
+        run: |
+          set -euo pipefail
+          if [ -n "${VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID:-}" ]; then
+            echo "Using the explicitly configured Video Indexer role definition resource ID."
+            exit 0
+          fi
+
+          mapfile -t role_ids < <(
+            az role definition list \
+              --custom-role-only false \
+              --query "[?contains(roleName, 'Video Indexer')].id" \
+              --output tsv
+          )
+          if [ "${#role_ids[@]}" -ne 1 ] || [ -z "${role_ids[0]}" ]; then
+            echo "Expected exactly one Video Indexer role definition, found ${#role_ids[@]}." >&2
+            az role definition list \
+              --custom-role-only false \
+              --query "[?contains(roleName, 'Video Indexer')].{name:roleName,id:id}" \
+              --output table >&2
+            exit 1
+          fi
+          echo "VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID=${role_ids[0]}" >> "$GITHUB_ENV"
 
       - name: Install Container Apps CLI extension
         run: |
