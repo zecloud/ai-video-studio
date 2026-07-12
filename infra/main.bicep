@@ -3,7 +3,8 @@ targetScope = 'resourceGroup'
 @description('Azure region shared by Container Apps, Storage, and Durable Task Scheduler.')
 param location string = resourceGroup().location
 param containerAppsEnvironmentId string
-param containerRegistryName string
+@description('Azure Container Registry name. Override this value when the default is already in use globally.')
+param containerRegistryName string = 'acrvideostudio'
 param foundryAccountName string
 param foundryAccountResourceGroupName string
 param foundryAccountSubscriptionId string = subscription().subscriptionId

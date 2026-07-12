@@ -10,7 +10,7 @@
 #   AZURE_RESOURCE_GROUP                Target resource group for the new service stack.
 #   AZURE_LOCATION                      Azure region for the deployment.
 #   AZURE_CONTAINER_APPS_ENV            Existing Container Apps environment name.
-#   ACR_NAME                            Azure Container Registry name to create in AZURE_RESOURCE_GROUP.
+#   ACR_NAME                            Optional Azure Container Registry name; defaults to acrvideostudio.
 #   FOUNDRY_ACCOUNT_NAME               Azure AI Foundry / Azure OpenAI account name.
 #   FOUNDRY_PROJECT_ENDPOINT           Azure AI Foundry project endpoint.
 #   FOUNDRY_ACCOUNT_RESOURCE_GROUP      Optional; defaults to AZURE_RESOURCE_GROUP.
@@ -57,7 +57,7 @@ jobs:
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
       AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
       AZURE_CONTAINER_APPS_ENV: ${{ vars.AZURE_CONTAINER_APPS_ENV }}
-      ACR_NAME: ${{ vars.ACR_NAME }}
+      ACR_NAME: ${{ vars.ACR_NAME || 'acrvideostudio' }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       FOUNDRY_ACCOUNT_NAME: ${{ vars.FOUNDRY_ACCOUNT_NAME }}
       FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
@@ -78,7 +78,6 @@ jobs:
             AZURE_RESOURCE_GROUP \
             AZURE_LOCATION \
             AZURE_CONTAINER_APPS_ENV \
-            ACR_NAME \
             AZURE_SUBSCRIPTION_ID \
             FOUNDRY_ACCOUNT_NAME \
             FOUNDRY_PROJECT_ENDPOINT \

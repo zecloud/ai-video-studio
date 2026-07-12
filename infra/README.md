@@ -159,7 +159,7 @@ Cette cle n'est pas une cle Azure Video Indexer : elle protege l'API privee du n
 | `AZURE_RESOURCE_GROUP` | Resource group qui recevra la nouvelle stack | `rg-ai-video-studio-prod` |
 | `AZURE_LOCATION` | Region Azure de la stack | `westeurope` |
 | `AZURE_CONTAINER_APPS_ENV` | Nom de l'environnement Container Apps existant | `cae-ai-video-studio` |
-| `ACR_NAME` | Nom de l'ACR cree par Bicep dans le resource group cible | `acrvideostudio` |
+| `ACR_NAME` | Nom facultatif de l'ACR cree par Bicep dans le resource group cible. Si la variable n'est pas definie, le workflow et Bicep utilisent `acrvideostudio`. | `acrvideostudio` |
 | `FOUNDRY_ACCOUNT_NAME` | Nom du compte Foundry/Azure OpenAI existant | `oai-video-studio` |
 | `FOUNDRY_PROJECT_ENDPOINT` | Endpoint du projet Foundry, pas l'endpoint generique du compte | `https://<resource>.services.ai.azure.com/api/projects/<project>` |
 | `VIDEO_INDEXER_ACCOUNT_NAME` | Nom du compte Azure AI Video Indexer a creer dans le resource group cible | `videoindexer-prod` |
@@ -300,6 +300,7 @@ unset SERVICE_API_KEY
 gh variable set AZURE_RESOURCE_GROUP --env production --body "<RESOURCE_GROUP>"
 gh variable set AZURE_LOCATION --env production --body "<LOCATION>"
 gh variable set AZURE_CONTAINER_APPS_ENV --env production --body "<CONTAINER_APPS_ENV>"
+# Facultatif : omettre cette variable pour utiliser la valeur par defaut.
 gh variable set ACR_NAME --env production --body "<ACR_NAME>"
 gh variable set FOUNDRY_ACCOUNT_NAME --env production --body "<FOUNDRY_ACCOUNT_NAME>"
 gh variable set FOUNDRY_PROJECT_ENDPOINT --env production --body "<FOUNDRY_PROJECT_ENDPOINT>"
