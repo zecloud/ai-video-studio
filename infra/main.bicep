@@ -4,8 +4,6 @@ targetScope = 'resourceGroup'
 param location string = resourceGroup().location
 param containerAppsEnvironmentId string
 param containerRegistryName string
-param containerRegistryResourceGroupName string = resourceGroup().name
-param containerRegistrySubscriptionId string = subscription().subscriptionId
 param foundryAccountName string
 param foundryAccountResourceGroupName string
 param foundryAccountSubscriptionId string = subscription().subscriptionId
@@ -37,9 +35,14 @@ var storageBlobDataContributorRoleDefinitionId = 'ba92f5b4-2d11-453d-a403-e96b00
 var cognitiveServicesOpenAIUserRoleDefinitionId = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
 var durableTaskDataContributorRoleDefinitionId = '0ad04412-c4d5-4796-b79c-f76d14c8d402'
 
-resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
+resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   name: containerRegistryName
-  scope: resourceGroup(containerRegistrySubscriptionId, containerRegistryResourceGroupName)
+  location: location
+  sku: { name: 'Basic' }
+  properties: {
+    adminUserEnabled: false
+    publicNetworkAccess: 'Enabled'
+  }
 }
 
 resource foundryAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = {
@@ -243,13 +246,13 @@ resource workerDtsRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 
 module apiAcrPull 'acr-role-assignment.bicep' = {
   name: 'api-acr-pull'
-  scope: resourceGroup(containerRegistrySubscriptionId, containerRegistryResourceGroupName)
+  dependsOn: [acr]
   params: { registryName: containerRegistryName principalId: apiIdentity.principalId roleDefinitionId: acrPullRoleDefinitionId assignmentSeed: apiAppName }
 }
 
 module workerAcrPull 'acr-role-assignment.bicep' = {
   name: 'worker-acr-pull'
-  scope: resourceGroup(containerRegistrySubscriptionId, containerRegistryResourceGroupName)
+  dependsOn: [acr]
   params: { registryName: containerRegistryName principalId: workerIdentity.principalId roleDefinitionId: acrPullRoleDefinitionId assignmentSeed: workerAppName }
 }
 

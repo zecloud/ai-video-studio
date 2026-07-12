@@ -24,6 +24,7 @@ The worker depends on the experimental `durabletask-go` DTS backend pinned to im
 - a Storage Account with `video-indexer-staging` and `video-indexer-jobs` containers;
 - an Azure AI Video Indexer account with a system-assigned identity, connected to the same Standard StorageV2 account used for staging and jobs by the Container Apps;
 - Log Analytics and Application Insights;
+- an Azure Container Registry Basic dans le resource group cible ;
 - ACR Pull, Storage Blob Data Contributor, Foundry/OpenAI User, Video Indexer, and the built-in `Durable Task Data Contributor` role assignments scoped to the DTS scheduler. Bicep also grants the Video Indexer system identity `Storage Blob Data Contributor` on the shared application storage account.
 
 Only the API has ingress. The worker is started by DTS work items and must retain both scaler rules for scale-from-zero. The built-in `Durable Task Data Contributor` role (`0ad04412-c4d5-4796-b79c-f76d14c8d402`) is assigned by Bicep at scheduler scope; no GitHub variable is required.
@@ -41,7 +42,7 @@ az bicep install
 Le deploiement doit utiliser une identite ayant :
 
 - `Contributor` sur le resource group cible ;
-- `User Access Administrator` ou `Owner` sur le resource group cible et sur le scope ACR/Foundry s'ils sont externes, car Bicep cree des affectations RBAC ;
+- `User Access Administrator` ou `Owner` sur le resource group cible et sur le scope Foundry s'il est externe, car Bicep cree des affectations RBAC ;
 - acces de lecture aux ressources existantes passees au template. Le compte Video Indexer est cree dans le resource group cible et utilise le Storage Account de la stack.
 
 Verifier avant le deploiement :
@@ -49,7 +50,7 @@ Verifier avant le deploiement :
 ```bash
 az group show --name "<RESOURCE_GROUP>"
 az containerapp env show --name "<CONTAINER_APPS_ENV>" --resource-group "<RESOURCE_GROUP>"
-az acr show --name "<ACR_NAME>" --resource-group "<ACR_RESOURCE_GROUP>"
+az acr show --name "<ACR_NAME>" --resource-group "<RESOURCE_GROUP>"
 az cognitiveservices account show --name "<FOUNDRY_ACCOUNT_NAME>" --resource-group "<FOUNDRY_ACCOUNT_RESOURCE_GROUP>"
 az resource show --resource-group "<RESOURCE_GROUP>" --resource-type Microsoft.VideoIndexer/accounts --name "<VIDEO_INDEXER_ACCOUNT_NAME>"
 ```
@@ -65,7 +66,17 @@ az role definition list \
 
 ## Deploiement local avec Azure CLI
 
-Le workflow GitHub construit d'abord l'image dans ACR puis deploye `infra/main.bicep`. Pour reproduire le deploiement localement, construire et pousser l'image :
+Le workflow GitHub cree d'abord l'ACR avec `infra/container-registry.bicep`, construit ensuite l'image, puis deploye `infra/main.bicep`. Pour reproduire le deploiement localement, creer d'abord l'ACR :
+
+```bash
+az deployment group create \
+  --name "bootstrap-container-registry" \
+  --resource-group "<RESOURCE_GROUP>" \
+  --template-file infra/container-registry.bicep \
+  --parameters location="<LOCATION>" containerRegistryName="<ACR_NAME>"
+```
+
+Construire ensuite l'image :
 
 ```bash
 az acr build \
@@ -94,7 +105,6 @@ az deployment group validate \
     location="<LOCATION>" \
     containerAppsEnvironmentId="$CONTAINER_APPS_ENVIRONMENT_ID" \
     containerRegistryName="<ACR_NAME>" \
-    containerRegistryResourceGroupName="<ACR_RESOURCE_GROUP>" \
     foundryAccountName="<FOUNDRY_ACCOUNT_NAME>" \
     foundryProjectEndpoint="<FOUNDRY_PROJECT_ENDPOINT>" \
     foundryAccountResourceGroupName="<FOUNDRY_ACCOUNT_RESOURCE_GROUP>" \
@@ -110,7 +120,6 @@ az deployment group create \
     location="<LOCATION>" \
     containerAppsEnvironmentId="$CONTAINER_APPS_ENVIRONMENT_ID" \
     containerRegistryName="<ACR_NAME>" \
-    containerRegistryResourceGroupName="<ACR_RESOURCE_GROUP>" \
     foundryAccountName="<FOUNDRY_ACCOUNT_NAME>" \
     foundryProjectEndpoint="<FOUNDRY_PROJECT_ENDPOINT>" \
     foundryAccountResourceGroupName="<FOUNDRY_ACCOUNT_RESOURCE_GROUP>" \
@@ -144,7 +153,7 @@ Cette cle n'est pas une cle Azure Video Indexer : elle protege l'API privee du n
 | `AZURE_RESOURCE_GROUP` | Resource group qui recevra la nouvelle stack | `rg-ai-video-studio-prod` |
 | `AZURE_LOCATION` | Region Azure de la stack | `westeurope` |
 | `AZURE_CONTAINER_APPS_ENV` | Nom de l'environnement Container Apps existant | `cae-ai-video-studio` |
-| `ACR_NAME` | Nom de l'ACR existant | `acrvideostudio` |
+| `ACR_NAME` | Nom de l'ACR cree par Bicep dans le resource group cible | `acrvideostudio` |
 | `FOUNDRY_ACCOUNT_NAME` | Nom du compte Foundry/Azure OpenAI existant | `oai-video-studio` |
 | `FOUNDRY_PROJECT_ENDPOINT` | Endpoint du projet Foundry, pas l'endpoint generique du compte | `https://<resource>.services.ai.azure.com/api/projects/<project>` |
 | `VIDEO_INDEXER_ACCOUNT_NAME` | Nom du compte Azure AI Video Indexer a creer dans le resource group cible | `videoindexer-prod` |
@@ -152,11 +161,10 @@ Cette cle n'est pas une cle Azure Video Indexer : elle protege l'API privee du n
 
 ### Variables optionnelles
 
-Ces variables ne sont necessaires que si les ressources existantes sont dans d'autres resource groups ou souscriptions :
+Ces variables ne sont necessaires que si Foundry est dans un autre resource group ou une autre souscription :
 
 | Nom | Valeur par defaut |
 |---|---|
-| `ACR_RESOURCE_GROUP` | `AZURE_RESOURCE_GROUP` |
 | `FOUNDRY_ACCOUNT_RESOURCE_GROUP` | `AZURE_RESOURCE_GROUP` |
 | `FOUNDRY_ACCOUNT_SUBSCRIPTION_ID` | `AZURE_SUBSCRIPTION_ID` |
 
@@ -198,8 +206,6 @@ Renseigner les variables avec les IDs reels de la topologie. Ne pas mettre de se
 AZURE_CLIENT_ID="<AZURE_CLIENT_ID>"
 TARGET_SUBSCRIPTION_ID="<TARGET_SUBSCRIPTION_ID>"
 TARGET_RESOURCE_GROUP="<TARGET_RESOURCE_GROUP>"
-ACR_SUBSCRIPTION_ID="<ACR_SUBSCRIPTION_ID>"
-ACR_RESOURCE_GROUP="<ACR_RESOURCE_GROUP>"
 FOUNDRY_SUBSCRIPTION_ID="<FOUNDRY_SUBSCRIPTION_ID>"
 FOUNDRY_RESOURCE_GROUP="<FOUNDRY_RESOURCE_GROUP>"
 ```
@@ -231,15 +237,13 @@ az role assignment create \
   --scope "$TARGET_RG_SCOPE"
 ```
 
-Attribuer `User Access Administrator` sur chaque resource group ou scope dans lequel `infra/main.bicep` cree une affectation de role. Le scope du resource group cible couvre les affectations Storage Blob Data Contributor, Durable Task Data Contributor, le Storage du Video Indexer et le role Video Indexer. Les deux autres scopes couvrent les affectations ACR Pull et Foundry/OpenAI :
+Attribuer `User Access Administrator` sur chaque resource group ou scope dans lequel `infra/main.bicep` cree une affectation de role. Le scope du resource group cible couvre les affectations ACR Pull, Storage Blob Data Contributor, Durable Task Data Contributor, le Storage du Video Indexer et le role Video Indexer. L'autre scope couvre l'affectation Foundry/OpenAI :
 
 ```bash
-ACR_RG_SCOPE="/subscriptions/$ACR_SUBSCRIPTION_ID/resourceGroups/$ACR_RESOURCE_GROUP"
 FOUNDRY_RG_SCOPE="/subscriptions/$FOUNDRY_SUBSCRIPTION_ID/resourceGroups/$FOUNDRY_RESOURCE_GROUP"
 
 for SCOPE in \
   "$TARGET_RG_SCOPE" \
-  "$ACR_RG_SCOPE" \
   "$FOUNDRY_RG_SCOPE"; do
   az role assignment create \
     --assignee-object-id "$SP_OBJECT_ID" \
@@ -249,7 +253,7 @@ for SCOPE in \
 done
 ```
 
-Si ACR ou Foundry se trouvent dans d'autres resource groups ou souscriptions, conserver leurs IDs correspondants dans les variables ci-dessus et executer les commandes sur ces scopes. Le compte Video Indexer est cree dans le resource group cible et reutilise le Storage Account de la stack : aucun scope Video Indexer externe n'est necessaire. `Contributor` sur les resource groups externes n'est necessaire que si le workflow doit aussi y modifier des ressources ; pour les affectations RBAC creees par Bicep, `User Access Administrator` sur le scope suffit. Si une ressource externe est seulement lue ou utilisee comme dependance, ne pas accorder de `Contributor` inutilement.
+Si Foundry se trouve dans un autre resource group ou une autre souscription, conserver ses IDs correspondants dans les variables ci-dessus et executer les commandes sur ce scope. L'ACR, le compte Video Indexer et le Storage Account sont crees dans le resource group cible. `Contributor` sur un resource group externe n'est necessaire que si le workflow doit aussi y modifier des ressources ; pour les affectations RBAC creees par Bicep, `User Access Administrator` sur le scope suffit. Si une ressource externe est seulement lue ou utilisee comme dependance, ne pas accorder de `Contributor` inutilement.
 
 Verifier les affectations de l'identite et leurs scopes avant de lancer le workflow :
 
@@ -297,7 +301,7 @@ gh variable set VIDEO_INDEXER_ACCOUNT_NAME --env production --body "<VIDEO_INDEX
 gh variable set VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID --env production --body "<VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID>"
 ```
 
-Ajouter aussi les variables optionnelles avec `gh variable set` si l'ACR, Foundry ou Video Indexer est dans un autre resource group ou une autre souscription. Pour eviter de recopier une valeur sensible, ne pas utiliser `--body` avec un token ou une cle dans un script versionne.
+Ajouter aussi les variables optionnelles avec `gh variable set` si Foundry est dans un autre resource group ou une autre souscription. Pour eviter de recopier une valeur sensible, ne pas utiliser `--body` avec un token ou une cle dans un script versionne.
 
 ## Verification apres deploiement
 

@@ -10,8 +10,7 @@
 #   AZURE_RESOURCE_GROUP                Target resource group for the new service stack.
 #   AZURE_LOCATION                      Azure region for the deployment.
 #   AZURE_CONTAINER_APPS_ENV            Existing Container Apps environment name.
-#   ACR_NAME                            Existing Azure Container Registry name.
-#   ACR_RESOURCE_GROUP                  Optional; defaults to AZURE_RESOURCE_GROUP.
+#   ACR_NAME                            Azure Container Registry name to create in AZURE_RESOURCE_GROUP.
 #   FOUNDRY_ACCOUNT_NAME               Azure AI Foundry / Azure OpenAI account name.
 #   FOUNDRY_PROJECT_ENDPOINT           Azure AI Foundry project endpoint.
 #   FOUNDRY_ACCOUNT_RESOURCE_GROUP      Optional; defaults to AZURE_RESOURCE_GROUP.
@@ -21,7 +20,7 @@
 #   The Durable Task Data Contributor built-in role is assigned by Bicep; no role ID variable is required.
 #
 # Deployment principal requirements
-#   Contributor on the target resource group and on the ACR resource group if separate.
+#   Contributor on the target resource group.
 #   User Access Administrator (or Owner) on the scopes where infra/main.bicep creates role assignments.
 
 name: Deploy azure-video-indexer-service
@@ -60,7 +59,6 @@ jobs:
       AZURE_CONTAINER_APPS_ENV: ${{ vars.AZURE_CONTAINER_APPS_ENV }}
       ACR_NAME: ${{ vars.ACR_NAME }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      ACR_RESOURCE_GROUP: ${{ vars.ACR_RESOURCE_GROUP || vars.AZURE_RESOURCE_GROUP }}
       FOUNDRY_ACCOUNT_NAME: ${{ vars.FOUNDRY_ACCOUNT_NAME }}
       FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
       FOUNDRY_ACCOUNT_RESOURCE_GROUP: ${{ vars.FOUNDRY_ACCOUNT_RESOURCE_GROUP || vars.AZURE_RESOURCE_GROUP }}
@@ -125,6 +123,16 @@ jobs:
           fi
           echo "CONTAINER_APPS_ENVIRONMENT_ID=$env_id" >> "$GITHUB_ENV"
 
+      - name: Provision Azure Container Registry
+        run: |
+          set -euo pipefail
+          az deployment group create \
+            --name "bootstrap-container-registry-${GITHUB_RUN_ID}" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --template-file "infra/container-registry.bicep" \
+            --parameters location="$AZURE_LOCATION" containerRegistryName="$ACR_NAME" \
+            --only-show-errors
+
       - name: Build and push immutable image
         run: |
           set -euo pipefail
@@ -146,7 +154,6 @@ jobs:
               location="$AZURE_LOCATION" \
               containerAppsEnvironmentId="$CONTAINER_APPS_ENVIRONMENT_ID" \
               containerRegistryName="$ACR_NAME" \
-              containerRegistryResourceGroupName="$ACR_RESOURCE_GROUP" \
               foundryAccountName="$FOUNDRY_ACCOUNT_NAME" \
               foundryProjectEndpoint="$FOUNDRY_PROJECT_ENDPOINT" \
               foundryAccountResourceGroupName="$FOUNDRY_ACCOUNT_RESOURCE_GROUP" \
@@ -168,7 +175,6 @@ jobs:
                 location="$AZURE_LOCATION" \
                 containerAppsEnvironmentId="$CONTAINER_APPS_ENVIRONMENT_ID" \
                 containerRegistryName="$ACR_NAME" \
-                containerRegistryResourceGroupName="$ACR_RESOURCE_GROUP" \
                 foundryAccountName="$FOUNDRY_ACCOUNT_NAME" \
                 foundryProjectEndpoint="$FOUNDRY_PROJECT_ENDPOINT" \
                 foundryAccountResourceGroupName="$FOUNDRY_ACCOUNT_RESOURCE_GROUP" \
