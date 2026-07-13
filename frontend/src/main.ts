@@ -146,42 +146,6 @@ type AppState = {
         editing: EditingViewState;
     };
 
-const sampleMedia: MediaItem[] = [
-  {
-    id: "gx010112",
-    name: "GX010112.MP4",
-    capturedAt: "2026-07-04 09:42",
-    duration: "08:14",
-    size: "3.8 GB",
-    storage: "SD / DCIM",
-    selected: true,
-    readiness: "Range OK",
-    tone: "success",
-  },
-  {
-    id: "gx010113",
-    name: "GX010113.MP4",
-    capturedAt: "2026-07-04 10:05",
-    duration: "12:32",
-    size: "5.6 GB",
-    storage: "SD / DCIM",
-    selected: true,
-    readiness: "HEAD pending",
-    tone: "warning",
-  },
-  {
-    id: "gx010114",
-    name: "GX010114.MP4",
-    capturedAt: "2026-07-04 10:49",
-    duration: "03:58",
-    size: "1.9 GB",
-    storage: "SD / DCIM",
-    selected: false,
-    readiness: "Already imported",
-    tone: "info",
-  },
-];
-
 const state: AppState = {
   title: "AI Video Studio",
   version: "0.1.0-scaffold",
@@ -195,7 +159,7 @@ const state: AppState = {
     { label: "Active work", value: "0 transfers, 0 renders", tone: "neutral" },
   ],
   activeView: "transfers",
-  media: sampleMedia,
+  media: [],
   localMedia: [],
   queue: [],
   diagnostics: [],
@@ -794,20 +758,25 @@ function renderLibraryPanel(): string {
   const assets = state.libraryAssets;
   const totalSize = assets.reduce((sum, a) => sum + (a.sizeBytes ?? 0), 0);
   const analyzedCount = assets.filter(a => (a.analysisScenes ?? 0) > 0 || a.analysisJobId).length;
+  const selectedIDs = new Set(state.smartEdit.selectedAssetIDs);
+  const selectedCount = assets.filter((asset) => selectedIDs.has(asset.id) && Boolean(asset.cloudAssetId)).length;
   const statusLine = assets.length === 0
     ? `No assets in library yet — upload local videos in the Transfers tab to start building your library.`
     : `OneDrive · ${assets.length} asset${assets.length === 1 ? "" : "s"} · ${formatBytes(totalSize)}${analyzedCount > 0 ? ` · ${analyzedCount} / ${assets.length} analyzed` : ""}`;
 
   const tableRows = assets.length === 0
-    ? `<tr><td colspan="5" class="empty-state">${escapeHTML(statusLine)}</td></tr>`
+    ? `<tr><td colspan="6" class="empty-state">${escapeHTML(statusLine)}</td></tr>`
     : assets.map((a) => {
         const analyzed = a.analysisJobId ? "yes" : "no";
+        const selectable = Boolean(a.cloudAssetId);
+        const selected = selectedIDs.has(a.id);
         return `<tr>
+          <td class="selection-cell"><input class="check" type="checkbox" data-action="library-toggle-asset" data-asset-id="${escapeHTML(a.id)}" ${selected ? "checked" : ""} ${selectable ? "" : "disabled"} aria-label="Select ${escapeHTML(a.name || a.id)} for Smart Edit" /></td>
           <td class="text-ellipsis" title="${escapeHTML(a.name || a.id)}">${escapeHTML(a.name || a.id)}</td>
           <td class="num">${formatBytes(a.sizeBytes ?? 0)}</td>
           <td><span class="status-badge ${analyzed === "yes" ? "tone-success" : "tone-neutral"}">${analyzed}</span></td>
           <td class="num">${a.analysisScenes ?? 0}</td>
-          <td><span class="mono secondary">${a.id}</span></td>
+          <td><span class="mono secondary">${escapeHTML(a.id)}</span></td>
         </tr>`;
       }).join("");
 
@@ -818,16 +787,31 @@ function renderLibraryPanel(): string {
   return `
     <section class="panel">
       <div class="panel-header">
-        <h3>Project library</h3>
-        <p class="secondary">${escapeHTML(statusLine)}</p>
-              <div class="actions">
-                <button class="button secondary" type="button" data-action="sync-onedrive">Scan OneDrive folder</button>
-              </div>
-            </div>
+        <div>
+          <p class="eyebrow">Cloud asset workspace</p>
+          <h3>Project library</h3>
+          <p class="secondary">${escapeHTML(statusLine)}</p>
+        </div>
+        <div class="actions">
+          <button class="button secondary" type="button" data-action="sync-onedrive">Scan OneDrive folder</button>
+          <button class="button" type="button" data-action="library-open-smart-edit" ${selectedCount ? "" : "disabled"}>Open Smart Edit${selectedCount ? ` (${selectedCount})` : ""}</button>
+        </div>
+      </div>
+      <div class="library-selection-bar" aria-live="polite">
+        <div>
+          <strong>${selectedCount ? `${selectedCount} video${selectedCount === 1 ? "" : "s"} selected` : "Select videos for Smart Edit"}</strong>
+          <span>${selectedCount ? "These clips will be ready to submit for indexing." : "Use the checkboxes to build a multi-video edit selection."}</span>
+        </div>
+        <div class="toolbar">
+          <button class="button secondary small" type="button" data-action="library-select-all" ${assets.some((asset) => asset.cloudAssetId) ? "" : "disabled"}>Select all videos</button>
+          <button class="button secondary small" type="button" data-action="library-clear-selection" ${selectedCount ? "" : "disabled"}>Clear</button>
+        </div>
+      </div>
       <div class="layout-with-detail">
         <div class="layout-table">
           <table class="data-table" aria-label="Library assets">
             <thead><tr>
+              <th class="selection-cell">Select</th>
               <th>Name</th>
               <th class="num">Size</th>
               <th class="num">Analyzed</th>
@@ -913,7 +897,7 @@ function render(): void {
           <button type="button" data-action="navigate" data-view="library" aria-current="${state.activeView === "library" ? "page" : "false"}">Library <small>${state.libraryAssets.length} assets</small></button>
           <button type="button" data-action="navigate" data-view="analysis" aria-current="${state.activeView === "analysis" ? "page" : "false"}">Analysis <small>${state.analysis.jobs.length} jobs</small></button>
           <button type="button" data-action="navigate" data-view="smart-edit" aria-current="${state.activeView === "smart-edit" ? "page" : "false"}">Smart Edit Studio <small>${state.smartEdit.jobs.length} jobs</small></button>
-          <button type="button" data-action="navigate" data-view="editing" aria-current="${state.activeView === "editing" ? "page" : "false"}">Editing <small>1 render</small></button>
+          <button type="button" data-action="navigate" data-view="editing" aria-current="${state.activeView === "editing" ? "page" : "false"}">Editing <small>${state.editing.renderJob ? "1 render" : "0 renders"}</small></button>
           <button type="button" data-action="navigate" data-view="settings" aria-current="${state.activeView === "settings" ? "page" : "false"}">Settings <small>safe</small></button>
         </nav>
         <section class="storage-note" aria-label="Storage policy">
@@ -987,16 +971,11 @@ function render(): void {
               <div class="panel-header">
                 <div>
                   <p class="eyebrow">Render monitor</p>
-                  <h3>FFmpeg export</h3>
+                  <h3>No active render</h3>
                 </div>
-                ${renderBadge("Preview", "info")}
+                ${renderBadge("Idle", "neutral")}
               </div>
-              <div class="detail-body">
-                ${renderProgress(67, "00:01:09 / 00:01:43 - libx264")}
-                <pre class="log">frame=1842 fps=58 q=24.0
-out_time=00:01:09.020
-progress=continue</pre>
-              </div>
+              <div class="detail-body"><div class="empty-state">Completed render jobs will appear here when an export is started in Editing.</div></div>
             </section>
           </aside>
         </section>
@@ -1023,10 +1002,39 @@ progress=continue</pre>
     // Library table row clicks
     root.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
+      if (target.closest("[data-action='library-toggle-asset']")) {
+        const input = target.closest<HTMLInputElement>("[data-action='library-toggle-asset']");
+        const assetID = input?.dataset.assetId || "";
+        if (assetID) {
+          const selected = new Set(state.smartEdit.selectedAssetIDs);
+          if (input?.checked) selected.add(assetID);
+          else selected.delete(assetID);
+          state.smartEdit.selectedAssetIDs = Array.from(selected);
+          render();
+        }
+        return;
+      }
+      if (target.closest("[data-action='library-select-all']")) {
+        state.smartEdit.selectedAssetIDs = Array.from(new Set(
+          state.libraryAssets.filter((asset) => asset.cloudAssetId).map((asset) => asset.id),
+        ));
+        render();
+        return;
+      }
+      if (target.closest("[data-action='library-clear-selection']")) {
+        state.smartEdit.selectedAssetIDs = [];
+        render();
+        return;
+      }
+      if (target.closest("[data-action='library-open-smart-edit']")) {
+        state.activeView = "smart-edit";
+        render();
+        return;
+      }
       const row = target.closest<HTMLTableRowElement>(".data-table tbody tr");
       if (!row || row.querySelector(".empty-state")) return;
       const cells = row.querySelectorAll("td");
-      const assetId = cells.length === 5 ? cells[4]?.textContent?.trim() : null;
+      const assetId = cells.length === 6 ? cells[5]?.textContent?.trim() : null;
       if (assetId) {
         state.selectedAssetId = assetId;
         render();
