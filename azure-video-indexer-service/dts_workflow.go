@@ -120,7 +120,8 @@ func (a *VideoIndexerActivities) Poll(ctx task.ActivityContext) (any, error) {
 	if state == "failed" || state == "canceled" || state == "cancelled" {
 		failure := videoIndexerTerminalError(index)
 		_, updateErr := a.update(ctx.Context(), job.ID, JobStatusFailed, func(doc *JobDocument) {
-			doc.Error = (&ServiceError{Status: 422, Code: serviceErrorCode(failure), Message: serviceErrorMessage(failure), Retryable: false}).APIError()
+			apiError := (&ServiceError{Status: 422, Code: serviceErrorCode(failure), Message: serviceErrorMessage(failure), Retryable: false}).APIError()
+			doc.Error = &apiError
 			doc.VideoIndexerState = index.State()
 		})
 		if updateErr != nil {

@@ -549,15 +549,6 @@ func videoIndexerNestedMessage(raw json.RawMessage) string {
 	return firstNonEmpty(nested.Message, nested.Details, nested.Code)
 }
 
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
 func (c *VideoIndexerClient) getVideoIndex(ctx context.Context, account ResolvedVideoIndexerAccount, videoID, accessToken string) (VideoIndexData, *http.Response, error) {
 	indexURL := fmt.Sprintf("%s/%s/Accounts/%s/Videos/%s/Index?%s",
 		c.cfg.APIBaseURL,
