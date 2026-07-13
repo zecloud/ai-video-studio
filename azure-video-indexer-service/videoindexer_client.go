@@ -492,10 +492,14 @@ func (c *VideoIndexerClient) PollVideoIndex(ctx context.Context, videoID string,
 
 func videoIndexerTerminalError(index VideoIndexData) error {
 	state := "unknown"
+	var raw json.RawMessage
 	if index != nil && strings.TrimSpace(index.State()) != "" {
 		state = index.State()
 	}
-	message := videoIndexerFailureMessage(index.RawJSON())
+	if index != nil {
+		raw = index.RawJSON()
+	}
+	message := videoIndexerFailureMessage(raw)
 	if message == "" {
 		message = fmt.Sprintf("Video Indexer reported terminal state %s", state)
 	} else {
