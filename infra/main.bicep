@@ -388,7 +388,7 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-resource workerApp 'Microsoft.App/containerApps@2024-03-01' = {
+resource workerApp 'Microsoft.App/containerApps@2025-01-01' = {
   name: workerAppName
   location: location
   identity: {
@@ -451,6 +451,7 @@ resource workerApp 'Microsoft.App/containerApps@2024-03-01' = {
                 taskhubName: taskHub.name
                 workItemType: 'Orchestration'
               }
+              identity: workerIdentity.id
             }
           }
           {
@@ -463,6 +464,7 @@ resource workerApp 'Microsoft.App/containerApps@2024-03-01' = {
                 taskhubName: taskHub.name
                 workItemType: 'Activity'
               }
+              identity: workerIdentity.id
             }
           }
         ]
