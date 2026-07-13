@@ -108,8 +108,8 @@ github.com/wailsapp/wails/v3 v3.0.0-alpha2.112 h1:ksoeCCPlDJqpHM4dB7Zwl/8tGYC+DI
 github.com/wailsapp/wails/v3 v3.0.0-alpha2.112/go.mod h1:wrdvmyeCsB/K3YqJDoH8E3MwcN8NXAMnEFaDTW46w60=
 github.com/wailsapp/wails/webview2 v1.0.27 h1:wjgAi/I8BBZ7kUGU8um3XF3ILEfzr96Q2Q1G4GPjMns=
 github.com/wailsapp/wails/webview2 v1.0.27/go.mod h1:zdM4jcO1IaC61RiJL5F1BzgoqBHFIdacz8gPr5exr0o=
-github.com/zecloud/durabletask-go v0.0.0-20260713103808-9ac3cc1b0663 h1:c2zGtJc9rsNuGe3cUUD8y8S6o71zGvLqGqOz2dA/FGk=
-github.com/zecloud/durabletask-go v0.0.0-20260713103808-9ac3cc1b0663/go.mod h1:Ps8MbaXGJdT9MKrfl3Co5s0xY1MLgjNGAWi7DM/gVks=
+github.com/zecloud/durabletask-go v0.0.0-20260713120859-57f621f4502e h1:/g8zL9NkH5bUJiSQBy8+uIqWPY0BKCpSrC+gIpmliUw=
+github.com/zecloud/durabletask-go v0.0.0-20260713120859-57f621f4502e/go.mod h1:Ps8MbaXGJdT9MKrfl3Co5s0xY1MLgjNGAWi7DM/gVks=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
 go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbEe3ZiIhN7Y=
 go.opentelemetry.io/otel v1.44.0 h1:JjwHmHpA4iZ3wBxluu2fbbE7j4kqlE8jXyAyPXH7HqU=

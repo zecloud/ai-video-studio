@@ -71,4 +71,4 @@ require (
 
 replace github.com/zecloud/ai-video-studio => ..
 
-replace github.com/microsoft/durabletask-go => github.com/zecloud/durabletask-go v0.0.0-20260713103808-9ac3cc1b0663
+replace github.com/microsoft/durabletask-go => github.com/zecloud/durabletask-go v0.0.0-20260713120859-57f621f4502e
