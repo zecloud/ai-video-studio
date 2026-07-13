@@ -523,16 +523,61 @@ func videoIndexerFailureMessage(raw json.RawMessage) string {
 		return ""
 	}
 	parts := make([]string, 0, 2)
-	if payload.ErrorCode != "" {
-		parts = append(parts, payload.ErrorCode)
-	}
-	for _, value := range []string{payload.ErrorMessage, payload.Message, videoIndexerNestedMessage(payload.Error), videoIndexerNestedMessage(payload.Errors)} {
+	for _, value := range []string{payload.ErrorCode, payload.ErrorMessage, payload.Message, videoIndexerFailureValue(payload.Error), videoIndexerFailureValue(payload.Errors)} {
 		value = strings.TrimSpace(redactURLsInText(value))
 		if value != "" && !videoIndexerContainsString(parts, value) {
 			parts = append(parts, value)
 		}
 	}
+	if len(parts) == 0 {
+		// Preserve an opaque failure payload in a bounded, URL-redacted form. Video
+		// Indexer has returned several failure shapes over time, and hiding the
+		// payload makes production failures impossible to diagnose.
+		compact := strings.TrimSpace(redactURLsInText(string(raw)))
+		if len(compact) > 1000 {
+			compact = compact[:1000] + "..."
+		}
+		return compact
+	}
 	return strings.Join(parts, ": ")
+}
+
+func videoIndexerFailureValue(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return ""
+	}
+	return videoIndexerFailureValueFromAny(value)
+}
+
+func videoIndexerFailureValueFromAny(value any) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		parts := make([]string, 0, 2)
+		for _, key := range []string{"errorType", "errorCode", "code", "errorMessage", "message", "details"} {
+			if nested, ok := typed[key]; ok {
+				if text := videoIndexerFailureValueFromAny(nested); text != "" && !videoIndexerContainsString(parts, text) {
+					parts = append(parts, text)
+				}
+			}
+		}
+		return strings.Join(parts, ": ")
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := videoIndexerFailureValueFromAny(item); text != "" && !videoIndexerContainsString(parts, text) {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "; ")
+	case string:
+		return strings.TrimSpace(typed)
+	default:
+		return ""
+	}
 }
 
 func videoIndexerContainsString(values []string, want string) bool {

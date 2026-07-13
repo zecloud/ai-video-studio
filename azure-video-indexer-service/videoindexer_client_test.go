@@ -249,6 +249,13 @@ func TestVideoIndexerClient_PollVideoIndexFailed(t *testing.T) {
 	}
 }
 
+func TestVideoIndexerFailureMessagePreservesUnknownPayload(t *testing.T) {
+	message := videoIndexerFailureMessage(json.RawMessage(`{"state":"Failed","failureReason":"source unavailable","traceId":"trace-123"}`))
+	if !strings.Contains(message, "failureReason") || !strings.Contains(message, "source unavailable") {
+		t.Fatalf("unknown failure payload was not preserved: %q", message)
+	}
+}
+
 func TestVideoIndexerClient_PollVideoIndexCancellation(t *testing.T) {
 	waitStarted := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
