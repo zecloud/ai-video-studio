@@ -524,11 +524,20 @@ func videoIndexerFailureMessage(raw json.RawMessage) string {
 	}
 	for _, value := range []string{payload.ErrorMessage, payload.Message, videoIndexerNestedMessage(payload.Error), videoIndexerNestedMessage(payload.Errors)} {
 		value = strings.TrimSpace(redactURLsInText(value))
-		if value != "" && !containsString(parts, value) {
+		if value != "" && !videoIndexerContainsString(parts, value) {
 			parts = append(parts, value)
 		}
 	}
 	return strings.Join(parts, ": ")
+}
+
+func videoIndexerContainsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func videoIndexerNestedMessage(raw json.RawMessage) string {
