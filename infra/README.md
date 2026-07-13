@@ -75,7 +75,7 @@ az role definition list \
 
 ### Connexion Video Indexer et Azure OpenAI
 
-`main.bicep` cree un compte Foundry `AIServices`, un projet et le deploiement de modele `gpt-5.4` (version Azure `2026-03-05`) dans le resource group cible. Il utilise ensuite l'API `Microsoft.VideoIndexer/accounts@2025-04-01` pour relier directement le compte Video Indexer au compte cree. La connexion est faite avec l'identite system-assigned du compte Video Indexer, sans cle OpenAI. Bicep lui attribue `Cognitive Services OpenAI User` sur le compte Foundry.
+`main.bicep` cree un compte Foundry `AIServices`, un projet et le deploiement de modele `gpt-5.4` (version Azure `2026-03-05`) dans le resource group cible. Il cree aussi un compte Azure OpenAI dedie (`videoIndexerOpenAIAccountName`) pour la connexion native Video Indexer : l'API `Microsoft.VideoIndexer/accounts@2025-04-01` le relie au compte Video Indexer avec l'identite system-assigned de ce dernier, sans cle OpenAI. Bicep attribue `Cognitive Services OpenAI User` a cette identite sur le compte Azure OpenAI.
 
 Cette connexion active les capacites natives Video Indexer qui utilisent Azure OpenAI. Elle ne remplace pas l'acces du worker : celui-ci conserve sa propre affectation `Cognitive Services OpenAI User` et utilise `FOUNDRY_PROJECT_ENDPOINT` avec `FOUNDRY_DEPLOYMENT_NAME` pour le planning d'edition. Microsoft recommande de placer Video Indexer et Azure OpenAI dans la meme region.
 

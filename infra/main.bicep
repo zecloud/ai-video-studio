@@ -9,6 +9,8 @@ param containerRegistryName string = 'acrvideostudio'
 param foundryAccountName string = 'aivideoindexerfoundry'
 @description('Azure AI Foundry project name created under the account.')
 param foundryProjectName string = 'video-indexer-project'
+@description('Azure OpenAI account connected to Azure AI Video Indexer.')
+param videoIndexerOpenAIAccountName string = 'aivideoindexeropenai'
 @description('Azure AI Video Indexer account name. Override this value when the default is already in use.')
 param videoIndexerAccountName string = 'videoindexer-prod'
 param videoIndexerRoleDefinitionResourceId string
@@ -94,6 +96,20 @@ resource foundryModelDeployment 'Microsoft.CognitiveServices/accounts/deployment
   }
 }
 
+resource videoIndexerOpenAIAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
+  name: videoIndexerOpenAIAccountName
+  location: location
+  sku: {
+    name: 'S0'
+  }
+  kind: 'OpenAI'
+  properties: {
+    customSubDomainName: videoIndexerOpenAIAccountName
+    disableLocalAuth: false
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
 var foundryProjectEndpoint = 'https://${foundryAccountName}.services.ai.azure.com/api/projects/${foundryProjectName}'
 
 resource videoIndexerAccount 'Microsoft.VideoIndexer/accounts@2025-04-01' = {
@@ -106,7 +122,7 @@ resource videoIndexerAccount 'Microsoft.VideoIndexer/accounts@2025-04-01' = {
       userAssignedIdentity: ''
     }
     openAiServices: {
-      resourceId: foundryAccount.id
+      resourceId: videoIndexerOpenAIAccount.id
       userAssignedIdentity: ''
     }
   }
@@ -528,9 +544,9 @@ module workerFoundryRole 'foundry-role-assignment.bicep' = {
 }
 
 module videoIndexerFoundryRole 'foundry-role-assignment.bicep' = {
-  name: 'video-indexer-foundry-user'
+  name: 'video-indexer-openai-user'
   params: {
-    accountName: foundryAccountName
+    accountName: videoIndexerOpenAIAccountName
     principalId: videoIndexerAccount.identity.principalId
     roleDefinitionId: cognitiveServicesOpenAIUserRoleDefinitionId
     assignmentSeed: videoIndexerAccountName

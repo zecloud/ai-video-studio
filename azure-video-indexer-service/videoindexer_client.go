@@ -497,7 +497,6 @@ func (c *VideoIndexerClient) getVideoIndex(ctx context.Context, account Resolved
 		url.PathEscape(videoID),
 		c.encodeQuery(map[string]string{
 			"accessToken": accessToken,
-			"language":    "auto",
 		}),
 	)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, indexURL, nil)
@@ -537,7 +536,6 @@ func (c *VideoIndexerClient) buildVideoURL(account ResolvedVideoIndexerAccount, 
 	values.Set("accessToken", accessToken)
 	values.Set("name", safeVideoName(videoName))
 	values.Set("videoUrl", videoURL)
-	values.Set("language", "auto")
 	values.Set("privacy", "private")
 	values.Set("preventDuplicates", "true")
 	if externalID != "" {

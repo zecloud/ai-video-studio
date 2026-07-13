@@ -99,7 +99,7 @@ func TestVideoIndexerClient_UploadURLQueryEncoding(t *testing.T) {
 			_, _ = io.WriteString(w, `{"accessToken":"vi-account-token"}`)
 		case strings.HasSuffix(r.URL.Path, "/Videos") && r.Method == http.MethodPost:
 			gotUpload = r.URL.Query()
-			if got := gotUpload.Get("language"); got != "auto" {
+			if got := gotUpload.Get("language"); got != "" {
 				t.Fatalf("unexpected language: %q", got)
 			}
 			if got := gotUpload.Get("name"); got != "clip my video-.mp4" {
