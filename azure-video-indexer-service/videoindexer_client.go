@@ -460,13 +460,14 @@ func (c *VideoIndexerClient) PollVideoIndex(ctx context.Context, videoID string,
 			case "processed":
 				return index, nil
 			case "failed", "canceled", "cancelled":
-				err = newServiceError(http.StatusUnprocessableEntity, "video_index_failed", fmt.Sprintf("video indexer reported terminal state %s", index.State()), false)
+				err = videoIndexerTerminalError(index)
 				return nil, err
 			default:
 				if waitErr := c.wait(ctx, c.nextDelay(resp, attempt)); waitErr != nil {
 					err = waitErr
 					return nil, err
 				}
+
 				attempt++
 				continue
 			}
@@ -487,6 +488,74 @@ func (c *VideoIndexerClient) PollVideoIndex(ctx context.Context, videoID string,
 		}
 		return nil, err
 	}
+}
+
+func videoIndexerTerminalError(index VideoIndexData) error {
+	state := "unknown"
+	if index != nil && strings.TrimSpace(index.State()) != "" {
+		state = index.State()
+	}
+	message := videoIndexerFailureMessage(index.RawJSON())
+	if message == "" {
+		message = fmt.Sprintf("Video Indexer reported terminal state %s", state)
+	} else {
+		message = fmt.Sprintf("Video Indexer reported terminal state %s: %s", state, message)
+	}
+	return newServiceError(http.StatusUnprocessableEntity, "video_index_failed", message, false)
+}
+
+func videoIndexerFailureMessage(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var payload struct {
+		Error        json.RawMessage `json:"error"`
+		Errors       json.RawMessage `json:"errors"`
+		Message      string          `json:"message"`
+		ErrorMessage string          `json:"errorMessage"`
+		ErrorCode    string          `json:"errorCode"`
+	}
+	if json.Unmarshal(raw, &payload) != nil {
+		return ""
+	}
+	parts := make([]string, 0, 2)
+	if payload.ErrorCode != "" {
+		parts = append(parts, payload.ErrorCode)
+	}
+	for _, value := range []string{payload.ErrorMessage, payload.Message, videoIndexerNestedMessage(payload.Error), videoIndexerNestedMessage(payload.Errors)} {
+		value = strings.TrimSpace(redactURLsInText(value))
+		if value != "" && !containsString(parts, value) {
+			parts = append(parts, value)
+		}
+	}
+	return strings.Join(parts, ": ")
+}
+
+func videoIndexerNestedMessage(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var nested struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+		Details string `json:"details"`
+	}
+	if json.Unmarshal(raw, &nested) != nil {
+		return ""
+	}
+	if nested.Code != "" && nested.Message != "" {
+		return nested.Code + ": " + nested.Message
+	}
+	return firstNonEmpty(nested.Message, nested.Details, nested.Code)
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *VideoIndexerClient) getVideoIndex(ctx context.Context, account ResolvedVideoIndexerAccount, videoID, accessToken string) (VideoIndexData, *http.Response, error) {

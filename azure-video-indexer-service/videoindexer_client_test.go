@@ -227,7 +227,7 @@ func TestVideoIndexerClient_PollVideoIndexFailed(t *testing.T) {
 			_, _ = io.WriteString(w, `{"accessToken":"vi-account-token"}`)
 		case strings.Contains(r.URL.Path, "/Index"):
 			w.WriteHeader(http.StatusOK)
-			_, _ = io.WriteString(w, `{"id":"video-123","state":"Failed"}`)
+			_, _ = io.WriteString(w, `{"id":"video-123","state":"Failed","error":{"code":"InvalidInput","message":"The source video cannot be read"}}`)
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -243,6 +243,9 @@ func TestVideoIndexerClient_PollVideoIndexFailed(t *testing.T) {
 	var svcErr *ServiceError
 	if !errors.As(err, &svcErr) || svcErr.Code != "video_index_failed" || svcErr.Status != http.StatusUnprocessableEntity {
 		t.Fatalf("unexpected error: %#v", err)
+	}
+	if !strings.Contains(svcErr.Message, "InvalidInput") || !strings.Contains(svcErr.Message, "source video cannot be read") {
+		t.Fatalf("failure details were not preserved: %q", svcErr.Message)
 	}
 }
 
