@@ -169,7 +169,6 @@ func (e *MediaSignalExtractor) runProbe(ctx context.Context, sourceURL string, c
 	args := []string{
 		"-hide_banner",
 		"-v", "error",
-		"-nostdin",
 		"-show_format",
 		"-show_streams",
 		"-print_format", "json",

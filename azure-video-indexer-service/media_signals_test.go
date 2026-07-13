@@ -44,6 +44,12 @@ func TestMediaSignalExtractorExtractsTechnicalSignalsAndSilences(t *testing.T) {
 	runner.run = func(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
 		switch {
 		case name == "ffprobe":
+			if containsExactArg(args, "-nostdin") {
+				t.Fatalf("ffprobe does not support -nostdin: %v", args)
+			}
+			if !containsExactArg(args, "-show_format") || !containsExactArg(args, "-show_streams") {
+				t.Fatalf("ffprobe metadata arguments missing: %v", args)
+			}
 			return []byte(`{
 				"format":{"duration":"12.5"},
 				"streams":[
@@ -233,6 +239,15 @@ func TestMediaSignalExtractorCancellationAndRedaction(t *testing.T) {
 func containsArg(args []string, key, value string) bool {
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == key && args[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+func containsExactArg(args []string, value string) bool {
+	for _, arg := range args {
+		if arg == value {
 			return true
 		}
 	}
