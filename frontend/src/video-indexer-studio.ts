@@ -260,6 +260,19 @@ export async function submitVideoIndexerAssets(state: VideoIndexerStudioViewStat
   return { submitted, failed };
 }
 
+export async function retryVideoIndexerJob(state: VideoIndexerStudioViewState, jobID: string): Promise<void> {
+  const failedJob = state.jobs.find((job) => job.id === jobID && job.status === "failed");
+  if (!failedJob) {
+    throw new Error("Only failed Video Indexer jobs can be retried.");
+  }
+  const job = await VideoIndexerStudioService.SubmitForIndexing(failedJob.assetId);
+  if (!job) {
+    throw new Error("Video Indexer did not return the replacement job.");
+  }
+  upsertJob(state, job);
+  state.selectedJobID = job.id;
+}
+
 export async function cancelVideoIndexerJob(state: VideoIndexerStudioViewState, jobID: string): Promise<void> {
   const job = await VideoIndexerStudioService.CancelIndexing(jobID);
   if (job) {
@@ -346,6 +359,11 @@ function renderJobsTable(state: VideoIndexerStudioViewState): string {
                   ${
                     inFlight(job.status)
                       ? `<button type="button" class="button secondary small" data-action="video-indexer-cancel-job" data-job-id="${escapeHTML(job.id)}">Cancel</button>`
+                      : ""
+                  }
+                  ${
+                    job.status === "failed"
+                      ? `<button type="button" class="button small" data-action="video-indexer-retry-job" data-job-id="${escapeHTML(job.id)}">Retry</button>`
                       : ""
                   }
                   ${

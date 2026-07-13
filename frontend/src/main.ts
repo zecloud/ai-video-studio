@@ -39,6 +39,7 @@ import {
   renderVideoIndexerStudioPanel,
   saveVideoIndexerSettings,
   selectVideoIndexerJob,
+  retryVideoIndexerJob,
   setupVideoIndexerStudioEvents,
   submitVideoIndexerAssets,
   refreshVideoIndexerStudioState,
@@ -1166,6 +1167,23 @@ function render(): void {
             })
             .catch((error) => {
               state.smartEdit.message = error instanceof Error ? error.message : "Canceling the Video Indexer job failed.";
+              render();
+            });
+        }
+        return;
+      }
+
+      const retryJob = target.closest<HTMLButtonElement>("[data-action='video-indexer-retry-job']");
+      if (retryJob) {
+        const jobID = retryJob.dataset.jobId || "";
+        if (jobID) {
+          void retryVideoIndexerJob(state.smartEdit, jobID)
+            .then(() => {
+              state.smartEdit.message = "Submitted a new Video Indexer job with a fresh source URL.";
+              render();
+            })
+            .catch((error) => {
+              state.smartEdit.message = error instanceof Error ? error.message : "Retrying the Video Indexer job failed.";
               render();
             });
         }
