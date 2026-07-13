@@ -94,7 +94,7 @@ resource foundryModelDeployment 'Microsoft.CognitiveServices/accounts/deployment
   }
 }
 
-var foundryProjectEndpoint = '${foundryAccount.properties.endpoint}api/projects/${foundryProjectName}'
+var foundryProjectEndpoint = 'https://${foundryAccountName}.services.ai.azure.com/api/projects/${foundryProjectName}'
 
 resource videoIndexerAccount 'Microsoft.VideoIndexer/accounts@2025-04-01' = {
   name: videoIndexerAccountName
@@ -248,11 +248,11 @@ var workerEnvironment = concat(storageEnvironment, [
     value: videoIndexerAccount.location
   }
   {
-    name: 'AZURE_FOUNDRY_ENDPOINT'
+    name: 'FOUNDRY_PROJECT_ENDPOINT'
     value: foundryProjectEndpoint
   }
   {
-    name: 'AZURE_FOUNDRY_DEPLOYMENT_NAME'
+    name: 'FOUNDRY_DEPLOYMENT_NAME'
     value: foundryDeploymentName
   }
 ])
