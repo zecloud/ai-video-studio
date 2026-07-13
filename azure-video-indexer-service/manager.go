@@ -391,7 +391,7 @@ func (m *JobManager) process(jobID string) error {
 		if m.obs != nil {
 			downloadCtx = m.obs.ContextWithAttrs(jobCtx, attribute.String("job_id", jobID), attribute.String("stage", "onedrive.download"))
 		}
-		reader, _, err := m.oneDrive.OpenItem(downloadCtx, req.OneDriveItemID, req.OneDriveAccessToken)
+		reader, metadata, err := m.oneDrive.OpenItem(downloadCtx, req.OneDriveItemID, req.OneDriveAccessToken)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return m.finishCanceled(jobCtx, jobID, stored, asset)
@@ -402,7 +402,10 @@ func (m *JobManager) process(jobID string) error {
 		if m.obs != nil {
 			stageCtx = m.obs.ContextWithAttrs(jobCtx, attribute.String("job_id", jobID), attribute.String("stage", "blob.stage"))
 		}
-		asset, err = m.stager.Stage(stageCtx, jobID, req.SourceName, reader)
+		asset, err = m.stager.Stage(stageCtx, jobID, req.SourceName, reader, StageOptions{
+			ContentLength: metadata.ContentLength,
+			ContentType:   metadata.ContentType,
+		})
 		_ = reader.Close()
 		req.OneDriveAccessToken = ""
 		if err != nil {

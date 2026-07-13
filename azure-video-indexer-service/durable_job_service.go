@@ -98,11 +98,14 @@ func (s *DurableJobService) CreateJob(ctx context.Context, req CreateIndexJobReq
 		return Job{}, err
 	}
 
-	reader, _, err := s.oneDrive.OpenItem(ctx, req.OneDriveItemID, req.OneDriveAccessToken)
+	reader, metadata, err := s.oneDrive.OpenItem(ctx, req.OneDriveItemID, req.OneDriveAccessToken)
 	if err != nil {
 		return Job{}, s.failAndReturn(ctx, job.ID, err)
 	}
-	asset, stageErr := s.stager.Stage(ctx, job.ID, req.SourceName, reader)
+	asset, stageErr := s.stager.Stage(ctx, job.ID, req.SourceName, reader, StageOptions{
+		ContentLength: metadata.ContentLength,
+		ContentType:   metadata.ContentType,
+	})
 	closeErr := reader.Close()
 	if stageErr != nil {
 		return Job{}, s.failAndReturn(ctx, job.ID, stageErr)
