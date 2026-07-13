@@ -132,6 +132,50 @@ func TestVideoIndexerClient_UploadURLQueryEncoding(t *testing.T) {
 	}
 }
 
+func TestVideoIndexerClient_FindVideoByExternalIDRequiresExactMatch(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "selects matching result instead of first result",
+			body: `{"results":[{"id":"stale-video","externalId":"old-job"},{"id":"matching-video","externalId":"job-123"}]}`,
+			want: "matching-video",
+		},
+		{
+			name: "ignores unfiltered results",
+			body: `{"results":[{"id":"stale-video","externalId":"old-job"}]}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.Contains(r.URL.Path, "/generateAccessToken"):
+					_, _ = io.WriteString(w, `{"accessToken":"vi-account-token"}`)
+				case strings.HasSuffix(r.URL.Path, "/Videos") && r.Method == http.MethodGet:
+					if got := r.URL.Query().Get("externalId"); got != "job-123" {
+						t.Fatalf("unexpected externalId: %q", got)
+					}
+					_, _ = io.WriteString(w, tt.body)
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer server.Close()
+
+			got, err := newTestVideoIndexerClient(t, server).FindVideoByExternalID(context.Background(), "job-123")
+			if err != nil {
+				t.Fatalf("find video: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("video id = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestVideoIndexerClient_PollVideoIndexProcessed(t *testing.T) {
 	var getCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

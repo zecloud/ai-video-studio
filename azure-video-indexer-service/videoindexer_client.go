@@ -152,8 +152,9 @@ type videoIndexerIndexResponse struct {
 
 type videoIndexerVideoListResponse struct {
 	Results []struct {
-		ID      string `json:"id"`
-		VideoID string `json:"videoId"`
+		ID         string `json:"id"`
+		VideoID    string `json:"videoId"`
+		ExternalID string `json:"externalId"`
 	} `json:"results"`
 }
 type VideoIndexData interface {
@@ -355,14 +356,17 @@ func (c *VideoIndexerClient) FindVideoByExternalID(ctx context.Context, external
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRequestBodyBytes)).Decode(&decoded); err != nil {
 		return "", &ServiceError{Status: http.StatusInternalServerError, Code: "video_lookup_decode_failed", Message: redactURLsInText(err.Error()), Retryable: false}
 	}
-	if len(decoded.Results) == 0 {
-		return "", nil
+	for _, result := range decoded.Results {
+		if result.ExternalID != externalID {
+			continue
+		}
+		videoID := firstNonEmpty(result.ID, result.VideoID)
+		if videoID == "" {
+			return "", newServiceError(http.StatusInternalServerError, "video_lookup_missing_video_id", "Video Indexer video lookup returned an empty video id", false)
+		}
+		return videoID, nil
 	}
-	videoID := firstNonEmpty(decoded.Results[0].ID, decoded.Results[0].VideoID)
-	if videoID == "" {
-		return "", newServiceError(http.StatusInternalServerError, "video_lookup_missing_video_id", "Video Indexer video lookup returned an empty video id", false)
-	}
-	return videoID, nil
+	return "", nil
 }
 func (c *VideoIndexerClient) UploadVideoURL(ctx context.Context, videoURL, videoName, externalID string) (videoID string, err error) {
 	account, err := c.ResolveAccount(ctx)
