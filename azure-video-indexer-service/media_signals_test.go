@@ -212,6 +212,40 @@ func TestMediaSignalExtractorCancellationAndRedaction(t *testing.T) {
 		}
 	})
 
+	t.Run("command killed by validation timeout", func(t *testing.T) {
+		runner := &scriptedRunner{}
+		runner.run = func(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
+			switch name {
+			case "ffprobe":
+				return []byte(`{
+					"format":{"duration":"8.0"},
+					"streams":[{"codec_type":"video","codec_name":"hevc","width":3840,"height":2160,"avg_frame_rate":"30/1"}]
+				}`), nil, nil
+			case "ffmpeg":
+				<-ctx.Done()
+				return nil, nil, errors.New("signal: killed")
+			default:
+				t.Fatalf("unexpected command: %s %v", name, args)
+			}
+			return nil, nil, nil
+		}
+
+		extractor := NewMediaSignalExtractor(runner, MediaSignalConfig{ValidationTimeout: 20 * time.Millisecond})
+		_, err := extractor.Extract(context.Background(), "https://example.blob.core.windows.net/input/video.mp4?sig=secret")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("expected deadline exceeded, got %v", err)
+		}
+		if !strings.Contains(err.Error(), "ffmpeg validation timed out after 20ms") {
+			t.Fatalf("expected explicit validation timeout, got %v", err)
+		}
+		if strings.Contains(err.Error(), "signal: killed") || strings.Contains(err.Error(), "sig=secret") {
+			t.Fatalf("unexpected process detail or secret in timeout error: %v", err)
+		}
+	})
+
 	t.Run("redacted command failure", func(t *testing.T) {
 		sourceURL := "https://example.blob.core.windows.net/input/video.mp4?sig=secret&st=1"
 		runner := &scriptedRunner{}

@@ -90,7 +90,7 @@ func (cfg MediaSignalConfig) withDefaults() MediaSignalConfig {
 		cfg.ProbeTimeout = 30 * time.Second
 	}
 	if cfg.ValidationTimeout <= 0 {
-		cfg.ValidationTimeout = 20 * time.Second
+		cfg.ValidationTimeout = 2 * time.Minute
 	}
 	if cfg.SilenceTimeout <= 0 {
 		cfg.SilenceTimeout = 2 * time.Minute
@@ -177,6 +177,9 @@ func (e *MediaSignalExtractor) runProbe(ctx context.Context, sourceURL string, c
 	}
 	stdout, stderr, err := e.runner.Run(ctx, cfg.FFProbeBinary, args...)
 	if err != nil {
+		if ctxErr := commandContextError("ffprobe", cfg.ProbeTimeout, ctx); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, wrapCommandError("ffprobe", sourceURL, stderr, err)
 	}
 	return stdout, nil
@@ -198,6 +201,9 @@ func (e *MediaSignalExtractor) validateDecode(ctx context.Context, sourceURL str
 	}
 	_, stderr, err := e.runner.Run(ctx, cfg.FFmpegBinary, args...)
 	if err != nil {
+		if ctxErr := commandContextError("ffmpeg validation", cfg.ValidationTimeout, ctx); ctxErr != nil {
+			return ctxErr
+		}
 		return wrapCommandError("ffmpeg validation", sourceURL, stderr, err)
 	}
 	return nil
@@ -223,9 +229,23 @@ func (e *MediaSignalExtractor) detectSilences(ctx context.Context, sourceURL str
 	}
 	_, stderr, err := e.runner.Run(ctx, cfg.FFmpegBinary, args...)
 	if err != nil {
+		if ctxErr := commandContextError("ffmpeg silencedetect", cfg.SilenceTimeout, ctx); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, wrapCommandError("ffmpeg silencedetect", sourceURL, stderr, err)
 	}
 	return parseSilenceEvents(string(stderr), duration, cfg.SilenceMergeGap), nil
+}
+
+func commandContextError(command string, timeout time.Duration, ctx context.Context) error {
+	switch ctx.Err() {
+	case context.DeadlineExceeded:
+		return fmt.Errorf("%s timed out after %s: %w", command, timeout, context.DeadlineExceeded)
+	case context.Canceled:
+		return fmt.Errorf("%s canceled: %w", command, context.Canceled)
+	default:
+		return nil
+	}
 }
 
 func parseProbeOutput(data []byte) (MediaSignals, error) {
