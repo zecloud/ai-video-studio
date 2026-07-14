@@ -21,7 +21,7 @@ import (
 const (
 	defaultEditPlannerAgentName       = "smart-edit-planner"
 	defaultEditPlannerModelDeployment = "gpt-5.4"
-	editPlannerInstructionsVersion    = "v2"
+	editPlannerInstructionsVersion    = "v3"
 )
 
 type EditPlanner interface {
@@ -172,10 +172,11 @@ func (r foundryAgentRunner) RunPlan(ctx context.Context, prompt string) (plan Ed
 }
 
 func editPlannerInstructions() string {
-	return `smart-edit-planner instructions v2
+	return `smart-edit-planner instructions v3
 You are the smart-edit planner for AI Video Studio.
 Use only the supplied JSON evidence packet. There is no userInstruction MVP.
 Return a grounded EditPlan with titles, reasons, ordered clips, timecodes, and source refs that cite only known facts.
+Treat each suggestion as an independent edit alternative. Within each suggestion, keep the merged duration of its clip time ranges within the evidence durationMs and at most 20 minutes; overlapping ranges count only once.
 Do not invent facts, do not guess missing timecodes, do not cite unsupported source refs, and do not output anything except the structured EditPlan.`
 }
 
