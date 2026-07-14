@@ -18,6 +18,9 @@ param videoIndexerRoleDefinitionResourceId string
 param foundryDeploymentName string = 'gpt-5.4'
 @description('Azure model version for the GPT-5.4 deployment.')
 param foundryModelVersion string = '2026-03-05'
+@description('GlobalStandard capacity in thousands of tokens per minute for the GPT-5.4 deployment.')
+@minValue(1)
+param foundryDeploymentCapacity int = 100
 @secure()
 param serviceApiKey string
 param containerImageRepository string = 'ai-video-indexer-service'
@@ -86,7 +89,7 @@ resource foundryModelDeployment 'Microsoft.CognitiveServices/accounts/deployment
   name: foundryDeploymentName
   sku: {
     name: 'GlobalStandard'
-    capacity: 1
+    capacity: foundryDeploymentCapacity
   }
   properties: {
     model: {
