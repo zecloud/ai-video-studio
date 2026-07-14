@@ -896,6 +896,7 @@ function renderJobDetails(job: BackendModels.VideoIndexerStudioJob | null, state
 
 export function renderVideoIndexerStudioPanel(state: VideoIndexerStudioViewState): string {
   const selectedAssetsList = selectedAssets(state);
+  const selectedEligibleAssets = selectedAssetsList.filter(assetEligible);
   const pending = pendingAssets(state);
   const selectedJob = state.jobs.find((job) => job.id === state.selectedJobID) || state.jobs[0] || null;
   const action = state.activeAction;
@@ -920,7 +921,7 @@ export function renderVideoIndexerStudioPanel(state: VideoIndexerStudioViewState
       </div>
       <div class="detail-body">
         <div class="toolbar">
-          <button type="button" class="button" data-action="video-indexer-generate-composition" ${selectedAssetsList.length >= 2 && !busy ? "" : "disabled"} ${generatingComposition ? 'aria-busy="true"' : ""}>${generatingComposition ? `Preparing ${action.count} videos...` : `Generate combined edit${selectedAssetsList.length >= 2 ? ` (${selectedAssetsList.length})` : ""}`}</button>
+          <button type="button" class="button" data-action="video-indexer-generate-composition" ${selectedEligibleAssets.length >= 2 && !busy ? "" : "disabled"} ${generatingComposition ? 'aria-busy="true"' : ""}>${generatingComposition ? `Preparing ${action.count} videos...` : `Generate combined edit${selectedEligibleAssets.length >= 2 ? ` (${selectedEligibleAssets.length})` : ""}`}</button>
           <button type="button" class="button" data-action="video-indexer-submit-selected" ${selectedAssetsList.length && !busy ? "" : "disabled"} ${submittingSelected ? 'aria-busy="true"' : ""}>${submittingSelected ? `Submitting ${selectedSubmissionCount}...` : "Submit selected"}</button>
           <button type="button" class="button secondary" data-action="video-indexer-submit-pending" ${pending.length && !busy ? "" : "disabled"} ${submittingPending ? 'aria-busy="true"' : ""}>${submittingPending ? `Submitting ${pendingSubmissionCount}...` : "Submit pending"}</button>
           <button type="button" class="button secondary" data-action="video-indexer-refresh" ${busy ? "disabled" : ""} ${refreshing ? 'aria-busy="true"' : ""}>${refreshing ? "Refreshing..." : "Refresh"}</button>

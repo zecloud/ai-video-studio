@@ -753,6 +753,28 @@ func TestVideoIndexerGenerateMultiVideoEditAttachesToInFlightAnalysis(t *testing
 	}
 }
 
+func TestVideoIndexerIndexingJobsDoesNotPersistUnchangedComposition(t *testing.T) {
+	assets := []library.ProjectAsset{{ID: "asset-1", Name: "one.mp4", CloudAssetID: "drive-1"}, {ID: "asset-2", Name: "two.mp4", CloudAssetID: "drive-2"}}
+	store := &memoryVideoIndexerJobStore{jobs: []VideoIndexerStudioJob{
+		completedAnalysisJob("analysis-1", "asset-1", 0, 1200, 0.8),
+		{ID: "analysis-2", AssetID: "asset-2", AssetName: "two.mp4", RemoteJobID: "remote-2", Status: videoIndexerJobStatusPolling, CreatedAt: time.Now()},
+	}}
+	client := &fakeVideoIndexerClient{getResp: map[string][]videoindexerstudio.JobResponse{
+		"remote-2": {{Job: videoindexerstudio.Job{ID: "remote-2", Status: videoindexerstudio.JobStatusProcessing}}},
+	}}
+	svc := NewVideoIndexerStudioService(&fakeLibraryStore{assets: assets}, nil, &fakeEditingSaver{}, client, store)
+	if _, err := svc.GenerateMultiVideoEdit(context.Background(), []string{"asset-1", "asset-2"}); err != nil {
+		t.Fatalf("GenerateMultiVideoEdit: %v", err)
+	}
+	savesBeforeRefresh := store.saveCalls
+	if _, err := svc.IndexingJobs(context.Background()); err != nil {
+		t.Fatalf("IndexingJobs: %v", err)
+	}
+	if store.saveCalls != savesBeforeRefresh+1 {
+		t.Fatalf("expected only the source-analysis refresh to persist, got %d saves", store.saveCalls-savesBeforeRefresh)
+	}
+}
+
 func TestVideoIndexerGenerateMultiVideoEditSubmitsOnlyMissingAnalysis(t *testing.T) {
 	assets := []library.ProjectAsset{{ID: "asset-1", Name: "one.mp4", CloudAssetID: "drive-1"}, {ID: "asset-2", Name: "two.mp4", CloudAssetID: "drive-2"}}
 	store := &memoryVideoIndexerJobStore{jobs: []VideoIndexerStudioJob{completedAnalysisJob("analysis-1", "asset-1", 0, 1200, 0.8)}}
@@ -953,7 +975,8 @@ func (m *memoryEditingProjectStore) Save(_ context.Context, projects []editing.E
 }
 
 type memoryVideoIndexerJobStore struct {
-	jobs []VideoIndexerStudioJob
+	jobs      []VideoIndexerStudioJob
+	saveCalls int
 }
 
 func (m *memoryVideoIndexerJobStore) Load(context.Context) ([]VideoIndexerStudioJob, error) {
@@ -963,6 +986,7 @@ func (m *memoryVideoIndexerJobStore) Load(context.Context) ([]VideoIndexerStudio
 }
 
 func (m *memoryVideoIndexerJobStore) Save(_ context.Context, jobs []VideoIndexerStudioJob) error {
+	m.saveCalls++
 	m.jobs = append([]VideoIndexerStudioJob(nil), jobs...)
 	return nil
 }

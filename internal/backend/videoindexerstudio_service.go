@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -270,7 +271,11 @@ func (s *VideoIndexerStudioService) IndexingJobs(ctx context.Context) ([]VideoIn
 		if !jobs[i].Composition || isTerminalVideoIndexerStatus(jobs[i].Status) {
 			continue
 		}
+		previous := jobs[i]
 		jobs[i] = s.evaluateComposition(ctx, jobs[i])
+		if reflect.DeepEqual(previous, jobs[i]) {
+			continue
+		}
 		if err := s.saveJob(ctx, jobs[i]); err != nil {
 			return nil, err
 		}
@@ -404,7 +409,6 @@ func (s *VideoIndexerStudioService) evaluateComposition(ctx context.Context, com
 		if dependency.Status != videoIndexerJobStatusSucceeded {
 			composition.Status = videoIndexerJobStatusPending
 			composition.Stage = "waiting_for_analyses"
-			composition.UpdatedAt = s.nowTime()
 			return composition
 		}
 		dependencies = append(dependencies, dependency)
