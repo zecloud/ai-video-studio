@@ -75,7 +75,10 @@ export class ProtectedEndpointStatus {
 export class VideoIndexerStudioJob {
     "id": string;
     "assetId": string;
+    "assetIds"?: string[];
     "assetName": string;
+    "composition"?: boolean;
+    "dependencyJobIds"?: string[];
     "remoteJobId"?: string;
     "remoteStatus"?: string;
     "stage"?: string;
@@ -84,6 +87,7 @@ export class VideoIndexerStudioJob {
     "retryable"?: boolean;
     "suggestionId"?: string;
     "projectId"?: string;
+    "videoIndexerVideoId"?: string;
     "videoIndexResult"?: videoindexerstudio$0.VideoIndexResult | null;
     "editPlan"?: videoindexerstudio$0.EditPlan | null;
     "timelineDrafts"?: videoindexerstudio$0.TimelineDraft[];
@@ -122,33 +126,42 @@ export class VideoIndexerStudioJob {
      * Creates a new VideoIndexerStudioJob instance from a string or object.
      */
     static createFrom($$source: any = {}): VideoIndexerStudioJob {
-        const $$createField11_0 = $$createType1;
-        const $$createField12_0 = $$createType3;
-        const $$createField13_0 = $$createType5;
-        const $$createField14_0 = $$createType7;
+        const $$createField2_0 = $$createType0;
+        const $$createField5_0 = $$createType0;
+        const $$createField15_0 = $$createType2;
+        const $$createField16_0 = $$createType4;
+        const $$createField17_0 = $$createType6;
+        const $$createField18_0 = $$createType8;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("assetIds" in $$parsedSource) {
+            $$parsedSource["assetIds"] = $$createField2_0($$parsedSource["assetIds"]);
+        }
+        if ("dependencyJobIds" in $$parsedSource) {
+            $$parsedSource["dependencyJobIds"] = $$createField5_0($$parsedSource["dependencyJobIds"]);
+        }
         if ("videoIndexResult" in $$parsedSource) {
-            $$parsedSource["videoIndexResult"] = $$createField11_0($$parsedSource["videoIndexResult"]);
+            $$parsedSource["videoIndexResult"] = $$createField15_0($$parsedSource["videoIndexResult"]);
         }
         if ("editPlan" in $$parsedSource) {
-            $$parsedSource["editPlan"] = $$createField12_0($$parsedSource["editPlan"]);
+            $$parsedSource["editPlan"] = $$createField16_0($$parsedSource["editPlan"]);
         }
         if ("timelineDrafts" in $$parsedSource) {
-            $$parsedSource["timelineDrafts"] = $$createField13_0($$parsedSource["timelineDrafts"]);
+            $$parsedSource["timelineDrafts"] = $$createField17_0($$parsedSource["timelineDrafts"]);
         }
         if ("checkpoints" in $$parsedSource) {
-            $$parsedSource["checkpoints"] = $$createField14_0($$parsedSource["checkpoints"]);
+            $$parsedSource["checkpoints"] = $$createField18_0($$parsedSource["checkpoints"]);
         }
         return new VideoIndexerStudioJob($$parsedSource as Partial<VideoIndexerStudioJob>);
     }
 }
 
 // Private type creation functions
-const $$createType0 = videoindexerstudio$0.VideoIndexResult.createFrom;
-const $$createType1 = $Create.Nullable($$createType0);
-const $$createType2 = videoindexerstudio$0.EditPlan.createFrom;
-const $$createType3 = $Create.Nullable($$createType2);
-const $$createType4 = videoindexerstudio$0.TimelineDraft.createFrom;
-const $$createType5 = $Create.Array($$createType4);
-const $$createType6 = videoindexerstudio$0.JobCheckpoint.createFrom;
-const $$createType7 = $Create.Array($$createType6);
+const $$createType0 = $Create.Array($Create.Any);
+const $$createType1 = videoindexerstudio$0.VideoIndexResult.createFrom;
+const $$createType2 = $Create.Nullable($$createType1);
+const $$createType3 = videoindexerstudio$0.EditPlan.createFrom;
+const $$createType4 = $Create.Nullable($$createType3);
+const $$createType5 = videoindexerstudio$0.TimelineDraft.createFrom;
+const $$createType6 = $Create.Array($$createType5);
+const $$createType7 = videoindexerstudio$0.JobCheckpoint.createFrom;
+const $$createType8 = $Create.Array($$createType7);

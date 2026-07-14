@@ -34,6 +34,7 @@ import {
   createVideoIndexerStudioState,
   createEditProjectFromVideoIndexerJob,
   cancelVideoIndexerJob,
+  generateMultiVideoEdit,
   loadVideoIndexerStudioState,
   renderVideoIndexerSettingsCard,
   renderVideoIndexerStudioPanel,
@@ -1135,6 +1136,19 @@ function render(): void {
           state.libraryAssets = state.smartEdit.assets;
           render();
         });
+        return;
+      }
+
+      if (target.closest("[data-action='video-indexer-generate-composition']")) {
+        if (state.smartEdit.activeAction) return;
+        const composition = generateMultiVideoEdit(state.smartEdit);
+        render();
+        void composition
+          .then(() => render())
+          .catch((error: unknown) => {
+            state.smartEdit.message = error instanceof Error ? error.message : "Creating the combined edit failed.";
+            render();
+          });
         return;
       }
 

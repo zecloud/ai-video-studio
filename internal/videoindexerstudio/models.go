@@ -255,14 +255,15 @@ type SilenceInterval struct {
 }
 
 type EditPlan struct {
-	SchemaVersion int              `json:"schemaVersion"`
-	VideoID       string           `json:"videoId"`
-	AssetID       string           `json:"assetId"`
-	Title         string           `json:"title"`
-	Summary       string           `json:"summary"`
-	Highlights    []Highlight      `json:"highlights,omitempty"`
-	Suggestions   []EditSuggestion `json:"suggestions,omitempty"`
-	SourceRefs    []SourceRef      `json:"sourceRefs,omitempty"`
+	SchemaVersion  int              `json:"schemaVersion"`
+	VideoID        string           `json:"videoId"`
+	AssetID        string           `json:"assetId"`
+	SourceAssetIDs []string         `json:"sourceAssetIds,omitempty"`
+	Title          string           `json:"title"`
+	Summary        string           `json:"summary"`
+	Highlights     []Highlight      `json:"highlights,omitempty"`
+	Suggestions    []EditSuggestion `json:"suggestions,omitempty"`
+	SourceRefs     []SourceRef      `json:"sourceRefs,omitempty"`
 }
 
 type Highlight struct {
@@ -287,13 +288,14 @@ type EditSuggestion struct {
 }
 
 type SuggestedClip struct {
-	ID         string      `json:"id"`
-	Title      string      `json:"title"`
-	Reason     string      `json:"reason"`
-	StartMs    int64       `json:"startMs"`
-	EndMs      int64       `json:"endMs"`
-	Score      float64     `json:"score"`
-	SourceRefs []SourceRef `json:"sourceRefs"`
+	ID            string      `json:"id"`
+	Title         string      `json:"title"`
+	Reason        string      `json:"reason"`
+	SourceAssetID string      `json:"sourceAssetId,omitempty"`
+	StartMs       int64       `json:"startMs"`
+	EndMs         int64       `json:"endMs"`
+	Score         float64     `json:"score"`
+	SourceRefs    []SourceRef `json:"sourceRefs"`
 }
 
 type SourceRef struct {

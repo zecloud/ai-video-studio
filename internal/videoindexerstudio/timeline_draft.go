@@ -74,9 +74,8 @@ func (d TimelineDraft) Validate() error {
 	}
 
 	var (
-		sourceAssetID string
-		nextStartMS   int64
-		seenClipIDs   = map[string]struct{}{}
+		nextStartMS int64
+		seenClipIDs = map[string]struct{}{}
 	)
 	for i, clip := range track.Clips {
 		clip.ID = strings.TrimSpace(clip.ID)
@@ -92,10 +91,6 @@ func (d TimelineDraft) Validate() error {
 		}
 		if clip.SourceAssetID == "" {
 			problems = append(problems, fmt.Sprintf("primaryVideoTrack.clips[%d].sourceAssetId is required", i))
-		} else if sourceAssetID == "" {
-			sourceAssetID = clip.SourceAssetID
-		} else if clip.SourceAssetID != sourceAssetID {
-			problems = append(problems, fmt.Sprintf("primaryVideoTrack.clips[%d].sourceAssetId must match %q", i, sourceAssetID))
 		}
 		if clip.InMS < 0 {
 			problems = append(problems, fmt.Sprintf("primaryVideoTrack.clips[%d].inMs must be non-negative", i))

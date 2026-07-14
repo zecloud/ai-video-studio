@@ -58,13 +58,14 @@ type EditSuggestion struct {
 }
 
 type SuggestedClip struct {
-	ID         string      `json:"id" jsonschema:"Stable clip id"`
-	Title      string      `json:"title" jsonschema:"Clip title"`
-	Reason     string      `json:"reason" jsonschema:"Why the clip should be kept"`
-	StartMs    int64       `json:"startMs" jsonschema:"Inclusive start time in milliseconds"`
-	EndMs      int64       `json:"endMs" jsonschema:"Exclusive end time in milliseconds"`
-	Score      float64     `json:"score" jsonschema:"Confidence or priority score from 0 to 1"`
-	SourceRefs []SourceRef `json:"sourceRefs" jsonschema:"Grounding citations for the clip"`
+	ID            string      `json:"id" jsonschema:"Stable clip id"`
+	Title         string      `json:"title" jsonschema:"Clip title"`
+	Reason        string      `json:"reason" jsonschema:"Why the clip should be kept"`
+	SourceAssetID string      `json:"sourceAssetId" jsonschema:"Stable source asset id for this clip"`
+	StartMs       int64       `json:"startMs" jsonschema:"Inclusive start time in milliseconds in the source asset"`
+	EndMs         int64       `json:"endMs" jsonschema:"Exclusive end time in milliseconds in the source asset"`
+	Score         float64     `json:"score" jsonschema:"Confidence or priority score from 0 to 1"`
+	SourceRefs    []SourceRef `json:"sourceRefs" jsonschema:"Grounding citations for the clip"`
 }
 
 type SourceRef struct {
@@ -1023,6 +1024,18 @@ func mergedClipDuration(clips []SuggestedClip) int64 {
 	if len(clips) == 0 {
 		return 0
 	}
+	byAsset := make(map[string][]SuggestedClip)
+	for _, clip := range clips {
+		byAsset[strings.TrimSpace(clip.SourceAssetID)] = append(byAsset[strings.TrimSpace(clip.SourceAssetID)], clip)
+	}
+	var total int64
+	for _, intervals := range byAsset {
+		total += mergedClipDurationForAsset(intervals)
+	}
+	return total
+}
+
+func mergedClipDurationForAsset(clips []SuggestedClip) int64 {
 	intervals := append([]SuggestedClip(nil), clips...)
 	sort.Slice(intervals, func(i, j int) bool {
 		if intervals[i].StartMs == intervals[j].StartMs {
@@ -1130,6 +1143,7 @@ func validateClip(clip *SuggestedClip, index editPlannerEvidenceIndex, suggestio
 	clip.ID = strings.TrimSpace(clip.ID)
 	clip.Title = strings.TrimSpace(clip.Title)
 	clip.Reason = strings.TrimSpace(clip.Reason)
+	clip.SourceAssetID = strings.TrimSpace(clip.SourceAssetID)
 	clip.SourceRefs = normalizeAndValidateSourceRefs(clip.SourceRefs, index, &refProblems, fmt.Sprintf("suggestions[%d].clips[%d].sourceRefs", suggestionIdx, clipIdx))
 	if clip.ID == "" {
 		err = appendEditPlannerError(err, "suggestions[%d].clips[%d].id is required", suggestionIdx, clipIdx)
@@ -1156,6 +1170,15 @@ func validateClip(clip *SuggestedClip, index editPlannerEvidenceIndex, suggestio
 	}
 	if len(clip.SourceRefs) == 0 {
 		err = appendEditPlannerError(err, "suggestions[%d].clips[%d].sourceRefs is required", suggestionIdx, clipIdx)
+	} else {
+		if clip.SourceAssetID == "" {
+			clip.SourceAssetID = clip.SourceRefs[0].SourceAssetID
+		}
+		for _, ref := range clip.SourceRefs {
+			if ref.SourceAssetID != "" && ref.SourceAssetID != clip.SourceAssetID {
+				err = appendEditPlannerError(err, "suggestions[%d].clips[%d] sourceAssetId %q does not match source ref asset %q", suggestionIdx, clipIdx, clip.SourceAssetID, ref.SourceAssetID)
+			}
+		}
 	}
 	return err
 }
@@ -1370,6 +1393,7 @@ func canonicalClipKey(value SuggestedClip) string {
 		value.ID,
 		value.Title,
 		value.Reason,
+		value.SourceAssetID,
 		strconv.FormatInt(value.StartMs, 10),
 		strconv.FormatInt(value.EndMs, 10),
 		strconv.FormatFloat(value.Score, 'f', -1, 64),

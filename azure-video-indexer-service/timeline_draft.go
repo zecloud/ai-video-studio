@@ -83,6 +83,10 @@ func buildTimelineDraftFromSuggestion(originJobID, sourceAssetID, promptVersion 
 	clips := make([]videoindexerstudio.TimelineClip, 0, len(suggestion.Clips))
 	timelineStartMS := int64(0)
 	for idx, clip := range suggestion.Clips {
+		clipSourceAssetID := strings.TrimSpace(clip.SourceAssetID)
+		if clipSourceAssetID == "" {
+			clipSourceAssetID = sourceAssetID
+		}
 		inMS := clip.StartMs
 		outMS := clip.EndMs
 		if inMS < 0 {
@@ -94,7 +98,7 @@ func buildTimelineDraftFromSuggestion(originJobID, sourceAssetID, promptVersion 
 		durationMS := outMS - inMS
 		clips = append(clips, videoindexerstudio.TimelineClip{
 			ID:              stableTimelineClipID(originJobID, suggestionID, idx, clip),
-			SourceAssetID:   sourceAssetID,
+			SourceAssetID:   clipSourceAssetID,
 			InMS:            inMS,
 			OutMS:           outMS,
 			TimelineStartMS: timelineStartMS,
@@ -128,6 +132,7 @@ func stableTimelineClipID(originJobID, suggestionID string, index int, clip Sugg
 		strings.TrimSpace(originJobID),
 		strings.TrimSpace(suggestionID),
 		strings.TrimSpace(clip.ID),
+		strings.TrimSpace(clip.SourceAssetID),
 		fmt.Sprintf("%d", index),
 		fmt.Sprintf("%d", clip.StartMs),
 		fmt.Sprintf("%d", clip.EndMs),

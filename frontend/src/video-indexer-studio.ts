@@ -21,6 +21,7 @@ export interface VideoIndexerStudioSettingsState {
 
 export type VideoIndexerStudioAction =
   | { kind: "refresh" }
+  | { kind: "generate-composition"; count: number }
   | { kind: "submit-selected"; count: number }
   | { kind: "submit-pending"; count: number }
   | { kind: "retry" | "cancel" | "create-project"; jobID: string };
@@ -173,6 +174,7 @@ function latestJobByAsset(jobs: BackendModels.VideoIndexerStudioJob[]): Map<stri
   const result = new Map<string, BackendModels.VideoIndexerStudioJob>();
   const sorted = [...jobs].sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
   for (const job of sorted) {
+    if (job.composition) continue;
     if (!result.has(job.assetId)) {
       result.set(job.assetId, job);
     }
@@ -275,6 +277,7 @@ export async function submitVideoIndexerAssets(state: VideoIndexerStudioViewStat
         if (job) {
           upsertJob(state, job);
         }
+
         submitted += 1;
       } catch {
         failed += 1;
@@ -282,6 +285,30 @@ export async function submitVideoIndexerAssets(state: VideoIndexerStudioViewStat
     }
     state.polling = state.jobs.some((job) => inFlight(job.status));
     return { submitted, failed };
+  } finally {
+    state.activeAction = null;
+  }
+}
+
+export async function generateMultiVideoEdit(state: VideoIndexerStudioViewState): Promise<BackendModels.VideoIndexerStudioJob | null> {
+  if (state.activeAction) return null;
+  const targets = selectedAssets(state).filter(assetEligible);
+  if (targets.length < 2) {
+    throw new Error("Select at least two eligible videos to generate a combined edit.");
+  }
+  state.activeAction = { kind: "generate-composition", count: targets.length };
+  state.message = `Preparing a combined edit from ${targets.length} videos...`;
+  try {
+    const job = await VideoIndexerStudioService.GenerateMultiVideoEdit(targets.map((asset) => asset.id));
+    if (!job) {
+      throw new Error("Smart Edit Studio did not return the combined edit job.");
+    }
+    upsertJob(state, job);
+    state.selectedJobID = job.id;
+    state.message = job.status === "succeeded"
+      ? `Combined edit is ready for ${targets.length} videos.`
+      : `Combined edit is waiting for ${targets.length} source analyses.`;
+    return job;
   } finally {
     state.activeAction = null;
   }
@@ -397,9 +424,13 @@ function renderJobsTable(state: VideoIndexerStudioViewState): string {
         .map((job) => {
           const selected = state.selectedJobID === job.id;
           const asset = state.assets.find((item) => item.id === job.assetId);
+          const sourceCount = job.assetIds?.length || 0;
+          const label = job.composition
+            ? `Combined edit (${sourceCount} video${sourceCount === 1 ? "" : "s"})`
+            : asset?.name || job.assetName || job.assetId;
           return `
             <tr ${selected ? 'data-selected="true"' : ""}>
-              <td>${escapeHTML(asset?.name || job.assetName || job.assetId)}</td>
+              <td><strong>${escapeHTML(label)}</strong>${job.composition ? `<br><span class="muted">${sourceCount} source analyses</span>` : ""}</td>
               <td>${badge(stageLabel(job.status), localStatusTone(job.status))}</td>
               <td class="muted">${escapeHTML(firstNonEmpty(job.stage, job.remoteStatus, "—"))}</td>
               <td class="muted">${escapeHTML(formatRelative(job.updatedAt || job.createdAt))}</td>
@@ -412,7 +443,7 @@ function renderJobsTable(state: VideoIndexerStudioViewState): string {
                       : ""
                   }
                   ${
-                    job.status === "failed"
+                    job.status === "failed" && !job.composition
                       ? `<button type="button" class="button small" data-action="video-indexer-retry-job" data-job-id="${escapeHTML(job.id)}" ${busy ? "disabled" : ""} ${state.activeAction?.kind === "retry" && state.activeAction.jobID === job.id ? 'aria-busy="true"' : ""}>${state.activeAction?.kind === "retry" && state.activeAction.jobID === job.id ? "Retrying..." : "Retry"}</button>`
                       : ""
                   }
@@ -561,12 +592,16 @@ function renderJobDetails(job: BackendModels.VideoIndexerStudioJob | null, state
   const editPlan = job.editPlan;
   const latestAsset = state.assets.find((asset) => asset.id === job.assetId);
   const selectedJobTone = localStatusTone(job.status);
+  const sourceAssets = (job.assetIds || []).map((assetID) => state.assets.find((asset) => asset.id === assetID)?.name || assetID);
+  const jobTitle = job.composition
+    ? `Combined edit (${sourceAssets.length} videos)`
+    : job.assetName || latestAsset?.name || job.assetId;
   return `
     <section class="panel" aria-labelledby="smart-edit-detail-title">
       <div class="panel-header">
         <div>
           <p class="eyebrow">Job details</p>
-          <h3 id="smart-edit-detail-title">${escapeHTML(job.assetName || latestAsset?.name || job.assetId)}</h3>
+          <h3 id="smart-edit-detail-title">${escapeHTML(jobTitle)}</h3>
         </div>
         <div class="toolbar">
           ${badge(stageLabel(job.status), selectedJobTone)}
@@ -574,7 +609,8 @@ function renderJobDetails(job: BackendModels.VideoIndexerStudioJob | null, state
         </div>
       </div>
       <div class="detail-body">
-        <div class="kv"><span>Asset</span><strong>${escapeHTML(firstNonEmpty(latestAsset?.name, job.assetName, job.assetId))}</strong></div>
+        <div class="kv"><span>${job.composition ? "Source videos" : "Asset"}</span><strong>${escapeHTML(job.composition ? sourceAssets.join(", ") : firstNonEmpty(latestAsset?.name, job.assetName, job.assetId))}</strong></div>
+        ${job.composition ? `<div class="kv"><span>Analyses</span><strong>${job.dependencyJobIds?.length || 0} dependencies</strong></div>` : ""}
         <div class="kv"><span>Status</span><strong>${escapeHTML(job.status)}</strong></div>
         <div class="kv"><span>Stage</span><strong>${escapeHTML(firstNonEmpty(job.stage, job.remoteStatus, "—"))}</strong></div>
         <div class="kv"><span>Created</span><strong>${escapeHTML(formatDate(job.createdAt))}</strong></div>
@@ -867,6 +903,7 @@ export function renderVideoIndexerStudioPanel(state: VideoIndexerStudioViewState
   const submittingSelected = action?.kind === "submit-selected";
   const submittingPending = action?.kind === "submit-pending";
   const refreshing = action?.kind === "refresh";
+  const generatingComposition = action?.kind === "generate-composition";
   const selectedSubmissionCount = action?.kind === "submit-selected" ? action.count : 0;
   const pendingSubmissionCount = action?.kind === "submit-pending" ? action.count : 0;
   return `
@@ -883,6 +920,7 @@ export function renderVideoIndexerStudioPanel(state: VideoIndexerStudioViewState
       </div>
       <div class="detail-body">
         <div class="toolbar">
+          <button type="button" class="button" data-action="video-indexer-generate-composition" ${selectedAssetsList.length >= 2 && !busy ? "" : "disabled"} ${generatingComposition ? 'aria-busy="true"' : ""}>${generatingComposition ? `Preparing ${action.count} videos...` : `Generate combined edit${selectedAssetsList.length >= 2 ? ` (${selectedAssetsList.length})` : ""}`}</button>
           <button type="button" class="button" data-action="video-indexer-submit-selected" ${selectedAssetsList.length && !busy ? "" : "disabled"} ${submittingSelected ? 'aria-busy="true"' : ""}>${submittingSelected ? `Submitting ${selectedSubmissionCount}...` : "Submit selected"}</button>
           <button type="button" class="button secondary" data-action="video-indexer-submit-pending" ${pending.length && !busy ? "" : "disabled"} ${submittingPending ? 'aria-busy="true"' : ""}>${submittingPending ? `Submitting ${pendingSubmissionCount}...` : "Submit pending"}</button>
           <button type="button" class="button secondary" data-action="video-indexer-refresh" ${busy ? "disabled" : ""} ${refreshing ? 'aria-busy="true"' : ""}>${refreshing ? "Refreshing..." : "Refresh"}</button>

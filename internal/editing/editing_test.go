@@ -72,7 +72,7 @@ func TestProjectFromTimelineDraftPreservesPlacementAndMetadata(t *testing.T) {
 	}
 }
 
-func TestProjectFromTimelineDraftRejectsSourceAssetMismatch(t *testing.T) {
+func TestProjectFromTimelineDraftCollectsMultipleSourceAssets(t *testing.T) {
 	draft := videoindexerstudio.TimelineDraft{
 		SchemaVersion: videoindexerstudio.TimelineDraftSchemaVersion,
 		OriginJobID:   "job-123",
@@ -88,8 +88,15 @@ func TestProjectFromTimelineDraftRejectsSourceAssetMismatch(t *testing.T) {
 		},
 	}
 
-	if _, err := ProjectFromTimelineDraft(draft); err == nil {
-		t.Fatal("expected source asset mismatch error")
+	project, err := ProjectFromTimelineDraft(draft)
+	if err != nil {
+		t.Fatalf("convert multi-source draft: %v", err)
+	}
+	if !reflect.DeepEqual(project.AssetIDs, []string{"asset-1", "asset-2"}) {
+		t.Fatalf("unexpected asset ids: %#v", project.AssetIDs)
+	}
+	if got := project.Timeline.Tracks[0].Clips[1].SourceAssetID; got != "asset-2" {
+		t.Fatalf("second clip source asset id = %q", got)
 	}
 }
 

@@ -192,6 +192,16 @@ func TestMergedClipDurationCountsOverlapsOnce(t *testing.T) {
 	}
 }
 
+func TestMergedClipDurationCountsOverlapsAcrossAssetsSeparately(t *testing.T) {
+	clips := []SuggestedClip{
+		{SourceAssetID: "asset-1", StartMs: 0, EndMs: 10_000},
+		{SourceAssetID: "asset-2", StartMs: 0, EndMs: 10_000},
+	}
+	if got := mergedClipDuration(clips); got != 20_000 {
+		t.Fatalf("merged clip duration = %d, want 20000", got)
+	}
+}
+
 func clipWithRange(base SuggestedClip, id string, start, end time.Duration) SuggestedClip {
 	base.ID = id
 	base.Title = id
