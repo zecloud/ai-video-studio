@@ -40,6 +40,7 @@ var jobsContainerName = 'video-indexer-jobs'
 var acrPullRoleDefinitionId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 var storageBlobDataContributorRoleDefinitionId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 var cognitiveServicesOpenAIUserRoleDefinitionId = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
+var foundryUserRoleDefinitionId = '53ca6127-db72-4b80-b1b0-d745d6d5456d'
 var durableTaskDataContributorRoleDefinitionId = '0ad04412-c4d5-4796-b79c-f76d14c8d402'
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
@@ -540,7 +541,7 @@ module workerFoundryRole 'foundry-role-assignment.bicep' = {
   params: {
     accountName: foundryAccountName
     principalId: workerIdentity.properties.principalId
-    roleDefinitionId: cognitiveServicesOpenAIUserRoleDefinitionId
+    roleDefinitionId: foundryUserRoleDefinitionId
     assignmentSeed: workerAppName
   }
 }
