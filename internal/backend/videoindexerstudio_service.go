@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -50,7 +51,10 @@ type videoIndexerOneDriveSource interface {
 type VideoIndexerStudioJob struct {
 	ID                  string                               `json:"id"`
 	AssetID             string                               `json:"assetId"`
+	AssetIDs            []string                             `json:"assetIds,omitempty"`
 	AssetName           string                               `json:"assetName"`
+	Composition         bool                                 `json:"composition,omitempty"`
+	DependencyJobIDs    []string                             `json:"dependencyJobIds,omitempty"`
 	RemoteJobID         string                               `json:"remoteJobId,omitempty"`
 	RemoteStatus        string                               `json:"remoteStatus,omitempty"`
 	Stage               string                               `json:"stage,omitempty"`
@@ -128,6 +132,7 @@ func (s *VideoIndexerStudioService) SubmitForIndexing(ctx context.Context, asset
 	if err != nil {
 		return nil, err
 	}
+
 	asset, err := s.resolveAsset(ctx, assetID)
 	if err != nil {
 		return nil, err
@@ -185,6 +190,54 @@ func (s *VideoIndexerStudioService) SubmitForIndexing(ctx context.Context, asset
 	return &localJob, nil
 }
 
+// GenerateMultiVideoEdit creates one persistent composition that waits for or reuses source analyses.
+func (s *VideoIndexerStudioService) GenerateMultiVideoEdit(ctx context.Context, assetIDs []string) (*VideoIndexerStudioJob, error) {
+	assetIDs = uniqueNonEmptyStrings(assetIDs)
+	if len(assetIDs) < 2 {
+		return nil, errors.New("select at least two assets for a multi-video edit")
+	}
+	assets := make([]library.ProjectAsset, 0, len(assetIDs))
+	for _, assetID := range assetIDs {
+		asset, err := s.resolveAsset(ctx, assetID)
+		if err != nil {
+			return nil, err
+		}
+		assets = append(assets, asset)
+	}
+	if err := s.ensureJobsLoaded(ctx); err != nil {
+		return nil, err
+	}
+
+	dependencies := make([]string, 0, len(assets))
+	for _, asset := range assets {
+		dependency, ok := s.reusableAnalysisJob(asset.ID)
+		if !ok {
+			created, err := s.SubmitForIndexing(ctx, asset.ID)
+			if err != nil {
+				return nil, fmt.Errorf("prepare analysis for %q: %w", asset.Name, err)
+			}
+			dependency = *created
+		}
+		dependencies = append(dependencies, dependency.ID)
+	}
+
+	now := s.nowTime()
+	job := VideoIndexerStudioJob{
+		ID: s.nextJobID(now), AssetID: assetIDs[0], AssetIDs: append([]string(nil), assetIDs...),
+		AssetName: fmt.Sprintf("%d selected videos", len(assetIDs)), Composition: true, DependencyJobIDs: dependencies,
+		Status: videoIndexerJobStatusPending, Stage: "waiting_for_analyses", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.saveJob(ctx, job); err != nil {
+		return nil, err
+	}
+	job = s.evaluateComposition(ctx, job)
+	if err := s.saveJob(ctx, job); err != nil {
+		return nil, err
+	}
+	emitVideoIndexerEvent(videoIndexerEventName(job.Status), job)
+	return &job, nil
+}
+
 func (s *VideoIndexerStudioService) nextJobID(now time.Time) string {
 	seq := atomic.AddUint64(&s.submissionSeq, 1)
 	return fmt.Sprintf("video-indexer-%d-%d", now.UTC().UnixNano(), seq)
@@ -202,6 +255,9 @@ func (s *VideoIndexerStudioService) IndexingJobs(ctx context.Context) ([]VideoIn
 	s.mu.Unlock()
 
 	for i := range jobs {
+		if jobs[i].Composition {
+			continue
+		}
 		if isTerminalVideoIndexerStatus(jobs[i].Status) {
 			continue
 		}
@@ -210,6 +266,20 @@ func (s *VideoIndexerStudioService) IndexingJobs(ctx context.Context) ([]VideoIn
 			return nil, err
 		}
 		jobs[i] = updated
+	}
+	for i := range jobs {
+		if !jobs[i].Composition || isTerminalVideoIndexerStatus(jobs[i].Status) {
+			continue
+		}
+		previous := jobs[i]
+		jobs[i] = s.evaluateComposition(ctx, jobs[i])
+		if reflect.DeepEqual(previous, jobs[i]) {
+			continue
+		}
+		if err := s.saveJob(ctx, jobs[i]); err != nil {
+			return nil, err
+		}
+		emitVideoIndexerEvent(videoIndexerEventName(jobs[i].Status), jobs[i])
 	}
 	sort.Slice(jobs, func(i, j int) bool {
 		if jobs[i].CreatedAt.Equal(jobs[j].CreatedAt) {
@@ -228,6 +298,18 @@ func (s *VideoIndexerStudioService) IndexingJob(ctx context.Context, jobID strin
 	if isTerminalVideoIndexerStatus(job.Status) {
 		return &job, nil
 	}
+	if job.Composition {
+		jobs, err := s.IndexingJobs(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for i := range jobs {
+			if jobs[i].ID == job.ID {
+				return &jobs[i], nil
+			}
+		}
+		return nil, fmt.Errorf("video indexer job %q not found", jobID)
+	}
 	updated, err := s.refreshJob(ctx, jobID)
 	if err != nil {
 		return nil, err
@@ -236,11 +318,25 @@ func (s *VideoIndexerStudioService) IndexingJob(ctx context.Context, jobID strin
 }
 
 func (s *VideoIndexerStudioService) CancelIndexing(ctx context.Context, jobID string) (*VideoIndexerStudioJob, error) {
-	client, err := s.clientFor(ctx)
+	job, err := s.loadJob(ctx, jobID)
 	if err != nil {
 		return nil, err
 	}
-	job, err := s.loadJob(ctx, jobID)
+	if job.Composition {
+		if !isTerminalVideoIndexerStatus(job.Status) {
+			job.Status = videoIndexerJobStatusCanceled
+			job.Stage = "canceled"
+			job.UpdatedAt = s.nowTime()
+			completed := job.UpdatedAt
+			job.CompletedAt = &completed
+			if err := s.saveJob(ctx, job); err != nil {
+				return nil, err
+			}
+		}
+		emitVideoIndexerEvent(videoIndexerEventName(job.Status), job)
+		return &job, nil
+	}
+	client, err := s.clientFor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -248,6 +344,7 @@ func (s *VideoIndexerStudioService) CancelIndexing(ctx context.Context, jobID st
 	if remoteID == "" {
 		remoteID = strings.TrimSpace(job.ID)
 	}
+
 	resp, err := client.CancelJob(ctx, remoteID)
 	if err != nil {
 		return nil, fmt.Errorf("cancel video indexer job: %w", err)
@@ -268,6 +365,166 @@ func (s *VideoIndexerStudioService) CancelIndexing(ctx context.Context, jobID st
 	}
 	emitVideoIndexerEvent(videoIndexerEventName(job.Status), job)
 	return &job, nil
+}
+
+func (s *VideoIndexerStudioService) reusableAnalysisJob(assetID string) (VideoIndexerStudioJob, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var succeeded, running *VideoIndexerStudioJob
+	for _, candidate := range s.jobs {
+		if candidate.Composition || candidate.AssetID != assetID {
+			continue
+		}
+		candidate := candidate
+		if candidate.Status == videoIndexerJobStatusSucceeded && candidate.VideoIndexResult != nil && candidate.EditPlan != nil {
+			if succeeded == nil || candidate.CreatedAt.After(succeeded.CreatedAt) {
+				succeeded = &candidate
+			}
+			continue
+		}
+		if !isTerminalVideoIndexerStatus(candidate.Status) && (running == nil || candidate.CreatedAt.After(running.CreatedAt)) {
+			running = &candidate
+		}
+	}
+	if succeeded != nil {
+		return *succeeded, true
+	}
+	if running != nil {
+		return *running, true
+	}
+	return VideoIndexerStudioJob{}, false
+}
+
+func (s *VideoIndexerStudioService) evaluateComposition(ctx context.Context, composition VideoIndexerStudioJob) VideoIndexerStudioJob {
+	dependencies := make([]VideoIndexerStudioJob, 0, len(composition.DependencyJobIDs))
+	for _, dependencyID := range composition.DependencyJobIDs {
+		dependency, err := s.loadJob(ctx, dependencyID)
+		if err != nil {
+			return failComposition(composition, s.nowTime(), err.Error())
+		}
+		if dependency.Status == videoIndexerJobStatusFailed || dependency.Status == videoIndexerJobStatusCanceled {
+			message := firstNonEmpty(dependency.ErrorMessage, fmt.Sprintf("analysis %s did not complete", dependency.ID))
+			return failComposition(composition, s.nowTime(), message)
+		}
+		if dependency.Status != videoIndexerJobStatusSucceeded {
+			composition.Status = videoIndexerJobStatusPending
+			composition.Stage = "waiting_for_analyses"
+			return composition
+		}
+		dependencies = append(dependencies, dependency)
+	}
+	plan, drafts, err := buildMultiVideoComposition(composition.ID, composition.AssetIDs, dependencies)
+	if err != nil {
+		return failComposition(composition, s.nowTime(), err.Error())
+	}
+	now := s.nowTime()
+	composition.Status = videoIndexerJobStatusSucceeded
+	composition.RemoteStatus = "succeeded"
+	composition.Stage = "composition_complete"
+	composition.EditPlan = &plan
+	composition.TimelineDrafts = drafts
+	composition.ErrorMessage = ""
+	composition.UpdatedAt = now
+	composition.CompletedAt = &now
+	return composition
+}
+
+func failComposition(job VideoIndexerStudioJob, now time.Time, message string) VideoIndexerStudioJob {
+	job.Status = videoIndexerJobStatusFailed
+	job.Stage = "composition_failed"
+	job.ErrorMessage = strings.TrimSpace(message)
+	job.UpdatedAt = now
+	job.CompletedAt = &now
+	return job
+}
+
+func buildMultiVideoComposition(compositionID string, assetIDs []string, dependencies []VideoIndexerStudioJob) (videoindexerstudio.EditPlan, []videoindexerstudio.TimelineDraft, error) {
+	if len(assetIDs) < 2 || len(dependencies) != len(assetIDs) {
+		return videoindexerstudio.EditPlan{}, nil, errors.New("composition requires a completed analysis for every selected asset")
+	}
+	clips := make([]videoindexerstudio.SuggestedClip, 0, len(dependencies))
+	refs := make([]videoindexerstudio.SourceRef, 0, len(dependencies))
+	for i, dependency := range dependencies {
+		if dependency.EditPlan == nil || len(dependency.EditPlan.Suggestions) == 0 {
+			return videoindexerstudio.EditPlan{}, nil, fmt.Errorf("analysis %q has no edit suggestions", dependency.ID)
+		}
+		suggestion := bestEditSuggestion(dependency.EditPlan.Suggestions)
+		sourceClips := suggestion.Clips
+		if len(sourceClips) == 0 {
+			sourceClips = []videoindexerstudio.SuggestedClip{{ID: suggestion.ID, Title: suggestion.Title, Reason: suggestion.Reason, StartMs: suggestion.StartMs, EndMs: suggestion.EndMs, Score: suggestion.Score, SourceRefs: suggestion.SourceRefs}}
+		}
+		for clipIndex, clip := range sourceClips {
+			clip.ID = fmt.Sprintf("source-%d-clip-%d-%s", i+1, clipIndex+1, sanitizeIdentifier(clip.ID))
+			clip.SourceAssetID = assetIDs[i]
+			for refIndex := range clip.SourceRefs {
+				clip.SourceRefs[refIndex].SourceAssetID = assetIDs[i]
+				clip.SourceRefs[refIndex].RefID = fmt.Sprintf("%s:%s", sanitizeIdentifier(assetIDs[i]), clip.SourceRefs[refIndex].RefID)
+			}
+			clips = append(clips, clip)
+			refs = append(refs, clip.SourceRefs...)
+		}
+	}
+	if len(clips) == 0 {
+		return videoindexerstudio.EditPlan{}, nil, errors.New("selected analyses did not contain usable clips")
+	}
+	var duration int64
+	for _, clip := range clips {
+		duration += clip.EndMs - clip.StartMs
+	}
+	suggestion := videoindexerstudio.EditSuggestion{ID: "multi-video-highlights", Title: "Multi-video highlights", Reason: "Combines the strongest grounded suggestion from every selected video.", StartMs: 0, EndMs: duration, Score: averageClipScore(clips), SourceRefs: refs, Clips: clips}
+	plan := videoindexerstudio.EditPlan{SchemaVersion: 1, AssetID: assetIDs[0], SourceAssetIDs: append([]string(nil), assetIDs...), Title: "Multi-video smart edit", Summary: fmt.Sprintf("A combined edit using all %d selected videos.", len(assetIDs)), Suggestions: []videoindexerstudio.EditSuggestion{suggestion}, SourceRefs: refs}
+	draft, err := timelineDraftFromSuggestion(compositionID, suggestion)
+	if err != nil {
+		return videoindexerstudio.EditPlan{}, nil, err
+	}
+	return plan, []videoindexerstudio.TimelineDraft{draft}, nil
+}
+
+func bestEditSuggestion(suggestions []videoindexerstudio.EditSuggestion) videoindexerstudio.EditSuggestion {
+	best := suggestions[0]
+	for _, candidate := range suggestions[1:] {
+		if candidate.Score > best.Score {
+			best = candidate
+		}
+	}
+	return best
+}
+
+func averageClipScore(clips []videoindexerstudio.SuggestedClip) float64 {
+	var total float64
+	for _, clip := range clips {
+		total += clip.Score
+	}
+	return total / float64(len(clips))
+}
+
+func timelineDraftFromSuggestion(originJobID string, suggestion videoindexerstudio.EditSuggestion) (videoindexerstudio.TimelineDraft, error) {
+	clips := make([]videoindexerstudio.TimelineClip, 0, len(suggestion.Clips))
+	var timelineStart int64
+	for i, source := range suggestion.Clips {
+		duration := source.EndMs - source.StartMs
+		clips = append(clips, videoindexerstudio.TimelineClip{ID: fmt.Sprintf("clip-%d-%s", i+1, sanitizeIdentifier(source.ID)), SourceAssetID: source.SourceAssetID, InMS: source.StartMs, OutMS: source.EndMs, TimelineStartMS: timelineStart, DurationMS: duration, Transition: videoindexerstudio.TimelineTransition{Kind: videoindexerstudio.TimelineTransitionKindCut}})
+		timelineStart += duration
+	}
+	draft := videoindexerstudio.TimelineDraft{SchemaVersion: videoindexerstudio.TimelineDraftSchemaVersion, OriginJobID: originJobID, SuggestionID: suggestion.ID, PromptVersion: "multi-video-composition-v1", PrimaryVideoTrack: videoindexerstudio.TimelineTrack{ID: "primary-video", Kind: videoindexerstudio.TimelineTrackKindVideo, Clips: clips}}
+	return draft, draft.Validate()
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func (s *VideoIndexerStudioService) CreateEditProject(ctx context.Context, jobID, suggestionID string) (editing.EditProject, error) {

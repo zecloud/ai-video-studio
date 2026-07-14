@@ -25,6 +25,15 @@ export function CreateEditProject(jobID: string, suggestionID: string): $Cancell
     });
 }
 
+/**
+ * GenerateMultiVideoEdit creates one persistent composition that waits for or reuses source analyses.
+ */
+export function GenerateMultiVideoEdit(assetIDs: string[]): $CancellablePromise<$models.VideoIndexerStudioJob | null> {
+    return $Call.ByID(1856538873, assetIDs).then(($result: any) => {
+        return $$createType1($result);
+    });
+}
+
 export function IndexingJob(jobID: string): $CancellablePromise<$models.VideoIndexerStudioJob | null> {
     return $Call.ByID(2037013561, jobID).then(($result: any) => {
         return $$createType1($result);

@@ -680,6 +680,7 @@ func TestVideoIndexerCreateEditProject(t *testing.T) {
 			},
 		},
 	}
+
 	svc := NewVideoIndexerStudioService(lib, nil, edit, &fakeVideoIndexerClient{}, jobStore)
 
 	project, err := svc.CreateEditProject(context.Background(), "video-indexer-123", "suggestion-1")
@@ -700,6 +701,159 @@ func TestVideoIndexerCreateEditProject(t *testing.T) {
 	}
 	if lib.saveJobsCalled != 0 {
 		t.Fatalf("CU analysis job store was mutated: saveJobsCalled=%d", lib.saveJobsCalled)
+	}
+}
+
+func TestVideoIndexerGenerateMultiVideoEditReusesCompletedAnalyses(t *testing.T) {
+	assets := []library.ProjectAsset{{ID: "asset-1", Name: "one.mp4", CloudAssetID: "drive-1"}, {ID: "asset-2", Name: "two.mp4", CloudAssetID: "drive-2"}}
+	store := &memoryVideoIndexerJobStore{jobs: []VideoIndexerStudioJob{
+		completedAnalysisJob("analysis-1", "asset-1", 0, 1200, 0.8),
+		completedAnalysisJob("analysis-2", "asset-2", 500, 2200, 0.9),
+	}}
+	client := &fakeVideoIndexerClient{}
+	svc := NewVideoIndexerStudioService(&fakeLibraryStore{assets: assets}, nil, &fakeEditingSaver{}, client, store)
+
+	composition, err := svc.GenerateMultiVideoEdit(context.Background(), []string{"asset-1", "asset-2", "asset-1"})
+	if err != nil {
+		t.Fatalf("GenerateMultiVideoEdit: %v", err)
+	}
+	if len(client.createReqs) != 0 {
+		t.Fatalf("completed analyses should be reused, got %d submissions", len(client.createReqs))
+	}
+	if composition.Status != videoIndexerJobStatusSucceeded || !composition.Composition {
+		t.Fatalf("unexpected composition status: %#v", composition)
+	}
+	if len(composition.TimelineDrafts) != 1 || len(composition.TimelineDrafts[0].PrimaryVideoTrack.Clips) != 2 {
+		t.Fatalf("unexpected composition timeline: %#v", composition.TimelineDrafts)
+	}
+	clips := composition.TimelineDrafts[0].PrimaryVideoTrack.Clips
+	if clips[0].SourceAssetID != "asset-1" || clips[1].SourceAssetID != "asset-2" {
+		t.Fatalf("composition did not preserve source assets: %#v", clips)
+	}
+}
+
+func TestVideoIndexerGenerateMultiVideoEditAttachesToInFlightAnalysis(t *testing.T) {
+	assets := []library.ProjectAsset{{ID: "asset-1", Name: "one.mp4", CloudAssetID: "drive-1"}, {ID: "asset-2", Name: "two.mp4", CloudAssetID: "drive-2"}}
+	store := &memoryVideoIndexerJobStore{jobs: []VideoIndexerStudioJob{
+		completedAnalysisJob("analysis-1", "asset-1", 0, 1200, 0.8),
+		{ID: "analysis-2", AssetID: "asset-2", AssetName: "two.mp4", RemoteJobID: "remote-2", Status: videoIndexerJobStatusPolling, CreatedAt: time.Now()},
+	}}
+	client := &fakeVideoIndexerClient{}
+	svc := NewVideoIndexerStudioService(&fakeLibraryStore{assets: assets}, nil, &fakeEditingSaver{}, client, store)
+
+	composition, err := svc.GenerateMultiVideoEdit(context.Background(), []string{"asset-1", "asset-2"})
+	if err != nil {
+		t.Fatalf("GenerateMultiVideoEdit: %v", err)
+	}
+	if len(client.createReqs) != 0 {
+		t.Fatalf("in-flight analysis should be attached, got %d submissions", len(client.createReqs))
+	}
+	if composition.Status != videoIndexerJobStatusPending || composition.Stage != "waiting_for_analyses" {
+		t.Fatalf("unexpected pending composition: %#v", composition)
+	}
+}
+
+func TestVideoIndexerIndexingJobsDoesNotPersistUnchangedComposition(t *testing.T) {
+	assets := []library.ProjectAsset{{ID: "asset-1", Name: "one.mp4", CloudAssetID: "drive-1"}, {ID: "asset-2", Name: "two.mp4", CloudAssetID: "drive-2"}}
+	store := &memoryVideoIndexerJobStore{jobs: []VideoIndexerStudioJob{
+		completedAnalysisJob("analysis-1", "asset-1", 0, 1200, 0.8),
+		{ID: "analysis-2", AssetID: "asset-2", AssetName: "two.mp4", RemoteJobID: "remote-2", Status: videoIndexerJobStatusPolling, CreatedAt: time.Now()},
+	}}
+	client := &fakeVideoIndexerClient{getResp: map[string][]videoindexerstudio.JobResponse{
+		"remote-2": {{Job: videoindexerstudio.Job{ID: "remote-2", Status: videoindexerstudio.JobStatusProcessing}}},
+	}}
+	svc := NewVideoIndexerStudioService(&fakeLibraryStore{assets: assets}, nil, &fakeEditingSaver{}, client, store)
+	if _, err := svc.GenerateMultiVideoEdit(context.Background(), []string{"asset-1", "asset-2"}); err != nil {
+		t.Fatalf("GenerateMultiVideoEdit: %v", err)
+	}
+	savesBeforeRefresh := store.saveCalls
+	if _, err := svc.IndexingJobs(context.Background()); err != nil {
+		t.Fatalf("IndexingJobs: %v", err)
+	}
+	if store.saveCalls != savesBeforeRefresh+1 {
+		t.Fatalf("expected only the source-analysis refresh to persist, got %d saves", store.saveCalls-savesBeforeRefresh)
+	}
+}
+
+func TestVideoIndexerGenerateMultiVideoEditSubmitsOnlyMissingAnalysis(t *testing.T) {
+	assets := []library.ProjectAsset{{ID: "asset-1", Name: "one.mp4", CloudAssetID: "drive-1"}, {ID: "asset-2", Name: "two.mp4", CloudAssetID: "drive-2"}}
+	store := &memoryVideoIndexerJobStore{jobs: []VideoIndexerStudioJob{completedAnalysisJob("analysis-1", "asset-1", 0, 1200, 0.8)}}
+	client := &fakeVideoIndexerClient{createResp: &videoindexerstudio.JobResponse{Job: videoindexerstudio.Job{ID: "remote-2", Status: videoindexerstudio.JobStatusQueued}}}
+	drive := &onedrive.Client{TokenProvider: staticTokenProvider{token: "delegated-token"}, Scopes: []string{onedrive.GraphScopeFilesReadWriteAppFolder}}
+	svc := NewVideoIndexerStudioService(&fakeLibraryStore{assets: assets}, fakeOneDriveSource{client: drive}, &fakeEditingSaver{}, client, store)
+
+	composition, err := svc.GenerateMultiVideoEdit(context.Background(), []string{"asset-1", "asset-2"})
+	if err != nil {
+		t.Fatalf("GenerateMultiVideoEdit: %v", err)
+	}
+	if len(client.createReqs) != 1 || client.createReqs[0].OneDriveItemID != "drive-2" {
+		t.Fatalf("expected one submission for the missing source, got %#v", client.createReqs)
+	}
+	if composition.Status != videoIndexerJobStatusPending || len(composition.DependencyJobIDs) != 2 {
+		t.Fatalf("unexpected composition: %#v", composition)
+	}
+}
+
+func TestVideoIndexerCreateEditProjectFromMultiVideoComposition(t *testing.T) {
+	assets := []library.ProjectAsset{{ID: "asset-1", Name: "one.mp4", CloudAssetID: "drive-1"}, {ID: "asset-2", Name: "two.mp4", CloudAssetID: "drive-2"}}
+	store := &memoryVideoIndexerJobStore{jobs: []VideoIndexerStudioJob{
+		completedAnalysisJob("analysis-1", "asset-1", 0, 1200, 0.8),
+		completedAnalysisJob("analysis-2", "asset-2", 500, 2200, 0.9),
+	}}
+	projects := &memoryEditingProjectStore{}
+	edit := NewEditingService(nil, nil, nil, projects)
+	svc := NewVideoIndexerStudioService(&fakeLibraryStore{assets: assets}, nil, edit, &fakeVideoIndexerClient{}, store)
+
+	composition, err := svc.GenerateMultiVideoEdit(context.Background(), []string{"asset-1", "asset-2"})
+	if err != nil {
+		t.Fatalf("GenerateMultiVideoEdit: %v", err)
+	}
+	project, err := svc.CreateEditProject(context.Background(), composition.ID, "multi-video-highlights")
+	if err != nil {
+		t.Fatalf("CreateEditProject: %v", err)
+	}
+	if len(project.AssetIDs) != 2 || project.AssetIDs[0] != "asset-1" || project.AssetIDs[1] != "asset-2" {
+		t.Fatalf("project did not retain all source assets: %#v", project.AssetIDs)
+	}
+}
+
+func TestVideoIndexerGenerateMultiVideoEditFailsForFailedDependency(t *testing.T) {
+	assets := []library.ProjectAsset{{ID: "asset-1", Name: "one.mp4", CloudAssetID: "drive-1"}, {ID: "asset-2", Name: "two.mp4", CloudAssetID: "drive-2"}}
+	store := &memoryVideoIndexerJobStore{jobs: []VideoIndexerStudioJob{
+		completedAnalysisJob("analysis-1", "asset-1", 0, 1200, 0.8),
+		{ID: "analysis-2", AssetID: "asset-2", AssetName: "two.mp4", RemoteJobID: "remote-2", Status: videoIndexerJobStatusPolling, CreatedAt: time.Now()},
+	}}
+	client := &fakeVideoIndexerClient{getResp: map[string][]videoindexerstudio.JobResponse{
+		"remote-2": {{Job: videoindexerstudio.Job{ID: "remote-2", Status: videoindexerstudio.JobStatusFailed, Error: &videoindexerstudio.APIErrorResponse{Code: "analysis_failed", Message: "source analysis failed"}}}},
+	}}
+	svc := NewVideoIndexerStudioService(&fakeLibraryStore{assets: assets}, nil, &fakeEditingSaver{}, client, store)
+	composition, err := svc.GenerateMultiVideoEdit(context.Background(), []string{"asset-1", "asset-2"})
+	if err != nil {
+		t.Fatalf("GenerateMultiVideoEdit: %v", err)
+	}
+	jobs, err := svc.IndexingJobs(context.Background())
+	if err != nil {
+		t.Fatalf("IndexingJobs: %v", err)
+	}
+	for _, job := range jobs {
+		if job.ID == composition.ID {
+			if job.Status != videoIndexerJobStatusFailed || !strings.Contains(job.ErrorMessage, "source analysis failed") {
+				t.Fatalf("composition did not expose dependency failure: %#v", job)
+			}
+			return
+		}
+	}
+	t.Fatal("composition job not found")
+}
+
+func completedAnalysisJob(id, assetID string, startMS, endMS int64, score float64) VideoIndexerStudioJob {
+	return VideoIndexerStudioJob{
+		ID: id, AssetID: assetID, AssetName: assetID + ".mp4", Status: videoIndexerJobStatusSucceeded, CreatedAt: time.Now(),
+		VideoIndexResult: &videoindexerstudio.VideoIndexResult{VideoID: "video-" + assetID, DurationMs: endMS},
+		EditPlan: &videoindexerstudio.EditPlan{SchemaVersion: 1, VideoID: "video-" + assetID, AssetID: assetID,
+			Suggestions: []videoindexerstudio.EditSuggestion{{ID: "best", Title: "Best", StartMs: startMS, EndMs: endMS, Score: score,
+				Clips: []videoindexerstudio.SuggestedClip{{ID: "clip", Title: "Clip", StartMs: startMS, EndMs: endMS, Score: score}}}},
+		},
 	}
 }
 
@@ -821,7 +975,8 @@ func (m *memoryEditingProjectStore) Save(_ context.Context, projects []editing.E
 }
 
 type memoryVideoIndexerJobStore struct {
-	jobs []VideoIndexerStudioJob
+	jobs      []VideoIndexerStudioJob
+	saveCalls int
 }
 
 func (m *memoryVideoIndexerJobStore) Load(context.Context) ([]VideoIndexerStudioJob, error) {
@@ -831,6 +986,7 @@ func (m *memoryVideoIndexerJobStore) Load(context.Context) ([]VideoIndexerStudio
 }
 
 func (m *memoryVideoIndexerJobStore) Save(_ context.Context, jobs []VideoIndexerStudioJob) error {
+	m.saveCalls++
 	m.jobs = append([]VideoIndexerStudioJob(nil), jobs...)
 	return nil
 }

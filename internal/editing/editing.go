@@ -2,7 +2,6 @@ package editing
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/zecloud/ai-video-studio/internal/videoindexerstudio"
@@ -97,12 +96,14 @@ func ProjectFromTimelineDraft(draft videoindexerstudio.TimelineDraft) (EditProje
 	}
 
 	track := draft.PrimaryVideoTrack
-	assetID := strings.TrimSpace(track.Clips[0].SourceAssetID)
-	assets := []string{assetID}
+	assets := make([]string, 0, len(track.Clips))
+	seenAssets := make(map[string]struct{}, len(track.Clips))
 	clips := make([]ClipSegment, 0, len(track.Clips))
 	for _, clip := range track.Clips {
-		if strings.TrimSpace(clip.SourceAssetID) != assetID {
-			return EditProject{}, fmt.Errorf("timeline draft clips must share the same source asset id")
+		assetID := strings.TrimSpace(clip.SourceAssetID)
+		if _, exists := seenAssets[assetID]; !exists {
+			seenAssets[assetID] = struct{}{}
+			assets = append(assets, assetID)
 		}
 		transition := clip.Transition
 		clipTransition := &Transition{

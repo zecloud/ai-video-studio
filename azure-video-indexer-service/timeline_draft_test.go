@@ -64,3 +64,28 @@ func TestBuildTimelineDraftFromSuggestionRejectsEmptySuggestion(t *testing.T) {
 		t.Fatalf("expected empty suggestion error, got %v", err)
 	}
 }
+
+func TestBuildTimelineDraftFromSuggestionPreservesMultipleSources(t *testing.T) {
+	suggestion := EditSuggestion{
+		ID: "suggestion-1",
+		Clips: []SuggestedClip{
+			{ID: "clip-a", SourceAssetID: "item-001", StartMs: 0, EndMs: 1000},
+			{ID: "clip-b", SourceAssetID: "item-002", StartMs: 500, EndMs: 2000},
+		},
+	}
+
+	draft, err := buildTimelineDraftFromSuggestion("job-1", "item-001", editPlannerInstructionsVersion, suggestion)
+	if err != nil {
+		t.Fatalf("build multi-source draft: %v", err)
+	}
+	if err := draft.Validate(); err != nil {
+		t.Fatalf("validate multi-source draft: %v", err)
+	}
+	clips := draft.PrimaryVideoTrack.Clips
+	if clips[0].SourceAssetID != "item-001" || clips[1].SourceAssetID != "item-002" {
+		t.Fatalf("unexpected source asset ids: %#v", clips)
+	}
+	if clips[1].TimelineStartMS != 1000 {
+		t.Fatalf("unexpected second clip placement: %#v", clips[1])
+	}
+}
