@@ -1102,16 +1102,21 @@ function render(): void {
       const target = event.target as HTMLElement;
 
       if (target.closest("[data-action='video-indexer-save-settings']")) {
-        void saveVideoIndexerSettings(
+        const save = saveVideoIndexerSettings(
           state.smartEdit,
           state.smartEdit.settings.endpoint,
           state.smartEdit.settings.apiKey,
-        ).then(() => render());
+        );
+        render();
+        void save.then(() => render());
         return;
       }
 
       if (target.closest("[data-action='video-indexer-refresh']")) {
-        void refreshVideoIndexerStudioState(state.smartEdit).then(() => {
+        if (state.smartEdit.activeAction) return;
+        const refresh = refreshVideoIndexerStudioState(state.smartEdit);
+        render();
+        void refresh.then(() => {
           state.libraryAssets = state.smartEdit.assets;
           render();
         });
@@ -1119,7 +1124,10 @@ function render(): void {
       }
 
       if (target.closest("[data-action='video-indexer-submit-selected']")) {
-        void submitVideoIndexerAssets(state.smartEdit).then(({ submitted, failed }) => {
+        if (state.smartEdit.activeAction) return;
+        const submission = submitVideoIndexerAssets(state.smartEdit);
+        render();
+        void submission.then(({ submitted, failed }) => {
           state.smartEdit.message =
             submitted === 0 && failed === 0
               ? "No eligible selected assets were found."
@@ -1131,7 +1139,10 @@ function render(): void {
       }
 
       if (target.closest("[data-action='video-indexer-submit-pending']")) {
-        void submitVideoIndexerAssets(state.smartEdit, []).then(({ submitted, failed }) => {
+        if (state.smartEdit.activeAction) return;
+        const submission = submitVideoIndexerAssets(state.smartEdit, []);
+        render();
+        void submission.then(({ submitted, failed }) => {
           state.smartEdit.message =
             submitted === 0 && failed === 0
               ? "No pending assets were available."
@@ -1159,8 +1170,10 @@ function render(): void {
       const cancelJob = target.closest<HTMLButtonElement>("[data-action='video-indexer-cancel-job']");
       if (cancelJob) {
         const jobID = cancelJob.dataset.jobId || "";
-        if (jobID) {
-          void cancelVideoIndexerJob(state.smartEdit, jobID)
+        if (jobID && !state.smartEdit.activeAction) {
+          const cancellation = cancelVideoIndexerJob(state.smartEdit, jobID);
+          render();
+          void cancellation
             .then(() => {
               state.smartEdit.selectedJobID = jobID;
               render();
@@ -1176,8 +1189,10 @@ function render(): void {
       const retryJob = target.closest<HTMLButtonElement>("[data-action='video-indexer-retry-job']");
       if (retryJob) {
         const jobID = retryJob.dataset.jobId || "";
-        if (jobID) {
-          void retryVideoIndexerJob(state.smartEdit, jobID)
+        if (jobID && !state.smartEdit.activeAction) {
+          const retry = retryVideoIndexerJob(state.smartEdit, jobID);
+          render();
+          void retry
             .then(() => {
               state.smartEdit.message = "Submitted a new Video Indexer job with a fresh source URL.";
               render();
@@ -1194,8 +1209,10 @@ function render(): void {
       if (createProject) {
         const jobID = createProject.dataset.jobId || "";
         const suggestionID = createProject.dataset.suggestionId || "";
-        if (jobID) {
-          void createEditProjectFromVideoIndexerJob(state.smartEdit, jobID, suggestionID)
+        if (jobID && !state.smartEdit.activeAction) {
+          const creation = createEditProjectFromVideoIndexerJob(state.smartEdit, jobID, suggestionID);
+          render();
+          void creation
             .then((project) => {
               if (project) {
                 state.activeView = "editing";
