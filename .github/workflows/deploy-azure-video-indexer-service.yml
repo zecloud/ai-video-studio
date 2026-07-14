@@ -12,9 +12,7 @@
 #   AZURE_CONTAINER_APPS_ENV            Existing Container Apps environment name.
 #   ACR_NAME                            Optional Azure Container Registry name; defaults to acrvideostudio.
 #   FOUNDRY_ACCOUNT_NAME               Azure AI Foundry / Azure OpenAI account name.
-#   FOUNDRY_PROJECT_ENDPOINT           Azure AI Foundry project endpoint.
-#   FOUNDRY_ACCOUNT_RESOURCE_GROUP      Optional; defaults to AZURE_RESOURCE_GROUP.
-#   FOUNDRY_ACCOUNT_SUBSCRIPTION_ID     Optional; defaults to AZURE_SUBSCRIPTION_ID.
+#   FOUNDRY_PROJECT_NAME               Optional Foundry project name; defaults to video-indexer-project.
 #   VIDEO_INDEXER_ACCOUNT_NAME          Optional Azure AI Video Indexer account name; defaults to videoindexer-prod.
 #   VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID Optional override; otherwise resolved after Azure Login.
 #   The Durable Task Data Contributor built-in role is assigned by Bicep; no role ID variable is required.
@@ -60,9 +58,7 @@ jobs:
       ACR_NAME: ${{ vars.ACR_NAME || 'acrvideostudio' }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       FOUNDRY_ACCOUNT_NAME: ${{ vars.FOUNDRY_ACCOUNT_NAME }}
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
-      FOUNDRY_ACCOUNT_RESOURCE_GROUP: ${{ vars.FOUNDRY_ACCOUNT_RESOURCE_GROUP || vars.AZURE_RESOURCE_GROUP }}
-      FOUNDRY_ACCOUNT_SUBSCRIPTION_ID: ${{ vars.FOUNDRY_ACCOUNT_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
+      FOUNDRY_PROJECT_NAME: ${{ vars.FOUNDRY_PROJECT_NAME || 'video-indexer-project' }}
       VIDEO_INDEXER_ACCOUNT_NAME: ${{ vars.VIDEO_INDEXER_ACCOUNT_NAME || 'videoindexer-prod' }}
       VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID: ${{ vars.VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID }}
       VIDEO_INDEXER_API_KEY: ${{ secrets.AZURE_VIDEO_INDEXER_API_KEY }}
@@ -80,7 +76,6 @@ jobs:
             AZURE_CONTAINER_APPS_ENV \
             AZURE_SUBSCRIPTION_ID \
             FOUNDRY_ACCOUNT_NAME \
-            FOUNDRY_PROJECT_ENDPOINT \
             VIDEO_INDEXER_API_KEY
           do
             if [ -z "${!name:-}" ]; then
@@ -95,6 +90,20 @@ jobs:
           go-version-file: azure-video-indexer-service/go.mod
           cache-dependency-path: azure-video-indexer-service/go.sum
 
+      - name: Install Wails Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libgtk-4-dev \
+            libwebkitgtk-6.0-dev \
+            libglib2.0-dev \
+            libsoup-3.0-dev
+
+      - name: Build embedded frontend assets
+        run: |
+          npm ci --prefix frontend
+          npm run build --prefix frontend
+
       - name: Test durable Video Indexer service
         run: go test ./...
         working-directory: azure-video-indexer-service
@@ -105,6 +114,19 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Verify Video Indexer resource provider
+        run: |
+          set -euo pipefail
+          registration_state="$(az provider show \
+            --namespace Microsoft.VideoIndexer \
+            --query registrationState \
+            --output tsv)"
+          if [ "$registration_state" != "Registered" ]; then
+            echo "Microsoft.VideoIndexer is not registered (state: ${registration_state:-unknown})." >&2
+            echo "Register it at subscription scope before running this workflow." >&2
+            exit 1
+          fi
+
       - name: Resolve Video Indexer role definition
         run: |
           set -euo pipefail
@@ -113,18 +135,24 @@ jobs:
             exit 0
           fi
 
+          target_role_name='Video Indexer Account Contributor'
           mapfile -t role_ids < <(
             az role definition list \
               --custom-role-only false \
-              --query "[?contains(roleName, 'Video Indexer')].id" \
+              --query "[?roleName=='${target_role_name}'].id" \
               --output tsv
           )
-          if [ "${#role_ids[@]}" -ne 1 ] || [ -z "${role_ids[0]}" ]; then
-            echo "Expected exactly one Video Indexer role definition, found ${#role_ids[@]}." >&2
+          if [ "${#role_ids[@]}" -eq 0 ] || [ -z "${role_ids[0]}" ]; then
+            echo "Required Video Indexer role definition not found: ${target_role_name}." >&2
             az role definition list \
               --custom-role-only false \
               --query "[?contains(roleName, 'Video Indexer')].{name:roleName,id:id}" \
               --output table >&2
+            exit 1
+          fi
+          if [ "${#role_ids[@]}" -ne 1 ]; then
+            echo "Expected exactly one '${target_role_name}' role definition, found ${#role_ids[@]}." >&2
+            printf '%s\n' "${role_ids[@]}" >&2
             exit 1
           fi
           echo "VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID=${role_ids[0]}" >> "$GITHUB_ENV"
@@ -176,9 +204,7 @@ jobs:
               containerAppsEnvironmentId="$CONTAINER_APPS_ENVIRONMENT_ID" \
               containerRegistryName="$ACR_NAME" \
               foundryAccountName="$FOUNDRY_ACCOUNT_NAME" \
-              foundryProjectEndpoint="$FOUNDRY_PROJECT_ENDPOINT" \
-              foundryAccountResourceGroupName="$FOUNDRY_ACCOUNT_RESOURCE_GROUP" \
-              foundryAccountSubscriptionId="$FOUNDRY_ACCOUNT_SUBSCRIPTION_ID" \
+              foundryProjectName="$FOUNDRY_PROJECT_NAME" \
               videoIndexerAccountName="$VIDEO_INDEXER_ACCOUNT_NAME" \
               videoIndexerRoleDefinitionResourceId="$VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID" \
               containerImageTag="$GITHUB_SHA" \
@@ -197,9 +223,7 @@ jobs:
                 containerAppsEnvironmentId="$CONTAINER_APPS_ENVIRONMENT_ID" \
                 containerRegistryName="$ACR_NAME" \
                 foundryAccountName="$FOUNDRY_ACCOUNT_NAME" \
-                foundryProjectEndpoint="$FOUNDRY_PROJECT_ENDPOINT" \
-                foundryAccountResourceGroupName="$FOUNDRY_ACCOUNT_RESOURCE_GROUP" \
-                foundryAccountSubscriptionId="$FOUNDRY_ACCOUNT_SUBSCRIPTION_ID" \
+                foundryProjectName="$FOUNDRY_PROJECT_NAME" \
                 videoIndexerAccountName="$VIDEO_INDEXER_ACCOUNT_NAME" \
                 videoIndexerRoleDefinitionResourceId="$VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID" \
                 containerImageTag="$GITHUB_SHA" \

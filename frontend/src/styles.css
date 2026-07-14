@@ -303,6 +303,43 @@ nav small {
   line-height: 1.25;
 }
 
+.library-selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
+}
+
+.library-selection-bar > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.library-selection-bar span {
+  color: var(--ink-muted);
+  font-size: 0.82rem;
+}
+
+.selection-cell {
+  width: 64px;
+  text-align: center;
+}
+
+.data-table tbody tr {
+  cursor: pointer;
+}
+
+.data-table tbody tr:hover td {
+  background: var(--accent-soft);
+}
+
+.data-table .selection-cell {
+  cursor: default;
+}
+
 .badge {
   display: inline-flex;
   width: fit-content;

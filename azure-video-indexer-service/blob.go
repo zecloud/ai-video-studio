@@ -2,16 +2,20 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/url"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/sas"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/service"
 	"go.opentelemetry.io/otel/attribute"
@@ -21,10 +25,17 @@ import (
 type StagedAsset struct {
 	Container string
 	BlobName  string
+	Size      int64
+	MediaType string
+}
+
+type StageOptions struct {
+	ContentLength int64
+	ContentType   string
 }
 
 type BlobStager interface {
-	Stage(ctx context.Context, jobID, sourceName string, body io.Reader) (StagedAsset, error)
+	Stage(ctx context.Context, jobID, sourceName string, body io.Reader, options StageOptions) (StagedAsset, error)
 	ReadURL(ctx context.Context, asset StagedAsset) (string, error)
 	Delete(ctx context.Context, asset StagedAsset) error
 	StagingContainer() string
@@ -123,10 +134,17 @@ func (s *AzureBlobService) CheckUserDelegationCredential(ctx context.Context) er
 	return nil
 }
 
-func (s *AzureBlobService) Stage(ctx context.Context, jobID, sourceName string, body io.Reader) (asset StagedAsset, err error) {
+func (s *AzureBlobService) Stage(ctx context.Context, jobID, sourceName string, body io.Reader, options StageOptions) (asset StagedAsset, err error) {
 	asset = StagedAsset{
 		Container: s.stagingContainer,
 		BlobName:  stageBlobName(jobID, sourceName),
+	}
+	if options.ContentLength == 0 {
+		return StagedAsset{}, newServiceError(422, "source_media_empty", "OneDrive returned an empty media file", false)
+	}
+	contentType, err := mediaContentType(sourceName, options.ContentType)
+	if err != nil {
+		return StagedAsset{}, err
 	}
 	start := time.Now()
 	var span trace.Span
@@ -139,11 +157,55 @@ func (s *AzureBlobService) Stage(ctx context.Context, jobID, sourceName string, 
 	if _, err = s.client.UploadStream(ctx, asset.Container, asset.BlobName, body, &azblob.UploadStreamOptions{
 		BlockSize:   4 << 20,
 		Concurrency: 2,
+		HTTPHeaders: &blob.HTTPHeaders{BlobContentType: &contentType},
 	}); err != nil {
 		err = fmt.Errorf("staging blob %s: %w", asset.BlobName, err)
 		return StagedAsset{}, err
 	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if cleanupErr := s.Delete(cleanupCtx, asset); cleanupErr != nil {
+			err = errors.Join(err, fmt.Errorf("cleaning invalid staged blob %s: %w", asset.BlobName, cleanupErr))
+		}
+	}()
+	properties, err := s.client.ServiceClient().NewContainerClient(asset.Container).NewBlobClient(asset.BlobName).GetProperties(ctx, nil)
+	if err != nil {
+		return StagedAsset{}, fmt.Errorf("checking staged blob %s: %w", asset.BlobName, err)
+	}
+	if properties.ContentLength == nil || *properties.ContentLength <= 0 {
+		return StagedAsset{}, newServiceError(502, "staged_blob_empty", "staged media blob is empty", true)
+	}
+	if options.ContentLength > 0 && *properties.ContentLength != options.ContentLength {
+		return StagedAsset{}, newServiceError(502, "staged_blob_size_mismatch", fmt.Sprintf("staged media size %d does not match OneDrive size %d", *properties.ContentLength, options.ContentLength), true)
+	}
+	asset.Size = *properties.ContentLength
+	asset.MediaType = contentType
 	return asset, nil
+}
+
+func mediaContentType(sourceName, contentType string) (string, error) {
+	contentType = strings.TrimSpace(contentType)
+	if contentType != "" {
+		parsed, _, err := mime.ParseMediaType(contentType)
+		if err != nil {
+			return "", newServiceError(422, "source_media_type_invalid", "OneDrive returned an invalid media content type", false)
+		}
+		if strings.HasPrefix(strings.ToLower(parsed), "video/") {
+			return parsed, nil
+		}
+		if !strings.EqualFold(parsed, "application/octet-stream") {
+			return "", newServiceError(422, "source_media_type_unsupported", "OneDrive item is not a supported video", false)
+		}
+	}
+	if inferred := mime.TypeByExtension(strings.ToLower(filepath.Ext(sourceName))); strings.HasPrefix(strings.ToLower(inferred), "video/") {
+		parsed, _, _ := mime.ParseMediaType(inferred)
+		return parsed, nil
+	}
+	return "", newServiceError(422, "source_media_type_unsupported", "OneDrive item is not a supported video", false)
 }
 
 func (s *AzureBlobService) ReadURL(ctx context.Context, asset StagedAsset) (string, error) {

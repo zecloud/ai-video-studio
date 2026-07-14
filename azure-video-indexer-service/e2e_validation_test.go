@@ -189,7 +189,7 @@ func TestEndToEndCreateJobCreatesEditProjectFromFixture(t *testing.T) {
 		mu.Unlock()
 		t.Fatalf("unexpected external id: %q", got)
 	}
-	if got := uploadQuery.Get("language"); got != "auto" {
+	if got := uploadQuery.Get("language"); got != "" {
 		mu.Unlock()
 		t.Fatalf("unexpected upload language: %q", got)
 	}

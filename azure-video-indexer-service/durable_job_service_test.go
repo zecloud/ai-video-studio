@@ -35,6 +35,8 @@ func TestDurableJobServiceStagesBeforeSchedulingWithoutDelegatedCredentials(t *t
 		if got := r.Header.Get("Authorization"); got != "Bearer delegated-token" {
 			t.Fatalf("unexpected authorization header: %q", got)
 		}
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Content-Length", "11")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("video-bytes"))
 	}))
@@ -56,6 +58,9 @@ func TestDurableJobServiceStagesBeforeSchedulingWithoutDelegatedCredentials(t *t
 	if len(stager.stageCalls) != 1 || len(scheduler.inputs) != 1 {
 		t.Fatalf("staging calls = %d, schedules = %d; want one of each", len(stager.stageCalls), len(scheduler.inputs))
 	}
+	if got := stager.stageCalls[0].Options; got.ContentLength != 11 || got.ContentType != "video/mp4" {
+		t.Fatalf("staging options = %#v, want OneDrive media metadata", got)
+	}
 	input := scheduler.inputs[0]
 	if input.JobID != job.ID || input.BlobName == "" || input.Container == "" {
 		t.Fatalf("unexpected durable input: %#v", input)
@@ -72,7 +77,7 @@ type inspectingStager struct {
 	sawAsset  bool
 }
 
-func (s *inspectingStager) Stage(ctx context.Context, jobID, sourceName string, _ io.Reader) (StagedAsset, error) {
+func (s *inspectingStager) Stage(ctx context.Context, jobID, sourceName string, _ io.Reader, _ StageOptions) (StagedAsset, error) {
 	stored, err := s.store.Get(ctx, jobID)
 	if err != nil {
 		return StagedAsset{}, err

@@ -134,13 +134,14 @@ type fakeStageCall struct {
 	SourceName string
 	BlobName   string
 	Size       int64
+	Options    StageOptions
 }
 
-func (s *fakeStager) Stage(ctx context.Context, jobID, sourceName string, body io.Reader) (StagedAsset, error) {
+func (s *fakeStager) Stage(ctx context.Context, jobID, sourceName string, body io.Reader, options StageOptions) (StagedAsset, error) {
 	size, _ := io.Copy(io.Discard, body)
 	asset := StagedAsset{Container: s.StagingContainer(), BlobName: stageBlobName(jobID, sourceName)}
 	s.mu.Lock()
-	s.stageCalls = append(s.stageCalls, fakeStageCall{JobID: jobID, SourceName: sourceName, BlobName: asset.BlobName, Size: size})
+	s.stageCalls = append(s.stageCalls, fakeStageCall{JobID: jobID, SourceName: sourceName, BlobName: asset.BlobName, Size: size, Options: options})
 	s.mu.Unlock()
 	return asset, nil
 }

@@ -19,6 +19,12 @@ export interface VideoIndexerStudioSettingsState {
   saving: boolean;
 }
 
+export type VideoIndexerStudioAction =
+  | { kind: "refresh" }
+  | { kind: "submit-selected"; count: number }
+  | { kind: "submit-pending"; count: number }
+  | { kind: "retry" | "cancel" | "create-project"; jobID: string };
+
 export interface VideoIndexerStudioViewState {
   jobs: BackendModels.VideoIndexerStudioJob[];
   assets: LibraryModels.ProjectAsset[];
@@ -26,6 +32,7 @@ export interface VideoIndexerStudioViewState {
   selectedJobID: string | null;
   polling: boolean;
   message: string;
+  activeAction: VideoIndexerStudioAction | null;
   settings: VideoIndexerStudioSettingsState;
 }
 
@@ -37,6 +44,7 @@ export function createVideoIndexerStudioState(): VideoIndexerStudioViewState {
     selectedJobID: null,
     polling: false,
     message: "",
+    activeAction: null,
     settings: {
       endpoint: "",
       apiKey: "",
@@ -220,7 +228,18 @@ export async function loadVideoIndexerStudioState(state: VideoIndexerStudioViewS
 }
 
 export async function refreshVideoIndexerStudioState(state: VideoIndexerStudioViewState): Promise<void> {
-  await loadVideoIndexerStudioState(state);
+  if (state.activeAction) return;
+  state.activeAction = { kind: "refresh" };
+  const loadingMessage = "Refreshing Video Indexer jobs and assets...";
+  state.message = loadingMessage;
+  try {
+    await loadVideoIndexerStudioState(state);
+    if (state.message === loadingMessage) {
+      state.message = "Video Indexer jobs and assets refreshed.";
+    }
+  } finally {
+    state.activeAction = null;
+  }
 }
 
 export function toggleVideoIndexerAssetSelection(state: VideoIndexerStudioViewState, assetID: string): void {
@@ -238,32 +257,67 @@ export function selectVideoIndexerJob(state: VideoIndexerStudioViewState, jobID:
 }
 
 export async function submitVideoIndexerAssets(state: VideoIndexerStudioViewState, assetIDs?: string[]): Promise<{ submitted: number; failed: number }> {
-  const ids = assetIDs && assetIDs.length > 0 ? assetIDs : state.selectedAssetIDs;
+  if (state.activeAction) return { submitted: 0, failed: 0 };
+  const ids = assetIDs === undefined ? state.selectedAssetIDs : assetIDs;
   const uniqueIDs = Array.from(new Set(ids));
   const targets = uniqueIDs.length
     ? state.assets.filter((asset) => uniqueIDs.includes(asset.id) && assetEligible(asset))
     : pendingAssets(state);
+  const kind = assetIDs === undefined ? "submit-selected" : "submit-pending";
+  state.activeAction = { kind, count: targets.length };
+  state.message = `Submitting ${targets.length} asset${targets.length === 1 ? "" : "s"} to Video Indexer...`;
   let submitted = 0;
   let failed = 0;
-  for (const asset of targets) {
-    try {
-      const job = await VideoIndexerStudioService.SubmitForIndexing(asset.id);
-      if (job) {
-        upsertJob(state, job);
+  try {
+    for (const asset of targets) {
+      try {
+        const job = await VideoIndexerStudioService.SubmitForIndexing(asset.id);
+        if (job) {
+          upsertJob(state, job);
+        }
+        submitted += 1;
+      } catch {
+        failed += 1;
       }
-      submitted += 1;
-    } catch {
-      failed += 1;
     }
+    state.polling = state.jobs.some((job) => inFlight(job.status));
+    return { submitted, failed };
+  } finally {
+    state.activeAction = null;
   }
-  state.polling = state.jobs.some((job) => inFlight(job.status));
-  return { submitted, failed };
+}
+
+export async function retryVideoIndexerJob(state: VideoIndexerStudioViewState, jobID: string): Promise<void> {
+  if (state.activeAction) return;
+  const failedJob = state.jobs.find((job) => job.id === jobID && job.status === "failed");
+  if (!failedJob) {
+    throw new Error("Only failed Video Indexer jobs can be retried.");
+  }
+  state.activeAction = { kind: "retry", jobID };
+  state.message = "Retrying the Video Indexer job with a fresh source URL...";
+  try {
+    const job = await VideoIndexerStudioService.SubmitForIndexing(failedJob.assetId);
+    if (!job) {
+      throw new Error("Video Indexer did not return the replacement job.");
+    }
+    upsertJob(state, job);
+    state.selectedJobID = job.id;
+  } finally {
+    state.activeAction = null;
+  }
 }
 
 export async function cancelVideoIndexerJob(state: VideoIndexerStudioViewState, jobID: string): Promise<void> {
-  const job = await VideoIndexerStudioService.CancelIndexing(jobID);
-  if (job) {
-    upsertJob(state, job);
+  if (state.activeAction) return;
+  state.activeAction = { kind: "cancel", jobID };
+  state.message = "Canceling the Video Indexer job...";
+  try {
+    const job = await VideoIndexerStudioService.CancelIndexing(jobID);
+    if (job) {
+      upsertJob(state, job);
+    }
+  } finally {
+    state.activeAction = null;
   }
 }
 
@@ -272,18 +326,25 @@ export async function createEditProjectFromVideoIndexerJob(
   jobID: string,
   suggestionID = "",
 ): Promise<EditingModels.EditProject | null> {
-  const project = await VideoIndexerStudioService.CreateEditProject(jobID, suggestionID);
-  if (project) {
-    state.message = `Created edit project ${project.name || project.id}.`;
-    const found = state.jobs.find((job) => job.id === jobID);
-    if (found) {
-      found.projectId = project.id;
-      if (suggestionID.trim()) {
-        found.suggestionId = suggestionID.trim();
+  if (state.activeAction) return null;
+  state.activeAction = { kind: "create-project", jobID };
+  state.message = "Creating the edit project...";
+  try {
+    const project = await VideoIndexerStudioService.CreateEditProject(jobID, suggestionID);
+    if (project) {
+      state.message = `Created edit project ${project.name || project.id}.`;
+      const found = state.jobs.find((job) => job.id === jobID);
+      if (found) {
+        found.projectId = project.id;
+        if (suggestionID.trim()) {
+          found.suggestionId = suggestionID.trim();
+        }
       }
     }
+    return project ?? null;
+  } finally {
+    state.activeAction = null;
   }
-  return project ?? null;
 }
 
 export async function saveVideoIndexerSettings(
@@ -291,6 +352,7 @@ export async function saveVideoIndexerSettings(
   endpoint: string,
   apiKey: string,
 ): Promise<void> {
+  if (state.settings.saving) return;
   state.settings.saving = true;
   state.settings.message = "Saving Video Indexer Studio settings...";
   try {
@@ -317,7 +379,7 @@ function renderAssetRows(state: VideoIndexerStudioViewState): string {
           const tone = job ? localStatusTone(job.status) : "neutral";
           return `
             <tr>
-              <td><input class="check" type="checkbox" data-action="video-indexer-toggle-asset" data-asset-id="${escapeHTML(asset.id)}" ${selected ? "checked" : ""} aria-label="Select ${escapeHTML(asset.name || asset.id)}" /></td>
+              <td><input class="check" type="checkbox" data-action="video-indexer-toggle-asset" data-asset-id="${escapeHTML(asset.id)}" ${selected ? "checked" : ""} ${state.activeAction ? "disabled" : ""} aria-label="Select ${escapeHTML(asset.name || asset.id)}" /></td>
               <td><strong>${escapeHTML(asset.name || asset.id)}</strong><br><span class="muted">${escapeHTML(asset.cloudAssetId || "No cloud asset ID")}</span></td>
               <td>${badge(job ? stageLabel(job.status) : "Eligible", tone)}</td>
               <td class="muted">${escapeHTML(formatRelative(job?.updatedAt || asset.createdAt))}</td>
@@ -329,6 +391,7 @@ function renderAssetRows(state: VideoIndexerStudioViewState): string {
 }
 
 function renderJobsTable(state: VideoIndexerStudioViewState): string {
+  const busy = state.activeAction !== null;
   const rows = state.jobs.length
     ? state.jobs
         .map((job) => {
@@ -345,12 +408,17 @@ function renderJobsTable(state: VideoIndexerStudioViewState): string {
                   <button type="button" class="button secondary small" data-action="video-indexer-view-job" data-job-id="${escapeHTML(job.id)}">View</button>
                   ${
                     inFlight(job.status)
-                      ? `<button type="button" class="button secondary small" data-action="video-indexer-cancel-job" data-job-id="${escapeHTML(job.id)}">Cancel</button>`
+                      ? `<button type="button" class="button secondary small" data-action="video-indexer-cancel-job" data-job-id="${escapeHTML(job.id)}" ${busy ? "disabled" : ""} ${state.activeAction?.kind === "cancel" && state.activeAction.jobID === job.id ? 'aria-busy="true"' : ""}>${state.activeAction?.kind === "cancel" && state.activeAction.jobID === job.id ? "Canceling..." : "Cancel"}</button>`
+                      : ""
+                  }
+                  ${
+                    job.status === "failed"
+                      ? `<button type="button" class="button small" data-action="video-indexer-retry-job" data-job-id="${escapeHTML(job.id)}" ${busy ? "disabled" : ""} ${state.activeAction?.kind === "retry" && state.activeAction.jobID === job.id ? 'aria-busy="true"' : ""}>${state.activeAction?.kind === "retry" && state.activeAction.jobID === job.id ? "Retrying..." : "Retry"}</button>`
                       : ""
                   }
                   ${
                     job.status === "succeeded" && (job.timelineDrafts?.length || 0) === 1
-                      ? `<button type="button" class="button small" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}">Create edit project</button>`
+                      ? `<button type="button" class="button small" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}" ${busy ? "disabled" : ""} ${state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id ? 'aria-busy="true"' : ""}>${state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id ? "Creating project..." : "Create edit project"}</button>`
                       : ""
                   }
                 </div>
@@ -425,7 +493,7 @@ function renderSourceRefs(refs: VI.SourceRef[] | undefined): string {
     .join("");
 }
 
-function renderTimelineDrafts(job: BackendModels.VideoIndexerStudioJob): string {
+function renderTimelineDrafts(job: BackendModels.VideoIndexerStudioJob, state: VideoIndexerStudioViewState): string {
   const drafts = job.timelineDrafts || [];
   if (!drafts.length) {
     return `<div class="empty-state">No timeline drafts yet.</div>`;
@@ -442,7 +510,7 @@ function renderTimelineDrafts(job: BackendModels.VideoIndexerStudioJob): string 
             </div>
             <div class="toolbar">
               ${badge(`Schema ${draft.schemaVersion}`, "neutral")}
-              <button type="button" class="button" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}" data-suggestion-id="${escapeHTML(draft.suggestionId || "")}">Create edit project</button>
+              <button type="button" class="button" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}" data-suggestion-id="${escapeHTML(draft.suggestionId || "")}" ${state.activeAction ? "disabled" : ""} ${state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id ? 'aria-busy="true"' : ""}>${state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id ? "Creating project..." : "Create edit project"}</button>
             </div>
           </div>
           <div class="detail-body">
@@ -784,7 +852,7 @@ function renderJobDetails(job: BackendModels.VideoIndexerStudioJob | null, state
         </div>
       </div>
       <div class="detail-body">
-        ${renderTimelineDrafts(job)}
+        ${renderTimelineDrafts(job, state)}
       </div>
     </section>
   `;
@@ -794,6 +862,13 @@ export function renderVideoIndexerStudioPanel(state: VideoIndexerStudioViewState
   const selectedAssetsList = selectedAssets(state);
   const pending = pendingAssets(state);
   const selectedJob = state.jobs.find((job) => job.id === state.selectedJobID) || state.jobs[0] || null;
+  const action = state.activeAction;
+  const busy = action !== null;
+  const submittingSelected = action?.kind === "submit-selected";
+  const submittingPending = action?.kind === "submit-pending";
+  const refreshing = action?.kind === "refresh";
+  const selectedSubmissionCount = action?.kind === "submit-selected" ? action.count : 0;
+  const pendingSubmissionCount = action?.kind === "submit-pending" ? action.count : 0;
   return `
     <section class="panel" aria-labelledby="smart-edit-title">
       <div class="panel-header">
@@ -808,11 +883,11 @@ export function renderVideoIndexerStudioPanel(state: VideoIndexerStudioViewState
       </div>
       <div class="detail-body">
         <div class="toolbar">
-          <button type="button" class="button" data-action="video-indexer-submit-selected" ${selectedAssetsList.length ? "" : "disabled"}>Submit selected</button>
-          <button type="button" class="button secondary" data-action="video-indexer-submit-pending" ${pending.length ? "" : "disabled"}>Submit pending</button>
-          <button type="button" class="button secondary" data-action="video-indexer-refresh">Refresh</button>
+          <button type="button" class="button" data-action="video-indexer-submit-selected" ${selectedAssetsList.length && !busy ? "" : "disabled"} ${submittingSelected ? 'aria-busy="true"' : ""}>${submittingSelected ? `Submitting ${selectedSubmissionCount}...` : "Submit selected"}</button>
+          <button type="button" class="button secondary" data-action="video-indexer-submit-pending" ${pending.length && !busy ? "" : "disabled"} ${submittingPending ? 'aria-busy="true"' : ""}>${submittingPending ? `Submitting ${pendingSubmissionCount}...` : "Submit pending"}</button>
+          <button type="button" class="button secondary" data-action="video-indexer-refresh" ${busy ? "disabled" : ""} ${refreshing ? 'aria-busy="true"' : ""}>${refreshing ? "Refreshing..." : "Refresh"}</button>
         </div>
-        <p class="queue-message">${escapeHTML(state.message || "Select eligible library assets to submit them to Video Indexer.")}</p>
+        <p class="queue-message" role="status" aria-live="polite">${escapeHTML(state.message || "Select eligible library assets to submit them to Video Indexer.")}</p>
       </div>
     </section>
 

@@ -51,17 +51,22 @@ func NewDTSRuntime(ctx context.Context, cfg Config, registry *task.TaskRegistry)
 	return runtime, nil
 }
 
-func (r *DTSRuntime) Schedule(ctx context.Context, input VideoIndexerOrchestrationInput) error {
-	if r == nil || r.client == nil {
-		return fmt.Errorf("Durable Task Scheduler runtime is not configured")
-	}
-	reusePolicy := &api.OrchestrationIdReusePolicy{
+func orchestrationIDReusePolicy() *api.OrchestrationIdReusePolicy {
+	return &api.OrchestrationIdReusePolicy{
 		Action: api.REUSE_ID_ACTION_IGNORE,
 		OperationStatus: []api.OrchestrationStatus{
 			api.RUNTIME_STATUS_PENDING,
 			api.RUNTIME_STATUS_RUNNING,
+			api.RUNTIME_STATUS_TERMINATED,
 		},
 	}
+}
+
+func (r *DTSRuntime) Schedule(ctx context.Context, input VideoIndexerOrchestrationInput) error {
+	if r == nil || r.client == nil {
+		return fmt.Errorf("Durable Task Scheduler runtime is not configured")
+	}
+	reusePolicy := orchestrationIDReusePolicy()
 	_, err := r.client.ScheduleNewOrchestration(ctx, videoIndexerOrchestrationName,
 		api.WithInstanceID(api.InstanceID(input.JobID)),
 		api.WithInput(input),
@@ -92,13 +97,7 @@ func (r *DTSRuntime) RequestCancellation(ctx context.Context, jobID string) erro
 		Version:           videoIndexerOrchestrationVersion,
 		CancellationGrace: r.cancellationGrace,
 	}
-	watchdogReusePolicy := &api.OrchestrationIdReusePolicy{
-		Action: api.REUSE_ID_ACTION_IGNORE,
-		OperationStatus: []api.OrchestrationStatus{
-			api.RUNTIME_STATUS_PENDING,
-			api.RUNTIME_STATUS_RUNNING,
-		},
-	}
+	watchdogReusePolicy := orchestrationIDReusePolicy()
 	if _, err := r.client.ScheduleNewOrchestration(ctx, cancellationWatchdogName,
 		api.WithInstanceID(api.InstanceID(jobID+".cancel")),
 		api.WithInput(input),

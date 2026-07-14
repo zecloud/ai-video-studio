@@ -84,9 +84,11 @@ func TestBuildCreateUploadSessionMetadataUsesAppFolderPathAndLeastPrivilegeShape
 	if err != nil {
 		t.Fatalf("BuildCreateUploadSessionMetadata returned error: %v", err)
 	}
+
 	if meta.Method != "POST" {
 		t.Fatalf("expected POST, got %s", meta.Method)
 	}
+
 	wantURL := "https://graph.microsoft.com/v1.0/me/drive/special/approot:/Imports/clip%2001.MP4:/createUploadSession"
 	if meta.URL != wantURL {
 		t.Fatalf("unexpected URL:\nwant %s\n got %s", wantURL, meta.URL)
@@ -98,6 +100,61 @@ func TestBuildCreateUploadSessionMetadataUsesAppFolderPathAndLeastPrivilegeShape
 	}
 	if body["item"]["@microsoft.graph.conflictBehavior"] != ConflictBehaviorRename {
 		t.Fatalf("unexpected conflict behavior body: %s", string(meta.Body))
+	}
+}
+
+type testTokenProvider struct{}
+
+func (testTokenProvider) AccessToken(context.Context, []string) (string, error) {
+	return "unit-test-token", nil
+}
+
+func TestListFolderItemsResolvesConfiguredAppFolderPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/me/drive/special/approot:/Imports:/children" {
+			t.Fatalf("path = %q, want app-folder Imports path", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer unit-test-token" {
+			t.Fatalf("missing authorization header")
+		}
+		_, _ = w.Write([]byte(`{"value":[{"id":"file-1","name":"clip.mp4","file":{"mimeType":"video/mp4"}}]}`))
+	}))
+	defer server.Close()
+
+	items, err := (&Client{
+		HTTPClient:    server.Client(),
+		TokenProvider: testTokenProvider{},
+		GraphBaseURL:  server.URL,
+		Scopes:        []string{GraphScopeFilesReadWriteAppFolder},
+		Destination:   OneDriveDestination{Mode: "app_folder", Path: "/Apps/AI Video Studio/Imports"},
+	}).ListFolderItems(context.Background(), "/Apps/AI Video Studio/Imports")
+	if err != nil {
+		t.Fatalf("ListFolderItems returned error: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "file-1" {
+		t.Fatalf("unexpected items: %+v", items)
+	}
+}
+
+func TestAppFolderRelativePathOnlyStripsConfiguredAppPrefix(t *testing.T) {
+	tests := []struct {
+		name            string
+		folderPath      string
+		destinationPath string
+		want            string
+	}{
+		{name: "configured app absolute path", folderPath: "/Apps/AI Video Studio/Imports", destinationPath: "/Apps/AI Video Studio/Imports", want: "Imports"},
+		{name: "case insensitive app prefix", folderPath: "/apps/ai video studio/Imports/Camera", destinationPath: "/Apps/AI Video Studio/Imports", want: "Imports/Camera"},
+		{name: "different app remains unchanged", folderPath: "/Apps/Another App/Imports", destinationPath: "/Apps/AI Video Studio/Imports", want: "Apps/Another App/Imports"},
+		{name: "relative path remains unchanged", folderPath: "Imports/Camera", destinationPath: "/Apps/AI Video Studio/Imports", want: "Imports/Camera"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := appFolderRelativePath(tt.folderPath, tt.destinationPath); got != tt.want {
+				t.Fatalf("appFolderRelativePath(%q, %q) = %q, want %q", tt.folderPath, tt.destinationPath, got, tt.want)
+			}
+		})
 	}
 }
 

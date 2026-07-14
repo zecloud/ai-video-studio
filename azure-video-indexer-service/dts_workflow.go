@@ -118,7 +118,16 @@ func (a *VideoIndexerActivities) Poll(ctx task.ActivityContext) (any, error) {
 	}
 	state := normalizeVideoState(index.State())
 	if state == "failed" || state == "canceled" || state == "cancelled" {
-		return nil, newServiceError(422, "video_index_failed", "Video Indexer reported terminal state "+index.State(), false)
+		failure := videoIndexerTerminalError(index)
+		_, updateErr := a.update(ctx.Context(), job.ID, JobStatusFailed, func(doc *JobDocument) {
+			apiError := (&ServiceError{Status: 422, Code: serviceErrorCode(failure), Message: serviceErrorMessage(failure), Retryable: false}).APIError()
+			doc.Error = &apiError
+			doc.VideoIndexerState = index.State()
+		})
+		if updateErr != nil {
+			return nil, updateErr
+		}
+		return nil, failure
 	}
 	_, err = a.update(ctx.Context(), job.ID, JobStatusIndexing, func(doc *JobDocument) { doc.VideoIndexerState = index.State() })
 	if err != nil {
@@ -240,7 +249,9 @@ func (a *VideoIndexerActivities) Fail(ctx task.ActivityContext) (any, error) {
 		return nil, err
 	}
 	_, err = a.update(ctx.Context(), input.JobID, JobStatusFailed, func(doc *JobDocument) {
-		doc.Error = &APIErrorResponse{Code: "durable_execution_failed", Message: "durable Video Indexer execution failed", Retryable: false}
+		if doc.Error == nil {
+			doc.Error = &APIErrorResponse{Code: "durable_execution_failed", Message: "durable Video Indexer execution failed", Retryable: false}
+		}
 	})
 	return nil, err
 }

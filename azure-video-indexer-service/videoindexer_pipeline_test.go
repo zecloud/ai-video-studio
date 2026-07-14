@@ -156,7 +156,7 @@ func TestAzureVideoIndexerPipelinePersistsVideoIDAndSkipsDelete(t *testing.T) {
 		mu.Unlock()
 		t.Fatal("unexpected video delete call")
 	}
-	if got := uploadQuery.Get("language"); got != "auto" {
+	if got := uploadQuery.Get("language"); got != "" {
 		mu.Unlock()
 		t.Fatalf("unexpected upload language: %q", got)
 	}

@@ -99,7 +99,7 @@ func TestVideoIndexerClient_UploadURLQueryEncoding(t *testing.T) {
 			_, _ = io.WriteString(w, `{"accessToken":"vi-account-token"}`)
 		case strings.HasSuffix(r.URL.Path, "/Videos") && r.Method == http.MethodPost:
 			gotUpload = r.URL.Query()
-			if got := gotUpload.Get("language"); got != "auto" {
+			if got := gotUpload.Get("language"); got != "" {
 				t.Fatalf("unexpected language: %q", got)
 			}
 			if got := gotUpload.Get("name"); got != "clip my video-.mp4" {
@@ -129,6 +129,50 @@ func TestVideoIndexerClient_UploadURLQueryEncoding(t *testing.T) {
 	}
 	if videoID != "video-123" {
 		t.Fatalf("unexpected video id: %q", videoID)
+	}
+}
+
+func TestVideoIndexerClient_FindVideoByExternalIDRequiresExactMatch(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "selects matching result instead of first result",
+			body: `{"results":[{"id":"stale-video","externalId":"old-job"},{"id":"matching-video","externalId":"job-123"}]}`,
+			want: "matching-video",
+		},
+		{
+			name: "ignores unfiltered results",
+			body: `{"results":[{"id":"stale-video","externalId":"old-job"}]}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.Contains(r.URL.Path, "/generateAccessToken"):
+					_, _ = io.WriteString(w, `{"accessToken":"vi-account-token"}`)
+				case strings.HasSuffix(r.URL.Path, "/Videos") && r.Method == http.MethodGet:
+					if got := r.URL.Query().Get("externalId"); got != "job-123" {
+						t.Fatalf("unexpected externalId: %q", got)
+					}
+					_, _ = io.WriteString(w, tt.body)
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer server.Close()
+
+			got, err := newTestVideoIndexerClient(t, server).FindVideoByExternalID(context.Background(), "job-123")
+			if err != nil {
+				t.Fatalf("find video: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("video id = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -227,7 +271,7 @@ func TestVideoIndexerClient_PollVideoIndexFailed(t *testing.T) {
 			_, _ = io.WriteString(w, `{"accessToken":"vi-account-token"}`)
 		case strings.Contains(r.URL.Path, "/Index"):
 			w.WriteHeader(http.StatusOK)
-			_, _ = io.WriteString(w, `{"id":"video-123","state":"Failed"}`)
+			_, _ = io.WriteString(w, `{"id":"video-123","state":"Failed","error":{"code":"InvalidInput","message":"The source video cannot be read"}}`)
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -243,6 +287,16 @@ func TestVideoIndexerClient_PollVideoIndexFailed(t *testing.T) {
 	var svcErr *ServiceError
 	if !errors.As(err, &svcErr) || svcErr.Code != "video_index_failed" || svcErr.Status != http.StatusUnprocessableEntity {
 		t.Fatalf("unexpected error: %#v", err)
+	}
+	if !strings.Contains(svcErr.Message, "InvalidInput") || !strings.Contains(svcErr.Message, "source video cannot be read") {
+		t.Fatalf("failure details were not preserved: %q", svcErr.Message)
+	}
+}
+
+func TestVideoIndexerFailureMessagePreservesUnknownPayload(t *testing.T) {
+	message := videoIndexerFailureMessage(json.RawMessage(`{"state":"Failed","failureReason":"source unavailable","traceId":"trace-123"}`))
+	if !strings.Contains(message, "failureReason") || !strings.Contains(message, "source unavailable") {
+		t.Fatalf("unknown failure payload was not preserved: %q", message)
 	}
 }
 

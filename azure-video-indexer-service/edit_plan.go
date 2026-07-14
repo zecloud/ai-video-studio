@@ -1,8 +1,8 @@
 package main
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,9 +31,9 @@ type EditPlan struct {
 	AssetID       string           `json:"assetId" jsonschema:"Stable asset id for the source video"`
 	Title         string           `json:"title" jsonschema:"Plan title"`
 	Summary       string           `json:"summary" jsonschema:"Plan summary"`
-	Highlights    []Highlight      `json:"highlights,omitempty" jsonschema:"Priority highlight candidates"`
-	Suggestions   []EditSuggestion `json:"suggestions,omitempty" jsonschema:"Edit suggestions with ordered clips"`
-	SourceRefs    []SourceRef      `json:"sourceRefs,omitempty" jsonschema:"Optional plan-level source refs"`
+	Highlights    []Highlight      `json:"highlights" jsonschema:"Priority highlight candidates; use an empty array when none exist"`
+	Suggestions   []EditSuggestion `json:"suggestions" jsonschema:"Edit suggestions with ordered clips; use an empty array when none exist"`
+	SourceRefs    []SourceRef      `json:"sourceRefs" jsonschema:"Plan-level source refs; use an empty array when none exist"`
 }
 
 type Highlight struct {
@@ -54,7 +54,7 @@ type EditSuggestion struct {
 	EndMs      int64           `json:"endMs" jsonschema:"Exclusive end time in milliseconds"`
 	Score      float64         `json:"score" jsonschema:"Confidence or priority score from 0 to 1"`
 	SourceRefs []SourceRef     `json:"sourceRefs" jsonschema:"Grounding citations for the suggestion"`
-	Clips      []SuggestedClip `json:"clips,omitempty" jsonschema:"Ordered clip candidates for this suggestion"`
+	Clips      []SuggestedClip `json:"clips" jsonschema:"Ordered clip candidates for this suggestion; use an empty array when none exist"`
 }
 
 type SuggestedClip struct {
@@ -71,10 +71,10 @@ type SourceRef struct {
 	RefID         string `json:"refId" jsonschema:"Stable source fact id"`
 	SourceKind    string `json:"sourceKind" jsonschema:"Source family such as video_indexer or ffmpeg"`
 	SourceAssetID string `json:"sourceAssetId" jsonschema:"Stable asset id for the source fact"`
-	FactKind      string `json:"factKind,omitempty" jsonschema:"Normalized fact kind"`
-	StartMs       int64  `json:"startMs,omitempty" jsonschema:"Inclusive fact start time in milliseconds"`
-	EndMs         int64  `json:"endMs,omitempty" jsonschema:"Exclusive fact end time in milliseconds"`
-	Text          string `json:"text,omitempty" jsonschema:"Optional supporting text"`
+	FactKind      string `json:"factKind" jsonschema:"Normalized fact kind; use an empty string when unavailable"`
+	StartMs       int64  `json:"startMs" jsonschema:"Inclusive fact start time in milliseconds; use zero when not time-bound"`
+	EndMs         int64  `json:"endMs" jsonschema:"Exclusive fact end time in milliseconds; use zero when not time-bound"`
+	Text          string `json:"text" jsonschema:"Supporting text; use an empty string when unavailable"`
 }
 
 type editPlannerEvidencePacket struct {
@@ -993,7 +993,6 @@ func validateEditPlan(plan EditPlan, index editPlannerEvidenceIndex) (EditPlan, 
 		problems = append(problems, fmt.Sprintf("suggestions must not exceed %d items", maxEditPlanSuggestions))
 	}
 	var totalClips int
-	var totalClipDuration int64
 	for hi, highlight := range plan.Highlights {
 		if err := validateHighlight(&highlight, index, hi); err != nil {
 			problems = append(problems, err.Error())
@@ -1005,21 +1004,45 @@ func validateEditPlan(plan EditPlan, index editPlannerEvidenceIndex) (EditPlan, 
 			problems = append(problems, err.Error())
 		}
 		totalClips += len(suggestion.Clips)
-		for _, clip := range suggestion.Clips {
-			totalClipDuration += clip.EndMs - clip.StartMs
+		limit := min64(index.DurationMs, int64(maxEditPlanTotalClipDuration/time.Millisecond))
+		if duration := mergedClipDuration(suggestion.Clips); duration > limit {
+			problems = append(problems, fmt.Sprintf("suggestions[%d] total clip duration %dms exceeds limit %dms", si, duration, limit))
 		}
 		plan.Suggestions[si] = suggestion
 	}
 	if totalClips > maxEditPlanClips {
 		problems = append(problems, fmt.Sprintf("clips must not exceed %d items", maxEditPlanClips))
 	}
-	if limit := min64(index.DurationMs, int64(maxEditPlanTotalClipDuration/time.Millisecond)); totalClipDuration > limit {
-		problems = append(problems, fmt.Sprintf("total clip duration %dms exceeds limit %dms", totalClipDuration, limit))
-	}
 	if len(problems) > 0 {
 		return EditPlan{}, &editPlannerValidationError{Problems: problems}
 	}
 	return plan, nil
+}
+
+func mergedClipDuration(clips []SuggestedClip) int64 {
+	if len(clips) == 0 {
+		return 0
+	}
+	intervals := append([]SuggestedClip(nil), clips...)
+	sort.Slice(intervals, func(i, j int) bool {
+		if intervals[i].StartMs == intervals[j].StartMs {
+			return intervals[i].EndMs < intervals[j].EndMs
+		}
+		return intervals[i].StartMs < intervals[j].StartMs
+	})
+	var total int64
+	start, end := intervals[0].StartMs, intervals[0].EndMs
+	for _, clip := range intervals[1:] {
+		if clip.StartMs <= end {
+			if clip.EndMs > end {
+				end = clip.EndMs
+			}
+			continue
+		}
+		total += end - start
+		start, end = clip.StartMs, clip.EndMs
+	}
+	return total + end - start
 }
 
 func validateHighlight(highlight *Highlight, index editPlannerEvidenceIndex, idx int) error {

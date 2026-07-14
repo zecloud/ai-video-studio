@@ -1,16 +1,16 @@
 targetScope = 'resourceGroup'
 
-param accountName string
+param schedulerName string
 param principalId string
 param roleDefinitionId string
 
-resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
-  name: accountName
+resource scheduler 'Microsoft.DurableTask/schedulers@2025-11-01' existing = {
+  name: schedulerName
 }
 
 resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(account.id, principalId, roleDefinitionId)
-  scope: account
+  name: guid(scheduler.id, principalId, roleDefinitionId)
+  scope: scheduler
   properties: {
     principalId: principalId
     principalType: 'ServicePrincipal'

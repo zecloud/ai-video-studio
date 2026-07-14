@@ -152,8 +152,9 @@ type videoIndexerIndexResponse struct {
 
 type videoIndexerVideoListResponse struct {
 	Results []struct {
-		ID      string `json:"id"`
-		VideoID string `json:"videoId"`
+		ID         string `json:"id"`
+		VideoID    string `json:"videoId"`
+		ExternalID string `json:"externalId"`
 	} `json:"results"`
 }
 type VideoIndexData interface {
@@ -355,14 +356,17 @@ func (c *VideoIndexerClient) FindVideoByExternalID(ctx context.Context, external
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRequestBodyBytes)).Decode(&decoded); err != nil {
 		return "", &ServiceError{Status: http.StatusInternalServerError, Code: "video_lookup_decode_failed", Message: redactURLsInText(err.Error()), Retryable: false}
 	}
-	if len(decoded.Results) == 0 {
-		return "", nil
+	for _, result := range decoded.Results {
+		if result.ExternalID != externalID {
+			continue
+		}
+		videoID := firstNonEmpty(result.ID, result.VideoID)
+		if videoID == "" {
+			return "", newServiceError(http.StatusInternalServerError, "video_lookup_missing_video_id", "Video Indexer video lookup returned an empty video id", false)
+		}
+		return videoID, nil
 	}
-	videoID := firstNonEmpty(decoded.Results[0].ID, decoded.Results[0].VideoID)
-	if videoID == "" {
-		return "", newServiceError(http.StatusInternalServerError, "video_lookup_missing_video_id", "Video Indexer video lookup returned an empty video id", false)
-	}
-	return videoID, nil
+	return "", nil
 }
 func (c *VideoIndexerClient) UploadVideoURL(ctx context.Context, videoURL, videoName, externalID string) (videoID string, err error) {
 	account, err := c.ResolveAccount(ctx)
@@ -460,13 +464,14 @@ func (c *VideoIndexerClient) PollVideoIndex(ctx context.Context, videoID string,
 			case "processed":
 				return index, nil
 			case "failed", "canceled", "cancelled":
-				err = newServiceError(http.StatusUnprocessableEntity, "video_index_failed", fmt.Sprintf("video indexer reported terminal state %s", index.State()), false)
+				err = videoIndexerTerminalError(index)
 				return nil, err
 			default:
 				if waitErr := c.wait(ctx, c.nextDelay(resp, attempt)); waitErr != nil {
 					err = waitErr
 					return nil, err
 				}
+
 				attempt++
 				continue
 			}
@@ -489,6 +494,123 @@ func (c *VideoIndexerClient) PollVideoIndex(ctx context.Context, videoID string,
 	}
 }
 
+func videoIndexerTerminalError(index VideoIndexData) error {
+	state := "unknown"
+	var raw json.RawMessage
+	if index != nil && strings.TrimSpace(index.State()) != "" {
+		state = index.State()
+	}
+	if index != nil {
+		raw = index.RawJSON()
+	}
+	message := videoIndexerFailureMessage(raw)
+	if message == "" {
+		message = fmt.Sprintf("Video Indexer reported terminal state %s", state)
+	} else {
+		message = fmt.Sprintf("Video Indexer reported terminal state %s: %s", state, message)
+	}
+	return newServiceError(http.StatusUnprocessableEntity, "video_index_failed", message, false)
+}
+
+func videoIndexerFailureMessage(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var payload struct {
+		Error        json.RawMessage `json:"error"`
+		Errors       json.RawMessage `json:"errors"`
+		Message      string          `json:"message"`
+		ErrorMessage string          `json:"errorMessage"`
+		ErrorCode    string          `json:"errorCode"`
+	}
+	if json.Unmarshal(raw, &payload) != nil {
+		return ""
+	}
+	parts := make([]string, 0, 2)
+	for _, value := range []string{payload.ErrorCode, payload.ErrorMessage, payload.Message, videoIndexerFailureValue(payload.Error), videoIndexerFailureValue(payload.Errors)} {
+		value = strings.TrimSpace(redactURLsInText(value))
+		if value != "" && !videoIndexerContainsString(parts, value) {
+			parts = append(parts, value)
+		}
+	}
+	if len(parts) == 0 {
+		// Preserve an opaque failure payload in a bounded, URL-redacted form. Video
+		// Indexer has returned several failure shapes over time, and hiding the
+		// payload makes production failures impossible to diagnose.
+		compact := strings.TrimSpace(redactURLsInText(string(raw)))
+		if len(compact) > 1000 {
+			compact = compact[:1000] + "..."
+		}
+		return compact
+	}
+	return strings.Join(parts, ": ")
+}
+
+func videoIndexerFailureValue(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return ""
+	}
+	return videoIndexerFailureValueFromAny(value)
+}
+
+func videoIndexerFailureValueFromAny(value any) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		parts := make([]string, 0, 2)
+		for _, key := range []string{"errorType", "errorCode", "code", "errorMessage", "message", "details"} {
+			if nested, ok := typed[key]; ok {
+				if text := videoIndexerFailureValueFromAny(nested); text != "" && !videoIndexerContainsString(parts, text) {
+					parts = append(parts, text)
+				}
+			}
+		}
+		return strings.Join(parts, ": ")
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := videoIndexerFailureValueFromAny(item); text != "" && !videoIndexerContainsString(parts, text) {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "; ")
+	case string:
+		return strings.TrimSpace(typed)
+	default:
+		return ""
+	}
+}
+
+func videoIndexerContainsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func videoIndexerNestedMessage(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var nested struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+		Details string `json:"details"`
+	}
+	if json.Unmarshal(raw, &nested) != nil {
+		return ""
+	}
+	if nested.Code != "" && nested.Message != "" {
+		return nested.Code + ": " + nested.Message
+	}
+	return firstNonEmpty(nested.Message, nested.Details, nested.Code)
+}
+
 func (c *VideoIndexerClient) getVideoIndex(ctx context.Context, account ResolvedVideoIndexerAccount, videoID, accessToken string) (VideoIndexData, *http.Response, error) {
 	indexURL := fmt.Sprintf("%s/%s/Accounts/%s/Videos/%s/Index?%s",
 		c.cfg.APIBaseURL,
@@ -497,7 +619,6 @@ func (c *VideoIndexerClient) getVideoIndex(ctx context.Context, account Resolved
 		url.PathEscape(videoID),
 		c.encodeQuery(map[string]string{
 			"accessToken": accessToken,
-			"language":    "auto",
 		}),
 	)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, indexURL, nil)
@@ -537,7 +658,6 @@ func (c *VideoIndexerClient) buildVideoURL(account ResolvedVideoIndexerAccount, 
 	values.Set("accessToken", accessToken)
 	values.Set("name", safeVideoName(videoName))
 	values.Set("videoUrl", videoURL)
-	values.Set("language", "auto")
 	values.Set("privacy", "private")
 	values.Set("preventDuplicates", "true")
 	if externalID != "" {

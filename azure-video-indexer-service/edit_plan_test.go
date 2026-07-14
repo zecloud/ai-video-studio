@@ -2,11 +2,72 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/microsoft/agent-framework-go/agent/format/jsonformat"
 )
+
+func TestEditPlanStructuredOutputSchemaRequiresEveryProperty(t *testing.T) {
+	format, err := jsonformat.For[EditPlan]()
+	if err != nil {
+		t.Fatalf("generate EditPlan response format: %v", err)
+	}
+	schema, err := json.Marshal(format.Schema)
+	if err != nil {
+		t.Fatalf("marshal EditPlan schema: %v", err)
+	}
+
+	var root map[string]any
+	if err := json.Unmarshal(schema, &root); err != nil {
+		t.Fatalf("decode EditPlan schema: %v", err)
+	}
+	assertStrictObjectSchemas(t, root, "EditPlan")
+}
+
+func assertStrictObjectSchemas(t *testing.T, node any, path string) {
+	t.Helper()
+	switch value := node.(type) {
+	case map[string]any:
+		properties, hasProperties := value["properties"].(map[string]any)
+		if hasProperties {
+			if additional, ok := value["additionalProperties"].(bool); !ok || additional {
+				t.Errorf("%s must set additionalProperties to false", path)
+			}
+			requiredValues, ok := value["required"].([]any)
+			if !ok {
+				t.Fatalf("%s has properties but no required array", path)
+			}
+			required := make(map[string]struct{}, len(requiredValues))
+			for _, item := range requiredValues {
+				name, ok := item.(string)
+				if !ok {
+					t.Fatalf("%s has a non-string required entry: %#v", path, item)
+				}
+				required[name] = struct{}{}
+			}
+			for name := range properties {
+				if _, ok := required[name]; !ok {
+					t.Errorf("%s is missing required property %q", path, name)
+				}
+			}
+			if len(required) != len(properties) {
+				t.Errorf("%s requires %d properties but defines %d", path, len(required), len(properties))
+			}
+		}
+		for name, child := range value {
+			assertStrictObjectSchemas(t, child, fmt.Sprintf("%s.%s", path, name))
+		}
+	case []any:
+		for i, child := range value {
+			assertStrictObjectSchemas(t, child, fmt.Sprintf("%s[%d]", path, i))
+		}
+	}
+}
 
 func TestBuildEditPlannerPromptRejectsOversizedPacket(t *testing.T) {
 	result := normalizedTestResult(t)
@@ -67,6 +128,76 @@ func TestValidateEditPlanDedupesDuplicateClips(t *testing.T) {
 	if len(validated.Suggestions[0].Clips) != 1 {
 		t.Fatalf("expected duplicate clip to be removed, got %#v", validated.Suggestions[0].Clips)
 	}
+}
+
+func TestValidateEditPlanAllowsIndependentSuggestionsBeyondSourceDurationInAggregate(t *testing.T) {
+	_, index := normalizedEvidenceIndex(t)
+	plan := testEditPlan("video-123", "item-001")
+	alternative := plan.Suggestions[0]
+	alternative.ID = "suggestion-2"
+	alternative.Title = "Alternative cut"
+	alternative.Clips[0].ID = "clip-2"
+	alternative.Clips[0].Title = "Alternative first cut"
+	plan.Suggestions = append(plan.Suggestions, alternative)
+
+	validated, err := validateEditPlan(plan, index)
+	if err != nil {
+		t.Fatalf("validate independent suggestions: %v", err)
+	}
+	if len(validated.Suggestions) != 2 {
+		t.Fatalf("expected two independent suggestions, got %#v", validated.Suggestions)
+	}
+}
+
+func TestValidateEditPlanRejectsSuggestionBeyondDurationLimit(t *testing.T) {
+	_, index := normalizedEvidenceIndex(t)
+	index.DurationMs = int64(30 * time.Minute / time.Millisecond)
+	plan := testEditPlan("video-123", "item-001")
+	plan.Suggestions[0].EndMs = int64(21 * time.Minute / time.Millisecond)
+	base := plan.Suggestions[0].Clips[0]
+	plan.Suggestions[0].Clips = []SuggestedClip{
+		clipWithRange(base, "clip-1", 0, 10*time.Minute),
+		clipWithRange(base, "clip-2", 10*time.Minute, 20*time.Minute),
+		clipWithRange(base, "clip-3", 20*time.Minute, 21*time.Minute),
+	}
+
+	_, err := validateEditPlan(plan, index)
+	if err == nil || !strings.Contains(err.Error(), "suggestions[0] total clip duration 1260000ms exceeds limit 1200000ms") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEditPlanCountsOverlappingClipsOnce(t *testing.T) {
+	_, index := normalizedEvidenceIndex(t)
+	plan := testEditPlan("video-123", "item-001")
+	base := plan.Suggestions[0].Clips[0]
+	plan.Suggestions[0].Clips = []SuggestedClip{
+		clipWithRange(base, "clip-1", 0, 3*time.Second),
+		clipWithRange(base, "clip-2", time.Second, 4*time.Second),
+	}
+
+	if _, err := validateEditPlan(plan, index); err != nil {
+		t.Fatalf("validate overlapping clips: %v", err)
+	}
+}
+
+func TestMergedClipDurationCountsOverlapsOnce(t *testing.T) {
+	clips := []SuggestedClip{
+		{StartMs: 0, EndMs: 10_000},
+		{StartMs: 5_000, EndMs: 15_000},
+		{StartMs: 20_000, EndMs: 22_000},
+	}
+	if got := mergedClipDuration(clips); got != 17_000 {
+		t.Fatalf("merged clip duration = %d, want 17000", got)
+	}
+}
+
+func clipWithRange(base SuggestedClip, id string, start, end time.Duration) SuggestedClip {
+	base.ID = id
+	base.Title = id
+	base.StartMs = int64(start / time.Millisecond)
+	base.EndMs = int64(end / time.Millisecond)
+	return base
 }
 
 func TestPipelinePreservesNormalizedResultOnPlannerFailure(t *testing.T) {

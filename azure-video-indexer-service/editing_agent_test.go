@@ -89,6 +89,9 @@ func TestNewEditPlannerBuildsFoundryRunnerWithDefaults(t *testing.T) {
 	if !strings.Contains(gotInstructions, editPlannerInstructionsVersion) {
 		t.Fatalf("instructions missing version marker: %q", gotInstructions)
 	}
+	if !strings.Contains(gotInstructions, "each suggestion as an independent edit alternative") {
+		t.Fatalf("instructions missing per-suggestion duration rule: %q", gotInstructions)
+	}
 
 	got, err := planner.Plan(context.Background(), "draft an edit plan")
 	if err != nil {

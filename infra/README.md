@@ -22,7 +22,8 @@ The worker depends on the experimental `durabletask-go` DTS backend pinned to im
 - API and worker Container Apps using the same immutable image with `SERVICE_ROLE=api` and `SERVICE_ROLE=worker`;
 - a serverless DTS scheduler and task hub, the two user-assigned identities, and their scoped RBAC assignments;
 - a Storage Account with `video-indexer-staging` and `video-indexer-jobs` containers;
-- an Azure AI Video Indexer account with a system-assigned identity, connected to the same Standard StorageV2 account used for staging and jobs by the Container Apps and to the existing Foundry/Azure OpenAI account;
+- an Azure AI Video Indexer account with a system-assigned identity, connected to the same Standard StorageV2 account used for staging and jobs by the Container Apps and to a Foundry account provisioned in this resource group;
+- a Foundry account, project, and `gpt-5.4` model deployment provisioned in the target resource group;
 - Log Analytics and Application Insights;
 - an Azure Container Registry Basic dans le resource group cible ;
 - ACR Pull, Storage Blob Data Contributor, Foundry/OpenAI User, Video Indexer, and the built-in `Durable Task Data Contributor` role assignments scoped to the DTS scheduler. Bicep grants the Video Indexer system identity `Storage Blob Data Contributor` on the shared application storage account and `Cognitive Services OpenAI User` on the connected Foundry/Azure OpenAI account.
@@ -42,8 +43,8 @@ az bicep install
 Le deploiement doit utiliser une identite ayant :
 
 - `Contributor` sur le resource group cible ;
-- `User Access Administrator` ou `Owner` sur le resource group cible et sur le scope Foundry s'il est externe, car Bicep cree des affectations RBAC ;
-- Acces de lecture aux ressources existantes passees au template. Le compte Video Indexer est cree dans le resource group cible, utilise le Storage Account de la stack et est connecte au compte Foundry/Azure OpenAI.
+- `User Access Administrator` ou `Owner` sur le resource group cible, car Bicep cree des affectations RBAC ;
+- Acces de lecture aux ressources existantes passees au template. Le compte Video Indexer est cree dans le resource group cible, utilise le Storage Account de la stack et est connecte au compte Foundry/Azure OpenAI cree par le meme template.
 
 Verifier avant le deploiement :
 
@@ -51,7 +52,7 @@ Verifier avant le deploiement :
 az group show --name "<RESOURCE_GROUP>"
 az containerapp env show --name "<CONTAINER_APPS_ENV>" --resource-group "<RESOURCE_GROUP>"
 az acr show --name "<ACR_NAME>" --resource-group "<RESOURCE_GROUP>"
-az cognitiveservices account show --name "<FOUNDRY_ACCOUNT_NAME>" --resource-group "<FOUNDRY_ACCOUNT_RESOURCE_GROUP>"
+az cognitiveservices account show --name "<FOUNDRY_ACCOUNT_NAME>" --resource-group "<RESOURCE_GROUP>"
 ```
 
 Le compte Video Indexer est cree par `main.bicep`. Verifier son existence apres le deploiement avec :
@@ -74,7 +75,7 @@ az role definition list \
 
 ### Connexion Video Indexer et Azure OpenAI
 
-`main.bicep` utilise l'API `Microsoft.VideoIndexer/accounts@2025-04-01` pour relier directement le compte Video Indexer au compte Foundry/Azure OpenAI fourni par `FOUNDRY_ACCOUNT_NAME`. La connexion est faite avec l'identite system-assigned du compte Video Indexer, sans cle OpenAI. Bicep lui attribue `Cognitive Services OpenAI User` sur le compte Foundry/Azure OpenAI.
+`main.bicep` cree un compte Foundry `AIServices`, un projet et le deploiement de modele `gpt-5.4` (version Azure `2026-03-05`) dans le resource group cible. Il cree aussi un compte Azure OpenAI dedie (`videoIndexerOpenAIAccountName`) pour la connexion native Video Indexer : l'API `Microsoft.VideoIndexer/accounts@2025-04-01` le relie au compte Video Indexer avec l'identite system-assigned de ce dernier, sans cle OpenAI. Bicep attribue `Cognitive Services OpenAI User` a cette identite sur le compte Azure OpenAI.
 
 Cette connexion active les capacites natives Video Indexer qui utilisent Azure OpenAI. Elle ne remplace pas l'acces du worker : celui-ci conserve sa propre affectation `Cognitive Services OpenAI User` et utilise `FOUNDRY_PROJECT_ENDPOINT` avec `FOUNDRY_DEPLOYMENT_NAME` pour le planning d'edition. Microsoft recommande de placer Video Indexer et Azure OpenAI dans la meme region.
 
@@ -120,8 +121,7 @@ az deployment group validate \
     containerAppsEnvironmentId="$CONTAINER_APPS_ENVIRONMENT_ID" \
     containerRegistryName="<ACR_NAME>" \
     foundryAccountName="<FOUNDRY_ACCOUNT_NAME>" \
-    foundryProjectEndpoint="<FOUNDRY_PROJECT_ENDPOINT>" \
-    foundryAccountResourceGroupName="<FOUNDRY_ACCOUNT_RESOURCE_GROUP>" \
+    foundryProjectName="video-indexer-project" \
     videoIndexerAccountName="<VIDEO_INDEXER_ACCOUNT_NAME>" \
     videoIndexerRoleDefinitionResourceId="<VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID>" \
     containerImageTag="local" \
@@ -135,8 +135,7 @@ az deployment group create \
     containerAppsEnvironmentId="$CONTAINER_APPS_ENVIRONMENT_ID" \
     containerRegistryName="<ACR_NAME>" \
     foundryAccountName="<FOUNDRY_ACCOUNT_NAME>" \
-    foundryProjectEndpoint="<FOUNDRY_PROJECT_ENDPOINT>" \
-    foundryAccountResourceGroupName="<FOUNDRY_ACCOUNT_RESOURCE_GROUP>" \
+    foundryProjectName="video-indexer-project" \
     videoIndexerAccountName="<VIDEO_INDEXER_ACCOUNT_NAME>" \
     videoIndexerRoleDefinitionResourceId="<VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID>" \
     containerImageTag="local" \
@@ -168,25 +167,16 @@ Cette cle n'est pas une cle Azure Video Indexer : elle protege l'API privee du n
 | `AZURE_LOCATION` | Region Azure de la stack | `westeurope` |
 | `AZURE_CONTAINER_APPS_ENV` | Nom de l'environnement Container Apps existant | `cae-ai-video-studio` |
 | `ACR_NAME` | Nom facultatif de l'ACR cree par Bicep dans le resource group cible. Si la variable n'est pas definie, le workflow et Bicep utilisent `acrvideostudio`. | `acrvideostudio` |
-| `FOUNDRY_ACCOUNT_NAME` | Nom du compte Foundry/Azure OpenAI existant | `oai-video-studio` |
-| `FOUNDRY_PROJECT_ENDPOINT` | Endpoint du projet Foundry, pas l'endpoint generique du compte | `https://<resource>.services.ai.azure.com/api/projects/<project>` |
+| `FOUNDRY_ACCOUNT_NAME` | Nom du compte Foundry/Azure OpenAI cree par Bicep dans le resource group cible. Il doit etre globalement disponible comme nom de sous-domaine. | `aivideoindexerfoundry` |
+| `FOUNDRY_PROJECT_NAME` | Nom du projet Foundry cree par Bicep | `video-indexer-project` |
 | `VIDEO_INDEXER_ACCOUNT_NAME` | Nom facultatif du compte Azure AI Video Indexer a creer dans le resource group cible. Si la variable n'est pas definie, le workflow et Bicep utilisent `videoindexer-prod`. | `videoindexer-prod` |
 | `VIDEO_INDEXER_ROLE_DEFINITION_RESOURCE_ID` | Variable facultative permettant de forcer le Resource ID du role Video Indexer. Si elle est absente, le workflow le recherche apres la connexion Azure et echoue si la recherche ne renvoie pas exactement un role. | `/subscriptions/<id>/providers/Microsoft.Authorization/roleDefinitions/<guid>` |
-
-### Variables optionnelles
-
-Ces variables ne sont necessaires que si Foundry est dans un autre resource group ou une autre souscription :
-
-| Nom | Valeur par defaut |
-|---|---|
-| `FOUNDRY_ACCOUNT_RESOURCE_GROUP` | `AZURE_RESOURCE_GROUP` |
-| `FOUNDRY_ACCOUNT_SUBSCRIPTION_ID` | `AZURE_SUBSCRIPTION_ID` |
 
 Le workflow valide automatiquement les valeurs obligatoires avant le login Azure et echoue si l'une d'elles est vide.
 
 ## Creer l'identite OIDC GitHub
 
-Creer une application Entra dediee au repository, puis une identite federated credential limitee a la branche `main` :
+Creer une application Entra dediee au repository, puis une federated credential limitee a l'environnement GitHub `production`. Le workflow utilise cet environnement, donc le sujet OIDC n'est pas celui d'une branche :
 
 ```bash
 az ad app create --display-name "github-ai-video-studio-deploy"
@@ -197,7 +187,7 @@ az ad sp create --id "$APP_ID"
 Creer ensuite une federated credential dans l'application avec :
 
 - issuer : `https://token.actions.githubusercontent.com` ;
-- subject : `repo:<OWNER>/<REPO>:ref:refs/heads/main` ;
+- subject : `repo:<OWNER>/<REPO>:environment:production` ;
 - audience : `api://AzureADTokenExchange`.
 
 Avec Azure CLI, la credential peut etre creee ainsi :
@@ -205,8 +195,10 @@ Avec Azure CLI, la credential peut etre creee ainsi :
 ```bash
 az ad app federated-credential create \
   --id "$APP_ID" \
-  --parameters '{"name":"github-main","issuer":"https://token.actions.githubusercontent.com","subject":"repo:<OWNER>/<REPO>:ref:refs/heads/main","audiences":["api://AzureADTokenExchange"]}'
+  --parameters '{"name":"github-production","issuer":"https://token.actions.githubusercontent.com","subject":"repo:<OWNER>/<REPO>:environment:production","audiences":["api://AzureADTokenExchange"]}'
 ```
+
+Pour ce depot, le sujet attendu est `repo:zecloud/ai-video-studio:environment:production`. Il doit correspondre exactement au sujet de la federated credential, avec le meme issuer et la meme audience. Une erreur `AADSTS700213` indique que cette credential est absente ou ne correspond pas a ces valeurs.
 
 L'application doit recevoir `Contributor` sur le resource group cible et `User Access Administrator` (ou `Owner`) sur les scopes où les modules Bicep creent des role assignments. Utiliser des permissions plus larges uniquement si la topologie de ressources l'exige.
 
@@ -311,7 +303,7 @@ gh variable set AZURE_CONTAINER_APPS_ENV --env production --body "<CONTAINER_APP
 # Facultatif : omettre cette variable pour utiliser la valeur par defaut.
 gh variable set ACR_NAME --env production --body "<ACR_NAME>"
 gh variable set FOUNDRY_ACCOUNT_NAME --env production --body "<FOUNDRY_ACCOUNT_NAME>"
-gh variable set FOUNDRY_PROJECT_ENDPOINT --env production --body "<FOUNDRY_PROJECT_ENDPOINT>"
+gh variable set FOUNDRY_PROJECT_NAME --env production --body "video-indexer-project"
 # Facultatif : omettre cette variable pour utiliser la valeur par defaut.
 gh variable set VIDEO_INDEXER_ACCOUNT_NAME --env production --body "<VIDEO_INDEXER_ACCOUNT_NAME>"
 # Facultatif : le workflow peut rechercher automatiquement l'unique role contenant

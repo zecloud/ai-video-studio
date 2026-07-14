@@ -67,8 +67,6 @@ github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWE
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/microsoft/agent-framework-go v0.0.0-20260710122455-75d0a647f739 h1:nMIMwe9VdLYOgc3ntGit/pPnZORS7BVWqwjsNq6QNnA=
 github.com/microsoft/agent-framework-go v0.0.0-20260710122455-75d0a647f739/go.mod h1:pIPFOh/NtXQuvm03yvGjxBVzFCC7kcE18eR8kWg2+XE=
-github.com/microsoft/durabletask-go v0.6.1-0.20260314024439-9fa0fcd1a58c h1:DK4XS9WjP7wSEaUvuVYL8pPIdOciaJaxSDUU3cV+54o=
-github.com/microsoft/durabletask-go v0.6.1-0.20260314024439-9fa0fcd1a58c/go.mod h1:Ps8MbaXGJdT9MKrfl3Co5s0xY1MLgjNGAWi7DM/gVks=
 github.com/openai/openai-go/v3 v3.41.1 h1:c7vLxUL4I1GjHcHoQvb/5qpBHEt3m7ZJIb8lFWIRkfc=
 github.com/openai/openai-go/v3 v3.41.1/go.mod h1:cdufnVK14cWcT9qA1rRtrXx4FTRsgbDPW7Ia7SS5cZo=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=
@@ -110,6 +108,8 @@ github.com/wailsapp/wails/v3 v3.0.0-alpha2.112 h1:ksoeCCPlDJqpHM4dB7Zwl/8tGYC+DI
 github.com/wailsapp/wails/v3 v3.0.0-alpha2.112/go.mod h1:wrdvmyeCsB/K3YqJDoH8E3MwcN8NXAMnEFaDTW46w60=
 github.com/wailsapp/wails/webview2 v1.0.27 h1:wjgAi/I8BBZ7kUGU8um3XF3ILEfzr96Q2Q1G4GPjMns=
 github.com/wailsapp/wails/webview2 v1.0.27/go.mod h1:zdM4jcO1IaC61RiJL5F1BzgoqBHFIdacz8gPr5exr0o=
+github.com/zecloud/durabletask-go v0.0.0-20260713124818-35238d5ec4c1 h1:I5PtedkzowrLN6aorBgHTd4kbhPi2HvMmdpi2F22W9U=
+github.com/zecloud/durabletask-go v0.0.0-20260713124818-35238d5ec4c1/go.mod h1:Ps8MbaXGJdT9MKrfl3Co5s0xY1MLgjNGAWi7DM/gVks=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
 go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbEe3ZiIhN7Y=
 go.opentelemetry.io/otel v1.44.0 h1:JjwHmHpA4iZ3wBxluu2fbbE7j4kqlE8jXyAyPXH7HqU=
