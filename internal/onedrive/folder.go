@@ -31,8 +31,8 @@ type graphChildrenResponse struct {
 
 // ListFolderItems lists all files and folders at the given OneDrive path.
 // If the client is configured for app-folder access (Destination.Mode == "app_folder"),
-// the path is resolved relative to /me/drive/special/approot. A configured
-// destination prefix is stripped only when it is an exact path prefix.
+// the path is resolved relative to /me/drive/special/approot. The configured
+// /Apps/<app-name> prefix is stripped only when it matches whole path segments.
 // Otherwise it uses /me/drive/root:.
 func (c *Client) ListFolderItems(ctx context.Context, folderPath string) ([]DriveItem, error) {
 	if c == nil {
@@ -48,7 +48,7 @@ func (c *Client) ListFolderItems(ctx context.Context, folderPath string) ([]Driv
 
 	var currentURL string
 	if c.Destination.Mode == "app_folder" {
-		folderPath = appFolderRelativePath(folderPath)
+		folderPath = appFolderRelativePath(folderPath, c.Destination.Path)
 		folderPath = strings.Trim(folderPath, "/")
 		if folderPath == "" {
 			// Root of app folder: no colon segment needed, just list children.
@@ -75,10 +75,14 @@ func (c *Client) ListFolderItems(ctx context.Context, folderPath string) ([]Driv
 	return items, nil
 }
 
-func appFolderRelativePath(folderPath string) string {
-	parts := strings.Split(strings.Trim(folderPath, "/"), "/")
-	if len(parts) >= 3 && strings.EqualFold(parts[0], "Apps") {
-		return strings.Join(parts[2:], "/")
+func appFolderRelativePath(folderPath, destinationPath string) string {
+	folderParts := strings.Split(strings.Trim(folderPath, "/"), "/")
+	destinationParts := strings.Split(strings.Trim(destinationPath, "/"), "/")
+	if len(folderParts) >= 2 && len(destinationParts) >= 2 &&
+		strings.EqualFold(destinationParts[0], "Apps") &&
+		strings.EqualFold(folderParts[0], destinationParts[0]) &&
+		strings.EqualFold(folderParts[1], destinationParts[1]) {
+		return strings.Join(folderParts[2:], "/")
 	}
 	return strings.Trim(folderPath, "/")
 }

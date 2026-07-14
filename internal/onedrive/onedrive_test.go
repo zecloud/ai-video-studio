@@ -136,6 +136,28 @@ func TestListFolderItemsResolvesConfiguredAppFolderPath(t *testing.T) {
 	}
 }
 
+func TestAppFolderRelativePathOnlyStripsConfiguredAppPrefix(t *testing.T) {
+	tests := []struct {
+		name            string
+		folderPath      string
+		destinationPath string
+		want            string
+	}{
+		{name: "configured app absolute path", folderPath: "/Apps/AI Video Studio/Imports", destinationPath: "/Apps/AI Video Studio/Imports", want: "Imports"},
+		{name: "case insensitive app prefix", folderPath: "/apps/ai video studio/Imports/Camera", destinationPath: "/Apps/AI Video Studio/Imports", want: "Imports/Camera"},
+		{name: "different app remains unchanged", folderPath: "/Apps/Another App/Imports", destinationPath: "/Apps/AI Video Studio/Imports", want: "Apps/Another App/Imports"},
+		{name: "relative path remains unchanged", folderPath: "Imports/Camera", destinationPath: "/Apps/AI Video Studio/Imports", want: "Imports/Camera"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := appFolderRelativePath(tt.folderPath, tt.destinationPath); got != tt.want {
+				t.Fatalf("appFolderRelativePath(%q, %q) = %q, want %q", tt.folderPath, tt.destinationPath, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildChunkUploadRequest(t *testing.T) {
 	chunk, err := NewChunkRange(0, 0, 10, 20)
 	if err != nil {

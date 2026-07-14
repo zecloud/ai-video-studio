@@ -129,13 +129,12 @@ resource videoIndexerAccount 'Microsoft.VideoIndexer/accounts@2025-04-01' = {
   }
 }
 
-resource videoIndexerStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, videoIndexerAccount.id, storageBlobDataContributorRoleDefinitionId)
-  scope: storageAccount
-  properties: {
+module videoIndexerStorageRole 'storage-role-assignment.bicep' = {
+  name: 'video-indexer-storage-role'
+  params: {
+    storageAccountName: storageAccount.name
     principalId: videoIndexerAccount.identity.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleDefinitionId)
+    roleDefinitionId: storageBlobDataContributorRoleDefinitionId
   }
 }
 
@@ -474,43 +473,39 @@ resource workerApp 'Microsoft.App/containerApps@2025-01-01' = {
   }
 }
 
-resource apiStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, apiIdentity.id, storageBlobDataContributorRoleDefinitionId)
-  scope: storageAccount
-  properties: {
+module apiStorageRole 'storage-role-assignment.bicep' = {
+  name: 'api-storage-role'
+  params: {
+    storageAccountName: storageAccount.name
     principalId: apiIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleDefinitionId)
+    roleDefinitionId: storageBlobDataContributorRoleDefinitionId
   }
 }
 
-resource workerStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, workerIdentity.id, storageBlobDataContributorRoleDefinitionId)
-  scope: storageAccount
-  properties: {
+module workerStorageRole 'storage-role-assignment.bicep' = {
+  name: 'worker-storage-role'
+  params: {
+    storageAccountName: storageAccount.name
     principalId: workerIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleDefinitionId)
+    roleDefinitionId: storageBlobDataContributorRoleDefinitionId
   }
 }
 
-resource apiDtsRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(scheduler.id, apiIdentity.id, durableTaskDataContributorRoleDefinitionId)
-  scope: scheduler
-  properties: {
+module apiDtsRole 'durable-task-role-assignment.bicep' = {
+  name: 'api-dts-role'
+  params: {
+    schedulerName: scheduler.name
     principalId: apiIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', durableTaskDataContributorRoleDefinitionId)
+    roleDefinitionId: durableTaskDataContributorRoleDefinitionId
   }
 }
 
-resource workerDtsRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(scheduler.id, workerIdentity.id, durableTaskDataContributorRoleDefinitionId)
-  scope: scheduler
-  properties: {
+module workerDtsRole 'durable-task-role-assignment.bicep' = {
+  name: 'worker-dts-role'
+  params: {
+    schedulerName: scheduler.name
     principalId: workerIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', durableTaskDataContributorRoleDefinitionId)
+    roleDefinitionId: durableTaskDataContributorRoleDefinitionId
   }
 }
 
@@ -521,7 +516,6 @@ module apiAcrPull 'acr-role-assignment.bicep' = {
     registryName: containerRegistryName
     principalId: apiIdentity.properties.principalId
     roleDefinitionId: acrPullRoleDefinitionId
-    assignmentSeed: apiAppName
   }
 }
 
@@ -532,7 +526,6 @@ module workerAcrPull 'acr-role-assignment.bicep' = {
     registryName: containerRegistryName
     principalId: workerIdentity.properties.principalId
     roleDefinitionId: acrPullRoleDefinitionId
-    assignmentSeed: workerAppName
   }
 }
 
@@ -542,7 +535,6 @@ module workerFoundryRole 'foundry-role-assignment.bicep' = {
     accountName: foundryAccountName
     principalId: workerIdentity.properties.principalId
     roleDefinitionId: foundryUserRoleDefinitionId
-    assignmentSeed: workerAppName
   }
 }
 
@@ -552,7 +544,6 @@ module videoIndexerFoundryRole 'foundry-role-assignment.bicep' = {
     accountName: videoIndexerOpenAIAccountName
     principalId: videoIndexerAccount.identity.principalId
     roleDefinitionId: cognitiveServicesOpenAIUserRoleDefinitionId
-    assignmentSeed: videoIndexerAccountName
   }
 }
 
@@ -566,7 +557,6 @@ module workerVideoIndexerRole 'video-indexer-role-assignment.bicep' = {
     accountName: videoIndexerAccountName
     principalId: workerIdentity.properties.principalId
     roleDefinitionResourceId: videoIndexerRoleDefinitionResourceId
-    assignmentSeed: workerAppName
   }
 }
 
