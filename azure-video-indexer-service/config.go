@@ -27,8 +27,12 @@ type Config struct {
 	VideoIndexerTimeout        time.Duration
 	DTSEndpoint                string
 	DTSTaskHub                 string
+	DTSRenderTaskHub           string
 	DTSCancellationGrace       time.Duration
 	ManagedIdentityClientID    string
+	FFmpegPath                 string
+	RenderWorkspaceRoot        string
+	RenderTimeout              time.Duration
 }
 
 func LoadConfig() (Config, error) {
@@ -49,8 +53,12 @@ func LoadConfig() (Config, error) {
 		VideoIndexerTimeout:        getEnvDuration("AZURE_VIDEO_INDEXER_TIMEOUT", 30*time.Minute),
 		DTSEndpoint:                strings.TrimSpace(os.Getenv("DTS_ENDPOINT")),
 		DTSTaskHub:                 strings.TrimSpace(os.Getenv("DTS_TASK_HUB")),
+		DTSRenderTaskHub:           strings.TrimSpace(os.Getenv("DTS_RENDER_TASK_HUB")),
 		DTSCancellationGrace:       getEnvDuration("DTS_CANCELLATION_GRACE", 30*time.Second),
 		ManagedIdentityClientID:    strings.TrimSpace(os.Getenv("AZURE_CLIENT_ID")),
+		FFmpegPath:                 getEnvDefault("FFMPEG_PATH", "ffmpeg"),
+		RenderWorkspaceRoot:        getEnvDefault("RENDER_WORKSPACE_ROOT", os.TempDir()),
+		RenderTimeout:              getEnvDuration("RENDER_TIMEOUT", 2*time.Hour),
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -71,7 +79,11 @@ func (c Config) Normalize() Config {
 	c.VideoIndexerAccountName = strings.TrimSpace(c.VideoIndexerAccountName)
 	c.VideoIndexerAccountID = strings.TrimSpace(c.VideoIndexerAccountID)
 	c.VideoIndexerLocation = strings.TrimSpace(c.VideoIndexerLocation)
+	c.DTSTaskHub = strings.TrimSpace(c.DTSTaskHub)
+	c.DTSRenderTaskHub = strings.TrimSpace(c.DTSRenderTaskHub)
 	c.ManagedIdentityClientID = strings.TrimSpace(c.ManagedIdentityClientID)
+	c.FFmpegPath = strings.TrimSpace(c.FFmpegPath)
+	c.RenderWorkspaceRoot = strings.TrimSpace(c.RenderWorkspaceRoot)
 
 	if c.SASValidity <= 0 {
 		c.SASValidity = 2 * time.Hour
@@ -82,13 +94,16 @@ func (c Config) Normalize() Config {
 	if c.DTSCancellationGrace <= 0 {
 		c.DTSCancellationGrace = 30 * time.Second
 	}
+	if c.RenderTimeout <= 0 {
+		c.RenderTimeout = 2 * time.Hour
+	}
 	return c
 }
 
 func (c Config) Validate() error {
 	c = c.Normalize()
-	if c.ServiceRole != "api" && c.ServiceRole != "worker" {
-		return fmt.Errorf("SERVICE_ROLE must be api or worker")
+	if c.ServiceRole != "api" && c.ServiceRole != "worker" && c.ServiceRole != "ffmpeg-worker" {
+		return fmt.Errorf("SERVICE_ROLE must be api, worker, or ffmpeg-worker")
 	}
 	if c.ListenAddr == "" {
 		return fmt.Errorf("LISTEN_ADDR is required")
@@ -117,6 +132,17 @@ func (c Config) Validate() error {
 	if _, err := url.ParseRequestURI(c.GraphBaseURL); err != nil {
 		return fmt.Errorf("GRAPH_BASE_URL must be an absolute URL: %w", err)
 	}
+	if c.ServiceRole == "ffmpeg-worker" {
+		if c.FFmpegPath == "" {
+			return fmt.Errorf("FFMPEG_PATH is required for the ffmpeg-worker role")
+		}
+		if c.RenderWorkspaceRoot == "" {
+			return fmt.Errorf("RENDER_WORKSPACE_ROOT is required for the ffmpeg-worker role")
+		}
+		if c.RenderTimeout <= 0 {
+			return fmt.Errorf("RENDER_TIMEOUT must be positive")
+		}
+	}
 	if c.ServiceRole == "worker" {
 		if c.VideoIndexerSubscriptionID == "" {
 			return fmt.Errorf("AZURE_VIDEO_INDEXER_SUBSCRIPTION_ID is required for the worker role")
@@ -134,8 +160,17 @@ func (c Config) Validate() error {
 			return fmt.Errorf("AZURE_CLIENT_ID is required for the worker role")
 		}
 	}
-	if c.DTSEndpoint == "" || c.DTSTaskHub == "" {
-		return fmt.Errorf("DTS_ENDPOINT and DTS_TASK_HUB are required")
+	if c.DTSEndpoint == "" {
+		return fmt.Errorf("DTS_ENDPOINT is required")
+	}
+	if (c.ServiceRole == "api" || c.ServiceRole == "worker") && c.DTSTaskHub == "" {
+		return fmt.Errorf("DTS_TASK_HUB is required for the api and worker roles")
+	}
+	if (c.ServiceRole == "api" || c.ServiceRole == "ffmpeg-worker") && c.DTSRenderTaskHub == "" {
+		return fmt.Errorf("DTS_RENDER_TASK_HUB is required for the api and ffmpeg-worker roles")
+	}
+	if c.DTSTaskHub != "" && c.DTSRenderTaskHub != "" && c.DTSTaskHub == c.DTSRenderTaskHub {
+		return fmt.Errorf("DTS_TASK_HUB and DTS_RENDER_TASK_HUB must be different")
 	}
 	if u, err := url.ParseRequestURI(c.DTSEndpoint); err != nil || u.Scheme != "https" || u.Host == "" {
 		return fmt.Errorf("DTS_ENDPOINT must be an absolute https URL")

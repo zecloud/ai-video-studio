@@ -245,7 +245,7 @@ func TestEndToEndCreateJobCreatesEditProjectFromFixture(t *testing.T) {
 
 	renderBackend := &e2eRenderBackend{}
 	editingSvc := backend.NewEditingService(nil, renderBackend, nil, editStore)
-	renderJob, err := editingSvc.Render(project.ID)
+	renderJob, err := editingSvc.Render(context.Background(), project.ID)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}

@@ -701,14 +701,18 @@ func NewMediaServiceClient(store settings.Store) *mediaservice.Client {
 }
 
 type EditingService struct {
-	mu            sync.Mutex
-	projects      map[string]editing.EditProject
-	jobs          map[string]*editing.RenderJob
-	store         library.Store
-	renderBackend RenderBackend
-	odClient      *onedrive.Client
-	projectStore  editingProjectStore
-	loaded        bool
+	mu                 sync.Mutex
+	projects           map[string]editing.EditProject
+	jobs               map[string]*editing.RenderJob
+	store              library.Store
+	renderBackend      RenderBackend
+	renderJobFactory   renderJobClientFactory
+	renderSettings     settings.Store
+	renderPollInterval time.Duration
+	renderCancels      map[string]context.CancelFunc
+	odClient           *onedrive.Client
+	projectStore       editingProjectStore
+	loaded             bool
 }
 
 // RenderBackend is the subset of mediaservice.Client that editing needs.
@@ -718,11 +722,13 @@ type RenderBackend interface {
 
 func NewEditingService(store library.Store, renderBackend RenderBackend, odClient *onedrive.Client, projectStore ...editingProjectStore) *EditingService {
 	service := &EditingService{
-		projects:      map[string]editing.EditProject{},
-		jobs:          map[string]*editing.RenderJob{},
-		store:         store,
-		renderBackend: renderBackend,
-		odClient:      odClient,
+		projects:           map[string]editing.EditProject{},
+		jobs:               map[string]*editing.RenderJob{},
+		renderCancels:      map[string]context.CancelFunc{},
+		renderPollInterval: 2 * time.Second,
+		store:              store,
+		renderBackend:      renderBackend,
+		odClient:           odClient,
 	}
 	if len(projectStore) > 0 {
 		service.projectStore = projectStore[0]
@@ -803,8 +809,8 @@ func (s *EditingService) DeleteProject(_ context.Context, projectID string) erro
 // Render dispatches a render job to the Azure Container App. It blocks until
 // the remote service completes or fails, then stores the result.
 // Emits wails events "editing:render:progress" and "editing:render:completed".
-func (s *EditingService) Render(projectID string) (*editing.RenderJob, error) {
-	if err := s.ensureProjectsLoaded(context.Background()); err != nil {
+func (s *EditingService) renderLegacy(ctx context.Context, projectID string) (*editing.RenderJob, error) {
+	if err := s.ensureProjectsLoaded(ctx); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
@@ -839,7 +845,7 @@ func (s *EditingService) Render(projectID string) (*editing.RenderJob, error) {
 	// Obtain a OneDrive access token.
 	var token string
 	if s.odClient != nil && s.odClient.TokenProvider != nil {
-		tok, err := s.odClient.TokenProvider.AccessToken(context.Background(), s.odClient.Scopes)
+		tok, err := s.odClient.TokenProvider.AccessToken(ctx, s.odClient.Scopes)
 		if err != nil {
 			return nil, fmt.Errorf("editing: OneDrive token: %w", err)
 		}
@@ -852,21 +858,33 @@ func (s *EditingService) Render(projectID string) (*editing.RenderJob, error) {
 		ProjectID: projectID,
 		Status:    "submitted",
 	}
+	renderCtx, cancelRender := context.WithCancel(ctx)
+	defer cancelRender()
 
 	s.mu.Lock()
-	s.jobs[jobID] = job
+	if s.renderCancels == nil {
+		s.renderCancels = map[string]context.CancelFunc{}
+	}
+	s.renderCancels[jobID] = cancelRender
+	s.jobs[jobID] = cloneEditingRenderJob(*job)
 	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.renderCancels, jobID)
+		s.mu.Unlock()
+	}()
 
 	if s.renderBackend == nil {
 		job.Status = "failed"
 		job.ErrorDetail = "render backend is not configured"
+		s.storeEditingRenderJob(*job, "editing:render:completed")
 		return job, fmt.Errorf("editing: render backend not configured")
 	}
 
 	// Emit progress: submitted
 	emitRenderEvent("editing:render:progress", *job)
 
-	result, err := s.renderBackend.Render(context.Background(), mediaservice.RenderRequest{
+	result, err := s.renderBackend.Render(renderCtx, mediaservice.RenderRequest{
 		ProjectID:     projectID,
 		OneDriveToken: token,
 		Clips:         clips,
@@ -876,21 +894,19 @@ func (s *EditingService) Render(projectID string) (*editing.RenderJob, error) {
 	if err != nil {
 		job.Status = "failed"
 		job.ErrorDetail = err.Error()
-		s.mu.Lock()
-		s.jobs[jobID] = job
-		s.mu.Unlock()
-		emitRenderEvent("editing:render:completed", *job)
+		if errors.Is(err, context.Canceled) {
+			job.Status = "canceled"
+			job.ErrorDetail = ""
+			job.Message = "Render canceled."
+		}
+		s.storeEditingRenderJob(*job, "editing:render:completed")
 		return job, fmt.Errorf("editing: render: %w", err)
 	}
 
 	job.Status = "completed"
 	job.OutputURL = result.OutputURL
 	job.Message = result.Log
-	s.mu.Lock()
-	s.jobs[jobID] = job
-	s.mu.Unlock()
-
-	emitRenderEvent("editing:render:completed", *job)
+	s.storeEditingRenderJob(*job, "editing:render:completed")
 	return job, nil
 }
 
@@ -913,7 +929,7 @@ func (s *EditingService) RenderJob(jobID string) (*editing.RenderJob, error) {
 	if !ok {
 		return nil, fmt.Errorf("render job %q not found", jobID)
 	}
-	return job, nil
+	return cloneEditingRenderJob(*job), nil
 }
 
 // RenderJobs returns all render jobs.
@@ -922,7 +938,7 @@ func (s *EditingService) RenderJobs() ([]*editing.RenderJob, error) {
 	defer s.mu.Unlock()
 	jobs := make([]*editing.RenderJob, 0, len(s.jobs))
 	for _, job := range s.jobs {
-		jobs = append(jobs, job)
+		jobs = append(jobs, cloneEditingRenderJob(*job))
 	}
 	return jobs, nil
 }

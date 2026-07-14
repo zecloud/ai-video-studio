@@ -69,6 +69,7 @@ import {
   moveClipUp,
   moveClipDown,
   startRender,
+  cancelRender,
 } from "./editing.js";
 
 type Tone = "success" | "warning" | "danger" | "info" | "neutral";
@@ -1288,6 +1289,13 @@ function render(): void {
           const saveBtn = target.closest<HTMLElement>("[data-action='save-project']");
           if (saveBtn) {
             void saveProject(state.editing).then(() => render());
+            return;
+          }
+
+          // Cancel render
+          const cancelRenderBtn = target.closest<HTMLElement>("[data-action='cancel-render']");
+          if (cancelRenderBtn) {
+            void cancelRender(state.editing).then(() => render());
             return;
           }
 

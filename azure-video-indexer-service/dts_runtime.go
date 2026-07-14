@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,8 @@ import (
 
 const cancellationEventName = "video-indexer-cancel"
 
+const renderCancellationEventName = "ffmpeg-render-cancel"
+
 // DTSRuntime owns the experimental DTS backend behind the API/worker boundary.
 // The dependency is pinned to the immutable PR #122 commit in go.mod.
 type DTSRuntime struct {
@@ -23,11 +26,25 @@ type DTSRuntime struct {
 	client                *client.TaskHubGrpcClient
 	cancellationGrace     time.Duration
 	reconcileCancellation func(context.Context, string) error
+	listenerStarted       bool
 	mu                    sync.Mutex
 }
 
 func NewDTSRuntime(ctx context.Context, cfg Config, registry *task.TaskRegistry) (*DTSRuntime, error) {
-	opts := durabletaskscheduler.NewOptions(cfg.DTSEndpoint, cfg.DTSTaskHub)
+	taskHub := cfg.DTSTaskHub
+	if cfg.Normalize().ServiceRole == "ffmpeg-worker" {
+		taskHub = cfg.DTSRenderTaskHub
+	}
+	return NewDTSRuntimeForHub(ctx, cfg, taskHub, registry)
+}
+
+func NewDTSRuntimeForHub(ctx context.Context, cfg Config, taskHub string, registry *task.TaskRegistry) (*DTSRuntime, error) {
+	cfg = cfg.Normalize()
+	taskHub = strings.TrimSpace(taskHub)
+	if taskHub == "" {
+		return nil, fmt.Errorf("Durable Task Scheduler task hub is required")
+	}
+	opts := durabletaskscheduler.NewOptions(cfg.DTSEndpoint, taskHub)
 	be := durabletaskscheduler.NewBackend(opts, backend.DefaultLogger())
 	if err := be.Start(ctx); err != nil {
 		return nil, fmt.Errorf("starting Durable Task Scheduler backend: %w", err)
@@ -47,6 +64,7 @@ func NewDTSRuntime(ctx context.Context, cfg Config, registry *task.TaskRegistry)
 			_ = be.Stop(context.Background())
 			return nil, fmt.Errorf("starting Durable Task Scheduler listener: %w", err)
 		}
+		runtime.listenerStarted = true
 	}
 	return runtime, nil
 }
@@ -75,6 +93,20 @@ func (r *DTSRuntime) Schedule(ctx context.Context, input VideoIndexerOrchestrati
 	if errors.Is(err, api.ErrIgnoreInstance) {
 		return nil
 	}
+
+	return err
+}
+
+func (r *DTSRuntime) ScheduleRender(ctx context.Context, input FFmpegRenderOrchestrationInput) error {
+	if r == nil || r.client == nil {
+		return fmt.Errorf("Durable Task Scheduler runtime is not configured")
+	}
+	_, err := r.client.ScheduleNewOrchestration(ctx, ffmpegRenderOrchestrationName,
+		api.WithInstanceID(api.InstanceID(input.JobID)), api.WithInput(input),
+		api.WithOrchestrationIdReusePolicy(orchestrationIDReusePolicy()))
+	if errors.Is(err, api.ErrIgnoreInstance) {
+		return nil
+	}
 	return err
 }
 
@@ -88,27 +120,44 @@ func (r *DTSRuntime) SetCancellationReconciler(reconciler func(context.Context, 
 	defer r.mu.Unlock()
 	r.reconcileCancellation = reconciler
 }
+func scheduleThenRaiseCancellation(schedule func() error, raise func() error, scheduleMessage, raiseMessage string) error {
+	if err := schedule(); err != nil && !errors.Is(err, api.ErrIgnoreInstance) {
+		return fmt.Errorf("%s: %w", scheduleMessage, err)
+	}
+	if err := raise(); err != nil {
+		return fmt.Errorf("%s: %w", raiseMessage, err)
+	}
+	return nil
+}
+
 func (r *DTSRuntime) RequestCancellation(ctx context.Context, jobID string) error {
 	if r == nil || r.client == nil {
 		return fmt.Errorf("Durable Task Scheduler runtime is not configured")
 	}
-	input := VideoIndexerOrchestrationInput{
-		JobID:             jobID,
-		Version:           videoIndexerOrchestrationVersion,
-		CancellationGrace: r.cancellationGrace,
+	input := VideoIndexerOrchestrationInput{JobID: jobID, Version: videoIndexerOrchestrationVersion, CancellationGrace: r.cancellationGrace}
+	return scheduleThenRaiseCancellation(func() error {
+		_, err := r.client.ScheduleNewOrchestration(ctx, cancellationWatchdogName,
+			api.WithInstanceID(api.InstanceID(jobID+".cancel")), api.WithInput(input),
+			api.WithOrchestrationIdReusePolicy(orchestrationIDReusePolicy()))
+		return err
+	}, func() error {
+		return r.client.RaiseEvent(ctx, api.InstanceID(jobID), cancellationEventName)
+	}, "scheduling durable cancellation watchdog", "raising cancellation event")
+}
+
+func (r *DTSRuntime) RequestRenderCancellation(ctx context.Context, jobID string) error {
+	if r == nil || r.client == nil {
+		return fmt.Errorf("Durable Task Scheduler runtime is not configured")
 	}
-	watchdogReusePolicy := orchestrationIDReusePolicy()
-	if _, err := r.client.ScheduleNewOrchestration(ctx, cancellationWatchdogName,
-		api.WithInstanceID(api.InstanceID(jobID+".cancel")),
-		api.WithInput(input),
-		api.WithOrchestrationIdReusePolicy(watchdogReusePolicy),
-	); err != nil {
-		return fmt.Errorf("scheduling durable cancellation watchdog: %w", err)
-	}
-	if err := r.client.RaiseEvent(ctx, api.InstanceID(jobID), cancellationEventName); err != nil {
-		return fmt.Errorf("raising cancellation event: %w", err)
-	}
-	return nil
+	input := FFmpegRenderOrchestrationInput{JobID: jobID, Version: ffmpegRenderOrchestrationVersion, CancellationGrace: r.cancellationGrace}
+	return scheduleThenRaiseCancellation(func() error {
+		_, err := r.client.ScheduleNewOrchestration(ctx, ffmpegRenderCancellationWatchdogName,
+			api.WithInstanceID(api.InstanceID(jobID+".render-cancel")), api.WithInput(input),
+			api.WithOrchestrationIdReusePolicy(orchestrationIDReusePolicy()))
+		return err
+	}, func() error {
+		return r.client.RaiseEvent(ctx, api.InstanceID(jobID), renderCancellationEventName)
+	}, "scheduling render cancellation watchdog", "raising render cancellation event")
 }
 
 // ForceTerminateAndReconcile runs in a worker activity scheduled by the durable
@@ -117,6 +166,32 @@ func (r *DTSRuntime) ForceTerminateAndReconcile(ctx context.Context, jobID strin
 	r.mu.Lock()
 	client := r.client
 	reconciler := r.reconcileCancellation
+	r.mu.Unlock()
+	if client == nil {
+		return fmt.Errorf("Durable Task Scheduler runtime is not configured")
+	}
+
+	metadata, err := client.FetchOrchestrationMetadata(ctx, api.InstanceID(jobID))
+	if err != nil {
+		return fmt.Errorf("fetching orchestration metadata: %w", err)
+	}
+
+	if !metadata.IsComplete() {
+		if err := client.TerminateOrchestration(ctx, api.InstanceID(jobID)); err != nil {
+			return fmt.Errorf("terminating orchestration: %w", err)
+		}
+	}
+	if reconciler != nil {
+		if err := reconciler(ctx, jobID); err != nil {
+			return fmt.Errorf("reconciling cancellation: %w", err)
+		}
+	}
+	return nil
+}
+
+func (r *DTSRuntime) ForceTerminate(ctx context.Context, jobID string) error {
+	r.mu.Lock()
+	client := r.client
 	r.mu.Unlock()
 	if client == nil {
 		return fmt.Errorf("Durable Task Scheduler runtime is not configured")
@@ -130,11 +205,6 @@ func (r *DTSRuntime) ForceTerminateAndReconcile(ctx context.Context, jobID strin
 			return fmt.Errorf("terminating orchestration: %w", err)
 		}
 	}
-	if reconciler != nil {
-		if err := reconciler(ctx, jobID); err != nil {
-			return fmt.Errorf("reconciling cancellation: %w", err)
-		}
-	}
 	return nil
 }
 func (r *DTSRuntime) Close(ctx context.Context) error {
@@ -145,7 +215,10 @@ func (r *DTSRuntime) Close(ctx context.Context) error {
 	defer r.mu.Unlock()
 	var listenerErr error
 	if r.client != nil {
-		listenerErr = r.client.StopWorkItemListener(ctx)
+		if r.listenerStarted {
+			listenerErr = r.client.StopWorkItemListener(ctx)
+		}
+		r.listenerStarted = false
 		r.client = nil
 	}
 	if r.backend != nil {
@@ -160,3 +233,4 @@ func (r *DTSRuntime) Close(ctx context.Context) error {
 }
 
 var _ OrchestrationScheduler = (*DTSRuntime)(nil)
+var _ RenderOrchestrationScheduler = (*DTSRuntime)(nil)

@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -16,14 +18,23 @@ import (
 type Server struct {
 	cfg           Config
 	jobs          JobService
+	renderJobs    RenderJobService
 	obs           *Observability
 	blobSvc       *AzureBlobService
+	renderOutputs RenderOutputStreamer
 	videoIndexer  videoIndexerReadiness
 	planner       EditPlanner
 	lookPath      func(string) (string, error)
 	readiness     readinessReporter
 	readinessOnce sync.Once
 }
+
+type RenderOutputStreamer interface {
+	OpenDownload(context.Context, StagedAsset) (BlobDownload, error)
+}
+
+func (s *Server) SetRenderJobs(jobs RenderJobService)                  { s.renderJobs = jobs }
+func (s *Server) SetRenderOutputStreamer(outputs RenderOutputStreamer) { s.renderOutputs = outputs }
 
 func NewServer(cfg Config, jobs JobService) *Server {
 	return &Server{
@@ -41,6 +52,11 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/index-jobs", s.requireAPIKey(http.HandlerFunc(s.handleListJobs)))
 	mux.Handle("GET /api/v1/index-jobs/{jobID}", s.requireAPIKey(http.HandlerFunc(s.handleGetJob)))
 	mux.Handle("POST /api/v1/index-jobs/{jobID}/cancel", s.requireAPIKey(http.HandlerFunc(s.handleCancelJob)))
+	mux.Handle("POST /api/v1/render-jobs", s.requireAPIKey(http.HandlerFunc(s.handleCreateRenderJob)))
+	mux.Handle("GET /api/v1/render-jobs", s.requireAPIKey(http.HandlerFunc(s.handleListRenderJobs)))
+	mux.Handle("GET /api/v1/render-jobs/{jobID}", s.requireAPIKey(http.HandlerFunc(s.handleGetRenderJob)))
+	mux.Handle("GET /api/v1/render-jobs/{jobID}/output", s.requireAPIKey(http.HandlerFunc(s.handleGetRenderOutput)))
+	mux.Handle("POST /api/v1/render-jobs/{jobID}/cancel", s.requireAPIKey(http.HandlerFunc(s.handleCancelRenderJob)))
 	mux.Handle("POST /api/v1/jobs", s.requireAPIKey(http.HandlerFunc(s.handleCreateJob)))
 	mux.Handle("GET /api/v1/jobs", s.requireAPIKey(http.HandlerFunc(s.handleListJobs)))
 	mux.Handle("GET /api/v1/jobs/{jobID}", s.requireAPIKey(http.HandlerFunc(s.handleGetJob)))
@@ -49,6 +65,137 @@ func (s *Server) Handler() http.Handler {
 		return s.obs.HTTPMiddleware(mux)
 	}
 	return mux
+}
+
+func (s *Server) handleCreateRenderJob(w http.ResponseWriter, r *http.Request) {
+	if s.renderJobs == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "render job service is not configured", "service_unavailable", true)
+		return
+	}
+	var req CreateRenderJobRequest
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid JSON request body", "bad_request", false)
+		return
+	}
+	job, err := s.renderJobs.CreateRenderJob(r.Context(), req)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	w.Header().Set("Location", "/api/v1/render-jobs/"+job.ID)
+	writeJSON(w, http.StatusAccepted, RenderJobResponse{Job: job})
+}
+
+func (s *Server) handleListRenderJobs(w http.ResponseWriter, r *http.Request) {
+	if s.renderJobs == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "render job service is not configured", "service_unavailable", true)
+		return
+	}
+	var status RenderJobStatus
+	if raw := strings.TrimSpace(r.URL.Query().Get("status")); raw != "" {
+		status = RenderJobStatus(strings.ToLower(raw))
+		if !status.Valid() {
+			writeAPIError(w, http.StatusBadRequest, "invalid render job status", "validation_failed", false)
+			return
+		}
+	}
+	jobs, err := s.renderJobs.ListRenderJobs(r.Context(), status)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, RenderJobListResponse{Jobs: jobs})
+}
+
+func (s *Server) handleGetRenderJob(w http.ResponseWriter, r *http.Request) {
+	if s.renderJobs == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "render job service is not configured", "service_unavailable", true)
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("jobID"))
+	if err := validateID(id, "jobID"); err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error(), "validation_failed", false)
+		return
+	}
+	job, err := s.renderJobs.GetRenderJob(r.Context(), id)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, RenderJobResponse{Job: job})
+}
+
+func (s *Server) handleGetRenderOutput(w http.ResponseWriter, r *http.Request) {
+	if s.renderJobs == nil || s.renderOutputs == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "render output service is not configured", "service_unavailable", true)
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("jobID"))
+	if err := validateID(id, "jobID"); err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error(), "validation_failed", false)
+		return
+	}
+	job, err := s.renderJobs.GetRenderJob(r.Context(), id)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	if job.Status != RenderJobStatusSucceeded {
+		writeAPIError(w, http.StatusConflict, "render output is not ready", "render_output_not_ready", false)
+		return
+	}
+	if !validRenderOutputIdentity(job) || job.Output.Container != s.cfg.StagingContainer {
+		writeAPIError(w, http.StatusInternalServerError, "render output identity is invalid", "render_output_identity_invalid", false)
+		return
+	}
+	download, err := s.renderOutputs.OpenDownload(r.Context(), StagedAsset{Container: job.Output.Container, BlobName: job.Output.BlobName})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	defer func() {
+		if closeErr := download.Body.Close(); closeErr != nil && s.obs != nil {
+			s.obs.logger.WarnContext(r.Context(), "closing render output stream", "job_id", job.ID, "error", redactURLsInText(closeErr.Error()))
+		}
+	}()
+	if job.Output.Size > 0 && download.ContentLength > 0 && job.Output.Size != download.ContentLength {
+		writeAPIError(w, http.StatusBadGateway, "render output size does not match durable metadata", "render_output_size_mismatch", true)
+		return
+	}
+	contentType := strings.TrimSpace(download.ContentType)
+	if contentType == "" {
+		contentType = strings.TrimSpace(job.Output.MediaType)
+	}
+	if contentType == "" {
+		contentType = "video/mp4"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": job.OutputName}))
+	w.Header().Set("Cache-Control", "no-store")
+	if download.ContentLength > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(download.ContentLength, 10))
+	}
+	w.WriteHeader(http.StatusOK)
+	if _, copyErr := io.Copy(w, download.Body); copyErr != nil && s.obs != nil {
+		s.obs.logger.WarnContext(r.Context(), "streaming render output", "job_id", job.ID, "error", redactURLsInText(copyErr.Error()))
+	}
+}
+func (s *Server) handleCancelRenderJob(w http.ResponseWriter, r *http.Request) {
+	if s.renderJobs == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "render job service is not configured", "service_unavailable", true)
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("jobID"))
+	if err := validateID(id, "jobID"); err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error(), "validation_failed", false)
+		return
+	}
+	job, err := s.renderJobs.CancelRenderJob(r.Context(), id)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, RenderJobResponse{Job: job})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

@@ -17,14 +17,14 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	otelmetric "go.opentelemetry.io/otel/metric"
-	otelnoopmetric "go.opentelemetry.io/otel/metric/noop"
-	"go.opentelemetry.io/otel/sdk/resource"
-	"go.opentelemetry.io/otel/trace"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	otlpmetrichttp "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	otlptracehttp "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	otelmetric "go.opentelemetry.io/otel/metric"
+	otelnoopmetric "go.opentelemetry.io/otel/metric/noop"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type observabilityContextKey struct{}
@@ -36,20 +36,20 @@ type Observability struct {
 	meter  otelmetric.Meter
 
 	traceProvider traceProvider
-	meterProvider  meterProvider
+	meterProvider meterProvider
 
-	stageDuration         otelmetric.Float64Histogram
-	jobResult             otelmetric.Int64Counter
-	retryCounter          otelmetric.Int64Counter
-	modelUsageCounter     otelmetric.Int64Counter
-	evidencePacketBytes   otelmetric.Int64Histogram
-	evidenceSceneCount    otelmetric.Int64Histogram
-	timelineClipCount     otelmetric.Int64Histogram
+	stageDuration       otelmetric.Float64Histogram
+	jobResult           otelmetric.Int64Counter
+	retryCounter        otelmetric.Int64Counter
+	modelUsageCounter   otelmetric.Int64Counter
+	evidencePacketBytes otelmetric.Int64Histogram
+	evidenceSceneCount  otelmetric.Int64Histogram
+	timelineClipCount   otelmetric.Int64Histogram
 
-	shutdown func(context.Context) error
+	shutdown     func(context.Context) error
 	shutdownOnce sync.Once
 	shutdownErr  error
-	mode     string
+	mode         string
 }
 
 type traceProvider interface {
@@ -67,10 +67,10 @@ func newObservability(ctx context.Context, logger *slog.Logger) *Observability {
 	serviceName := "azure-video-indexer-service"
 	serviceVersion := buildServiceVersion()
 	base := &Observability{
-		logger:  logger.With("service", serviceName, "version", serviceVersion),
-		tracer:  trace.NewNoopTracerProvider().Tracer(serviceName),
-		meter:   otelnoopmetric.NewMeterProvider().Meter(serviceName),
-		mode:    "disabled",
+		logger: logger.With("service", serviceName, "version", serviceVersion),
+		tracer: trace.NewNoopTracerProvider().Tracer(serviceName),
+		meter:  otelnoopmetric.NewMeterProvider().Meter(serviceName),
+		mode:   "disabled",
 	}
 	base.initInstruments()
 
@@ -506,9 +506,9 @@ func randomRequestID() string {
 }
 
 type modelUsage struct {
-	Input    int64
-	Output   int64
-	Total    int64
+	Input     int64
+	Output    int64
+	Total     int64
 	Reasoning int64
 }
 

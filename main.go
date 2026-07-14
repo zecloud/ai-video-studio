@@ -24,7 +24,7 @@ func main() {
 	libraryStore := backend.NewLibraryStore()
 	cuService := backend.NewContentUnderstandingServiceFromSettings(settingsStore)
 	mediaClient := backend.NewMediaServiceClient(settingsStore)
-	editingService := backend.NewEditingService(libraryStore, mediaClient, oneDriveService.DriveClient())
+	editingService := backend.NewEditingServiceWithRenderJobs(libraryStore, mediaClient, oneDriveService.DriveClient(), settingsStore)
 	videoIndexerService := backend.NewVideoIndexerStudioServiceFromSettings(libraryStore, oneDriveService, editingService, settingsStore)
 
 	app := application.New(application.Options{

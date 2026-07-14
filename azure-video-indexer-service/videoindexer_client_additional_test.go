@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
@@ -127,7 +127,7 @@ func TestDecodeHTTPErrorRedactsTokenBodies(t *testing.T) {
 	resp := &http.Response{
 		StatusCode: http.StatusBadGateway,
 		Status:     "502 Bad Gateway",
-		Body: io.NopCloser(strings.NewReader(`{"code":"failed","message":"request https://contoso.services.ai.azure.com/api/projects/smart-edit?accessToken=access-token-secret"}`)),
+		Body:       io.NopCloser(strings.NewReader(`{"code":"failed","message":"request https://contoso.services.ai.azure.com/api/projects/smart-edit?accessToken=access-token-secret"}`)),
 	}
 
 	err := decodeHTTPError(resp, "Video Indexer index")
