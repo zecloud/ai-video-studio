@@ -48,5 +48,5 @@ The asynchronous cloud renderer runs in a dedicated private Container App image 
 - The image uses Alpine's distribution `ffmpeg` package and runs the service as a non-root user.
 - The deployment sets `SERVICE_ROLE=ffmpeg-worker`, `FFMPEG_PATH=/usr/bin/ffmpeg`, `RENDER_WORKSPACE_ROOT=/render-work`, and `RENDER_TIMEOUT=2h`.
 - Each 2 vCPU / 4 GiB worker has an ephemeral `EmptyDir` workspace. Container Apps limits this replica size to 8 GiB of ephemeral storage; render operations must keep their aggregate temporary working set within the documented 6 GiB operational budget. API-side admission enforcement is tracked separately.
-- The image policy is LGPL-oriented: do not deliberately add GPL-only codecs or filters. Verify the packaged FFmpeg build configuration and retain applicable package and FFmpeg notices before production release.
+- The image policy is LGPL-oriented: the worker uses FFmpeg's native MPEG-4 encoder and must not select GPL `libx264` or `libx265`. Verify the packaged FFmpeg build configuration and retain applicable package and FFmpeg notices before production release.
 - The worker receives only Blob references and uses its managed identity for Blob and Durable Task Scheduler access. It never receives delegated OneDrive credentials.

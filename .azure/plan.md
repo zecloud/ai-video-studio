@@ -16,7 +16,7 @@ Ready for validation
 2. Add authenticated asynchronous render-job APIs to `azure-video-indexer-service`.
 3. Stage OneDrive inputs in Blob Storage before DTS scheduling, so delegated OneDrive tokens never enter durable job documents or orchestration history.
 4. Run rendering only in a dedicated FFmpeg worker Container App using DTS orchestration and activities.
-5. Stream rendered output to Blob Storage and return a short-lived output reference for the desktop to publish to OneDrive with its delegated token.
+5. Stream rendered output to Blob Storage and proxy it through the authenticated API for the desktop to publish to OneDrive with its delegated token; no output reference or SAS URL is exposed.
 
 ## Planned architecture
 
@@ -33,7 +33,7 @@ Ready for validation
 - The worker receives only Blob references; it never receives or persists delegated Microsoft Graph credentials.
 - The worker uses managed identity and least-privilege Blob/DTS roles.
 - The worker Container App has no public ingress.
-- FFmpeg inputs, outputs, and temporary files are scoped to a per-job directory and removed after every terminal path.
+- FFmpeg inputs and temporary files are scoped to a per-job directory and removed after every terminal path. Successful Blob outputs are available only through the authenticated API and expire through a seven-day Blob lifecycle policy.
 - Render requests allow only supported presets and transition modes; unsupported transitions are rejected instead of silently changed.
 - Output filenames are normalized before use in storage or local paths.
 - FFmpeg logs are bounded and do not include credentials or SAS query strings.
@@ -42,7 +42,7 @@ Ready for validation
 - **DTS scaling:** scale to zero, maximum 3 replicas, and one FFmpeg activity per replica.
 - **Temporary workspace:** Container Apps `EmptyDir` mounted at `/render-work`. At 2 vCPU, its 8 GiB platform limit requires a documented 6 GiB maximum total working set per render. API-side admission enforcement is a follow-up; this infrastructure alone cannot reject oversized render requests.
 - **Render timeout:** 2 hours (`RENDER_TIMEOUT=2h`).
-- **Image and licensing:** a dedicated ACR repository is built from an Alpine image with the distribution `ffmpeg` package. No GPL-only codecs are explicitly added; the packaged LGPL components must remain dynamically linked and their notices must ship with the image.
+- **Image and licensing:** a dedicated ACR repository is built from an Alpine image with the distribution `ffmpeg` package. The renderer uses FFmpeg's native MPEG-4 encoder, not GPL `libx264` or `libx265`; applicable dynamically-linked package and FFmpeg notices must ship with the image.
 - **RBAC:** the FFmpeg UAMI receives only AcrPull on the ACR, Storage Blob Data Contributor on the staging/jobs storage account, and Durable Task Data Contributor on the scheduler.
 
 ## Planned changes
@@ -50,8 +50,8 @@ Ready for validation
 1. Add render domain documents, Blob store, HTTP endpoints, and API-side staging to `azure-video-indexer-service`.
 2. Add render-specific DTS orchestrations, activities, cancellation, Blob streaming helpers, and FFmpeg worker entrypoint.
 3. Add a dedicated FFmpeg worker Docker image and Container App, identity, RBAC, DTS scale rules, settings, and deployment workflow image build.
-4. Replace the desktop's synchronous media-service render client with an asynchronous Video Indexer render-job client.
-5. Remove the media-service render endpoint and its FFmpeg dependency while retaining staging and analysis behavior.
+4. Replace the desktop's synchronous media-service render client with an asynchronous Video Indexer render-job client, returning an actionable configuration error when it is unavailable.
+5. Retain the legacy media-service endpoint only for separately deployed backward compatibility; the desktop does not fall back to it.
 6. Update FFmpeg packaging documentation and run targeted Go and Bicep validation. No deployment will be performed.
 
 ## Azure context

@@ -164,7 +164,7 @@ func (r CreateRenderJobRequest) Validate() error {
 	if len(r.Clips) > 64 {
 		return fmt.Errorf("at most 64 clips are supported")
 	}
-	if r.Preset != "h264-1080p" && r.Preset != "h264-720p" && r.Preset != "h265-1080p" {
+	if r.Preset != "mpeg4-1080p" && r.Preset != "mpeg4-720p" {
 		return fmt.Errorf("preset is unsupported")
 	}
 	if r.OutputName == "" || len(r.OutputName) > 255 || !strings.HasSuffix(strings.ToLower(r.OutputName), ".mp4") {
@@ -216,7 +216,7 @@ func (j RenderJobDocument) Validate() error {
 	if j.ProjectID == "" || !j.Status.Valid() || j.OutputName == "" {
 		return fmt.Errorf("render job document is incomplete")
 	}
-	if j.Preset != "h264-1080p" && j.Preset != "h264-720p" && j.Preset != "h265-1080p" {
+	if j.Preset != "mpeg4-1080p" && j.Preset != "mpeg4-720p" {
 		return fmt.Errorf("render job preset is unsupported")
 	}
 	if j.OrchestrationID != j.ID || j.OrchestrationName != ffmpegRenderOrchestrationName || j.OrchestrationVersion != ffmpegRenderOrchestrationVersion {

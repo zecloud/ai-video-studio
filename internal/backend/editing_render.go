@@ -65,13 +65,10 @@ func (s *EditingService) Render(ctx context.Context, projectID string) (*editing
 	factory := s.renderJobFactory
 	s.mu.Unlock()
 	if factory == nil {
-		return s.renderLegacy(ctx, projectID)
+		return nil, fmt.Errorf("editing: asynchronous render service is not configured; configure the Video Indexer endpoint and API key in Settings: %w", errNotConfigured)
 	}
 	client, err := factory(ctx)
 	if err != nil {
-		if errors.Is(err, errNotConfigured) {
-			return s.renderLegacy(ctx, projectID)
-		}
 		return nil, fmt.Errorf("editing: render service: %w", err)
 	}
 	return s.renderAsync(ctx, projectID, func(context.Context) (asyncRenderJobClient, error) { return client, nil })
@@ -112,7 +109,7 @@ func (s *EditingService) renderAsync(ctx context.Context, projectID string, fact
 	outputName := safeRenderOutputName(project.Name)
 	preset := strings.TrimSpace(project.RenderPreset)
 	if preset == "" {
-		preset = "h264-1080p"
+		preset = "mpeg4-1080p"
 	}
 	job := editing.RenderJob{ID: localID, ProjectID: projectID, Status: "submitted", OutputName: outputName, TotalMS: totalMS, Message: "Submitting render job."}
 	renderCtx, cancel := context.WithCancel(ctx)
@@ -228,12 +225,16 @@ func (s *EditingService) buildAsyncRenderTimeline(ctx context.Context, project e
 		byID[asset.ID] = libraryAssetRef{itemID: asset.CloudAssetID, name: asset.Name}
 	}
 	var clips []videoindexerstudio.RenderClipRequest
+	var clipTransitions []*editing.Transition
 	var totalMS int64
 	for _, track := range project.Timeline.Tracks {
 		if track.Kind != "" && track.Kind != "video" {
 			continue
 		}
 		for _, clip := range track.Clips {
+			if clip.Transition != nil && (strings.ToLower(strings.TrimSpace(clip.Transition.Kind)) != "cut" || clip.Transition.DurationMS != 0) {
+				return nil, nil, 0, fmt.Errorf("editing: clip %q has unsupported transition %q with duration %dms; only zero-duration cuts are supported", clip.ID, clip.Transition.Kind, clip.Transition.DurationMS)
+			}
 			asset, exists := byID[clip.SourceAssetID]
 			if !exists || strings.TrimSpace(asset.itemID) == "" {
 				return nil, nil, 0, fmt.Errorf("editing: source asset %q has no OneDrive item", clip.SourceAssetID)
@@ -242,6 +243,7 @@ func (s *EditingService) buildAsyncRenderTimeline(ctx context.Context, project e
 				return nil, nil, 0, fmt.Errorf("editing: clip %q has an invalid trim range", clip.ID)
 			}
 			clips = append(clips, videoindexerstudio.RenderClipRequest{ID: clip.ID, OneDriveItemID: asset.itemID, SourceName: asset.name, InMS: clip.InMS, OutMS: clip.OutMS})
+			clipTransitions = append(clipTransitions, clip.Transition)
 			totalMS += clip.OutMS - clip.InMS
 		}
 	}
@@ -250,7 +252,12 @@ func (s *EditingService) buildAsyncRenderTimeline(ctx context.Context, project e
 	}
 	transitions := make([]videoindexerstudio.RenderTransitionRequest, 0, len(clips)-1)
 	for i := 1; i < len(clips); i++ {
-		transitions = append(transitions, videoindexerstudio.RenderTransitionRequest{Kind: "cut"})
+		transition := videoindexerstudio.RenderTransitionRequest{Kind: "cut"}
+		if saved := clipTransitions[i]; saved != nil {
+			transition.Kind = strings.ToLower(strings.TrimSpace(saved.Kind))
+			transition.DurationMS = saved.DurationMS
+		}
+		transitions = append(transitions, transition)
 	}
 	return clips, transitions, totalMS, nil
 }
@@ -388,6 +395,12 @@ func (s *EditingService) CancelRender(ctx context.Context, jobID string) (*editi
 	}
 	if cancel != nil {
 		cancel()
+	}
+	s.mu.Lock()
+	latest := s.jobs[jobID]
+	s.mu.Unlock()
+	if latest != nil {
+		return cloneEditingRenderJob(*latest), remoteErr
 	}
 	return cloneEditingRenderJob(job), remoteErr
 }

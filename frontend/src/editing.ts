@@ -303,9 +303,8 @@ export function renderEditingPanel(state: EditingViewState): string {
       <div class="timeline-editor">
         <div class="timeline-toolbar">
           <select class="preset-select" data-action="set-preset">
-            <option value="h264-1080p" ${project?.renderPreset === "h264-1080p" || !project?.renderPreset ? "selected" : ""}>H.264 1080p (Web)</option>
-            <option value="h264-720p" ${project?.renderPreset === "h264-720p" ? "selected" : ""}>H.264 720p (Fast)</option>
-            <option value="h265-1080p" ${project?.renderPreset === "h265-1080p" ? "selected" : ""}>H.265 1080p (Efficient)</option>
+            <option value="mpeg4-1080p" ${project?.renderPreset === "mpeg4-1080p" || !project?.renderPreset ? "selected" : ""}>MPEG-4 1080p (LGPL)</option>
+            <option value="mpeg4-720p" ${project?.renderPreset === "mpeg4-720p" ? "selected" : ""}>MPEG-4 720p (LGPL)</option>
           </select>
           <button class="button secondary small" data-action="save-project">Save project</button>
           <span style="flex:1"></span>

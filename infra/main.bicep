@@ -40,6 +40,9 @@ param apiMaxReplicas int = 5
 param workerMaxReplicas int = 10
 @minValue(1)
 param ffmpegWorkerMaxReplicas int = 3
+@description('Days to retain successfully streamed render outputs before Blob lifecycle deletion.')
+@minValue(1)
+param renderOutputRetentionDays int = 7
 
 var serviceName = 'azure-video-indexer-service'
 var apiAppName = 'video-indexer-api'
@@ -184,6 +187,39 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
 resource storageBlobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
   parent: storageAccount
   name: 'default'
+}
+
+resource storageLifecyclePolicy 'Microsoft.Storage/storageAccounts/managementPolicies@2023-05-01' = {
+  parent: storageAccount
+  name: 'default'
+  properties: {
+    policy: {
+      rules: [
+        {
+          name: 'expire-render-outputs'
+          enabled: true
+          type: 'Lifecycle'
+          definition: {
+            filters: {
+              blobTypes: [
+                'blockBlob'
+              ]
+              prefixMatch: [
+                '${stagingContainerName}/render-outputs/'
+              ]
+            }
+            actions: {
+              baseBlob: {
+                delete: {
+                  daysAfterModificationGreaterThan: renderOutputRetentionDays
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
 }
 
 resource stagingContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
