@@ -874,6 +874,24 @@ func TestVideoIndexerCreateEditProjectFromLegacyCompositionDraft(t *testing.T) {
 	if jobs.jobs[0].ProjectID != project.ID {
 		t.Fatalf("legacy composition did not persist project linkage: %#v", jobs.jobs[0])
 	}
+
+	for _, status := range []string{videoIndexerJobStatusPending, videoIndexerJobStatusFailed, videoIndexerJobStatusCanceled} {
+		t.Run(status, func(t *testing.T) {
+			unreadyJob := jobs.jobs[0]
+			unreadyJob.Status = status
+			unreadyJob.ProjectID = ""
+			unreadyProjects := &memoryEditingProjectStore{}
+			unreadyEditing := NewEditingService(&fakeLibraryStore{assets: assets}, nil, nil, unreadyProjects)
+			unreadyService := NewVideoIndexerStudioService(&fakeLibraryStore{assets: assets}, nil, unreadyEditing, &fakeVideoIndexerClient{}, &memoryVideoIndexerJobStore{jobs: []VideoIndexerStudioJob{unreadyJob}})
+
+			if _, err := unreadyService.CreateEditProject(context.Background(), unreadyJob.ID, ""); err == nil {
+				t.Fatalf("CreateEditProject accepted a %s legacy composition", status)
+			}
+			if len(unreadyProjects.projects) != 0 {
+				t.Fatalf("CreateEditProject saved a project for a %s legacy composition", status)
+			}
+		})
+	}
 }
 
 func TestVideoIndexerCreateEditProjectFromMultiVideoComposition(t *testing.T) {
@@ -920,6 +938,23 @@ func TestVideoIndexerCreateEditProjectFromMultiVideoComposition(t *testing.T) {
 	if project.OriginJobID != composition.ID || project.SuggestionID != "multi-video-narrative" || project.PromptVersion != "multi-video-composition-v2" {
 		t.Fatalf("project provenance changed: %#v", project)
 	}
+
+	t.Run("rejects persisted draft mismatch", func(t *testing.T) {
+		mismatched := *composition
+		mismatched.TimelineDrafts = append([]videoindexerstudio.TimelineDraft(nil), composition.TimelineDrafts...)
+		mismatched.TimelineDrafts[0].PrimaryVideoTrack.Clips = append([]videoindexerstudio.TimelineClip(nil), composition.TimelineDrafts[0].PrimaryVideoTrack.Clips...)
+		mismatched.TimelineDrafts[0].PrimaryVideoTrack.Clips[0].SourceAssetID = "different-asset"
+		mismatchProjects := &memoryEditingProjectStore{}
+		mismatchEditing := NewEditingService(&fakeLibraryStore{assets: assets}, nil, nil, mismatchProjects)
+		mismatchService := NewVideoIndexerStudioService(&fakeLibraryStore{assets: assets}, nil, mismatchEditing, &fakeVideoIndexerClient{}, &memoryVideoIndexerJobStore{jobs: []VideoIndexerStudioJob{mismatched}})
+
+		if _, err := mismatchService.CreateEditProject(context.Background(), mismatched.ID, "multi-video-narrative"); err == nil {
+			t.Fatal("CreateEditProject accepted a composition draft with mismatched provenance")
+		}
+		if len(mismatchProjects.projects) != 0 {
+			t.Fatalf("CreateEditProject saved a project from a mismatched composition draft: %#v", mismatchProjects.projects)
+		}
+	})
 }
 
 func TestBuildMultiVideoCompositionIsDeterministicAndRejectsIncompleteEvidence(t *testing.T) {

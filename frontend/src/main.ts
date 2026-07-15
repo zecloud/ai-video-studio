@@ -1219,7 +1219,7 @@ function render(): void {
               if (project) {
                 state.activeView = "editing";
                 state.editing.activeProject = project;
-                void loadEditingData(state.editing).then(() => render());
+                void loadEditingData(state.editing, project.id).then(() => render());
                 return;
               }
               render();
@@ -1237,7 +1237,7 @@ function render(): void {
         const projectID = openProject.dataset.projectId || "";
         if (projectID) {
           state.activeView = "editing";
-          void loadEditingData(state.editing).then(() => {
+          void loadEditingData(state.editing, projectID).then(() => {
             const project = state.editing.projects.find((item) => item.id === projectID);
             if (project) {
               state.editing.activeProject = project;

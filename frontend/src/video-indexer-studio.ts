@@ -652,7 +652,9 @@ function renderCompositionProposal(job: BackendModels.VideoIndexerStudioJob, sta
               <div class="kv"><span>Recommendation version</span><strong>${escapeHTML(legacyDraft.promptVersion)}</strong></div>
               <div class="kv"><span>Ordered clips</span><strong>${legacyDraft.primaryVideoTrack?.clips?.length || 0}</strong></div>
             </div>
-            <div class="actions composition-action"><button type="button" class="button" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}" data-suggestion-id="${escapeHTML(legacyDraft.suggestionId)}" ${state.activeAction ? "disabled" : ""}>${state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id ? "Creating persisted project..." : "Create persisted edit project"}</button></div>
+            <div class="actions composition-action">${job.projectId?.trim()
+              ? `<button type="button" class="button" data-action="video-indexer-open-project" data-project-id="${escapeHTML(job.projectId)}">Open persisted edit project</button>`
+              : `<button type="button" class="button" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}" data-suggestion-id="${escapeHTML(legacyDraft.suggestionId)}" ${state.activeAction ? "disabled" : ""}>${state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id ? "Creating persisted project..." : "Create persisted edit project"}</button>`}</div>
           </div>
         </section>`;
     }
