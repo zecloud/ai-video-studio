@@ -11,11 +11,12 @@ export interface EditingViewState {
   capabilities: EditingCapabilities | null;
   renderJob: RenderJob | null;
   renderInFlight: boolean;
+  selectedClipID: string | null;
   message: string;
 }
 
 export function createEditingState(): EditingViewState {
-  return { projects: [], activeProject: null, assets: [], capabilities: null, renderJob: null, renderInFlight: false, message: "" };
+  return { projects: [], activeProject: null, assets: [], capabilities: null, renderJob: null, renderInFlight: false, selectedClipID: null, message: "" };
 }
 
 function escapeHTML(value: string): string {
@@ -52,6 +53,8 @@ export async function loadEditingData(state: EditingViewState): Promise<void> {
     state.capabilities = capabilities;
     const currentProject = state.activeProject ? state.projects.find((project) => project.id === state.activeProject!.id) : null;
     state.activeProject = currentProject ?? state.projects[0] ?? null;
+    const currentClips = videoClips(state.activeProject);
+    if (!currentClips.some((clip) => clip.id === state.selectedClipID)) state.selectedClipID = currentClips[0]?.id ?? null;
     const projectJobs = (jobs ?? []).filter((job): job is RenderJob => Boolean(job) && job!.projectId === state.activeProject?.id);
     state.renderJob = projectJobs.at(-1) ?? null;
     state.renderInFlight = isActiveRender(state.renderJob);
@@ -65,9 +68,47 @@ export async function createNewProject(state: EditingViewState, name: string): P
     const project = await EditingService.CreateDraftProject(name);
     state.projects = [...state.projects, project];
     state.activeProject = project;
+    state.selectedClipID = null;
     state.renderJob = null;
     state.message = "Created an empty edit project.";
   } catch (err) { state.message = `Failed to create project: ${String(err)}`; }
+}
+
+export function selectClip(state: EditingViewState, clipID: string): void {
+  if (!videoClips(state.activeProject).some((clip) => clip.id === clipID)) return;
+  state.selectedClipID = clipID;
+}
+
+export async function deleteSelectedClip(state: EditingViewState): Promise<void> {
+  await mutateSelectedClip(state, "delete");
+}
+
+export async function moveSelectedClipEarlier(state: EditingViewState): Promise<void> {
+  await mutateSelectedClip(state, "earlier");
+}
+
+export async function moveSelectedClipLater(state: EditingViewState): Promise<void> {
+  await mutateSelectedClip(state, "later");
+}
+
+async function mutateSelectedClip(state: EditingViewState, operation: "delete" | "earlier" | "later"): Promise<void> {
+  const project = state.activeProject;
+  const clipID = state.selectedClipID;
+  if (!project || !clipID) return;
+  try {
+    const updated = operation === "delete"
+      ? await EditingService.DeleteClip(project.id, clipID)
+      : operation === "earlier"
+        ? await EditingService.MoveClipEarlier(project.id, clipID)
+        : await EditingService.MoveClipLater(project.id, clipID);
+    state.activeProject = updated;
+    state.projects = state.projects.map((item) => item.id === updated.id ? updated : item);
+    const remaining = videoClips(updated);
+    state.selectedClipID = remaining.some((clip) => clip.id === clipID) ? clipID : remaining.at(-1)?.id ?? null;
+    state.message = operation === "delete" ? "Clip removed and project saved." : "Clip order updated and project saved.";
+  } catch (err) {
+    state.message = `Could not update the clip: ${String(err)}`;
+  }
 }
 
 export async function saveProject(state: EditingViewState): Promise<void> {
@@ -148,7 +189,7 @@ export function renderEditingPanel(state: EditingViewState): string {
           <div><p class="edit-kicker">Ordered video track</p><h2 id="edit-timeline-title">${project ? escapeHTML(project.name) : "Select or create a project"}</h2><p>${project?.originJobId ? `Created from Smart Edit job ${escapeHTML(project.originJobId)}.` : "Only persisted source ranges are shown. Preview and timing preparation are not available yet."}</p></div>
           ${project ? `<div class="edit-provenance"><span>Sources</span><strong>${project.assetIds?.length || 0}</strong><span>Suggestion</span><strong>${escapeHTML(project.suggestionId || "Not recorded")}</strong></div>` : ""}
         </section>
-        ${project ? renderOrderedTrack(clips, state.assets) : ""}
+        ${project ? renderOrderedTrack(clips, state.assets, state.selectedClipID, capabilities) : ""}
         ${project && clips.length === 0 ? `<div class="edit-unavailable"><strong>This project has no renderable clips.</strong><p>Addition and trim ranges require media preparation, which has not been implemented. Create a project from a Smart Edit suggestion with grounded time ranges.</p></div>` : ""}
         ${project ? renderRenderPanel(state, preset, renderable) : ""}
       </main>
@@ -161,9 +202,15 @@ export function renderEditingPanel(state: EditingViewState): string {
   </div>`;
 }
 
-function renderOrderedTrack(clips: ReturnType<typeof videoClips>, assets: ProjectAsset[]): string {
+function renderOrderedTrack(clips: ReturnType<typeof videoClips>, assets: ProjectAsset[], selectedClipID: string | null, capabilities: EditingCapabilities | null): string {
   const byID = new Map(assets.map((asset) => [asset.id, asset]));
-  return `<section class="edit-track" aria-label="Ordered video clips"><div class="edit-track-head"><strong>Video</strong><span>${clips.length} / 64 clips · Cuts only</span></div>${clips.length ? `<ol>${clips.map((clip, index) => { const asset = byID.get(clip.sourceAssetId); return `<li><span class="edit-clip-number">${index + 1}</span><div><strong>${escapeHTML(asset?.name || clip.sourceAssetId)}</strong><small>Source range ${clip.inMs} ms - ${clip.outMs} ms</small></div><span class="edit-clip-cut">${index ? "Cut" : "Start"}</span></li>`; }).join("")}</ol>` : ""}</section>`;
+  return `<section class="edit-track" aria-label="Ordered video clips"><div class="edit-track-head"><strong>Video</strong><span>${clips.length} / ${capabilities?.maximumRenderClips ?? 64} clips · Cuts only</span></div>${clips.length ? `<ol>${clips.map((clip, index) => {
+    const asset = byID.get(clip.sourceAssetId);
+    const selected = clip.id === selectedClipID;
+    const canMove = Boolean(capabilities?.clipReordering);
+    const canDelete = Boolean(capabilities?.clipRemoval && clips.length > 1);
+    return `<li class="${selected ? "is-selected" : ""}"><button type="button" class="edit-clip-select" data-action="select-clip" data-clip-id="${escapeHTML(clip.id)}" aria-pressed="${selected}"><span class="edit-clip-number">${index + 1}</span><span><strong>${escapeHTML(asset?.name || clip.sourceAssetId)}</strong><small>Source range ${clip.inMs} ms - ${clip.outMs} ms</small></span><span class="edit-clip-cut">${index ? "Cut" : "Start"}</span></button>${selected && (canMove || canDelete) ? `<span class="edit-clip-actions" aria-label="Edit selected clip">${canMove ? `<button type="button" class="edit-clip-action" data-action="move-clip-earlier" ${index === 0 ? "disabled" : ""}>Move earlier</button><button type="button" class="edit-clip-action" data-action="move-clip-later" ${index === clips.length - 1 ? "disabled" : ""}>Move later</button>` : ""}${canDelete ? `<button type="button" class="edit-clip-action is-danger" data-action="delete-clip">Remove</button>` : ""}</span>` : ""}</li>`;
+  }).join("")}</ol>` : ""}</section>`;
 }
 
 function renderRenderPanel(state: EditingViewState, preset: string, renderable: boolean): string {

@@ -36,6 +36,9 @@ func TestEditingCapabilitiesReportsConfiguredRenderContract(t *testing.T) {
 	if !capabilities.RenderReady || capabilities.EligibleAssetCount != 1 {
 		t.Fatalf("unexpected capabilities: %#v", capabilities)
 	}
+	if !capabilities.ClipRemoval || !capabilities.ClipReordering {
+		t.Fatalf("implemented clip mutations were not exposed: %#v", capabilities)
+	}
 	if capabilities.ManualClipAddition || capabilities.Trimming || capabilities.Preview || capabilities.Thumbnails {
 		t.Fatalf("unsupported features were exposed: %#v", capabilities)
 	}

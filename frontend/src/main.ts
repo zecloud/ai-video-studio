@@ -66,6 +66,10 @@ import {
   saveProject,
   startRender,
   cancelRender,
+  deleteSelectedClip,
+  moveSelectedClipEarlier,
+  moveSelectedClipLater,
+  selectClip,
 } from "./editing.js";
 
 type Tone = "success" | "warning" | "danger" | "info" | "neutral";
@@ -1232,6 +1236,31 @@ function render(): void {
         // Editing Studio actions
         root.addEventListener("click", (event) => {
           const target = event.target as HTMLElement;
+
+          const selectClipBtn = target.closest<HTMLElement>("[data-action='select-clip']");
+          if (selectClipBtn) {
+            selectClip(state.editing, selectClipBtn.dataset.clipId || "");
+            render();
+            return;
+          }
+
+          const deleteClipBtn = target.closest<HTMLElement>("[data-action='delete-clip']");
+          if (deleteClipBtn) {
+            void deleteSelectedClip(state.editing).then(() => render());
+            return;
+          }
+
+          const moveEarlierBtn = target.closest<HTMLElement>("[data-action='move-clip-earlier']");
+          if (moveEarlierBtn) {
+            void moveSelectedClipEarlier(state.editing).then(() => render());
+            return;
+          }
+
+          const moveLaterBtn = target.closest<HTMLElement>("[data-action='move-clip-later']");
+          if (moveLaterBtn) {
+            void moveSelectedClipLater(state.editing).then(() => render());
+            return;
+          }
 
           // Save project
           const saveBtn = target.closest<HTMLElement>("[data-action='save-project']");

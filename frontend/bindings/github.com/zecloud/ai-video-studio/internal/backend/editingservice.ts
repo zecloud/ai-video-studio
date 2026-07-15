@@ -34,6 +34,15 @@ export function CreateDraftProject(name: string): $CancellablePromise<editing$0.
     });
 }
 
+/**
+ * DeleteClip removes one existing Smart Edit clip and persists the canonical project.
+ */
+export function DeleteClip(projectID: string, clipID: string): $CancellablePromise<editing$0.EditProject> {
+    return $Call.ByID(2542314705, projectID, clipID).then(($result: any) => {
+        return $$createType3($result);
+    });
+}
+
 export function DeleteProject(projectID: string): $CancellablePromise<void> {
     return $Call.ByID(3833426788, projectID);
 }
@@ -41,6 +50,24 @@ export function DeleteProject(projectID: string): $CancellablePromise<void> {
 export function ListProjects(): $CancellablePromise<editing$0.EditProject[]> {
     return $Call.ByID(3962621678).then(($result: any) => {
         return $$createType4($result);
+    });
+}
+
+/**
+ * MoveClipEarlier moves one existing Smart Edit clip by one position and persists the canonical project.
+ */
+export function MoveClipEarlier(projectID: string, clipID: string): $CancellablePromise<editing$0.EditProject> {
+    return $Call.ByID(3911695009, projectID, clipID).then(($result: any) => {
+        return $$createType3($result);
+    });
+}
+
+/**
+ * MoveClipLater moves one existing Smart Edit clip by one position and persists the canonical project.
+ */
+export function MoveClipLater(projectID: string, clipID: string): $CancellablePromise<editing$0.EditProject> {
+    return $Call.ByID(24560219, projectID, clipID).then(($result: any) => {
+        return $$createType3($result);
     });
 }
 

@@ -49,6 +49,8 @@ func (s *EditingService) Capabilities(ctx context.Context) (EditingCapabilities,
 		CutTransitions:         true,
 		RenderProgress:         true,
 		RenderCancellation:     true,
+		ClipRemoval:            true,
+		ClipReordering:         true,
 	}
 	if s == nil {
 		capabilities.RenderRecoveryMessage = "Editing service is unavailable. Restart the app and try again."
