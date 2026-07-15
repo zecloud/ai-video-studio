@@ -12,6 +12,178 @@ import * as json$0 from "../../../../../encoding/json/models.js";
 // @ts-ignore: Unused imports
 import * as time$0 from "../../../../../time/models.js";
 
+export class CompositionClip {
+    "id": string;
+    "sourceAssetId": string;
+    "suggestionId": string;
+    "title": string;
+    "reason": string;
+    "startMs": number;
+    "endMs": number;
+    "score": number;
+    "sourceRefs": SourceRef[];
+
+    /** Creates a new CompositionClip instance. */
+    constructor($$source: Partial<CompositionClip> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("sourceAssetId" in $$source)) {
+            this["sourceAssetId"] = "";
+        }
+        if (!("suggestionId" in $$source)) {
+            this["suggestionId"] = "";
+        }
+        if (!("title" in $$source)) {
+            this["title"] = "";
+        }
+        if (!("reason" in $$source)) {
+            this["reason"] = "";
+        }
+        if (!("startMs" in $$source)) {
+            this["startMs"] = 0;
+        }
+        if (!("endMs" in $$source)) {
+            this["endMs"] = 0;
+        }
+        if (!("score" in $$source)) {
+            this["score"] = 0;
+        }
+        if (!("sourceRefs" in $$source)) {
+            this["sourceRefs"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CompositionClip instance from a string or object.
+     */
+    static createFrom($$source: any = {}): CompositionClip {
+        const $$createField8_0 = $$createType1;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("sourceRefs" in $$parsedSource) {
+            $$parsedSource["sourceRefs"] = $$createField8_0($$parsedSource["sourceRefs"]);
+        }
+        return new CompositionClip($$parsedSource as Partial<CompositionClip>);
+    }
+}
+
+/**
+ * CompositionEditPlan is the grounded, ordered recommendation for a Smart Edit
+ * composition. It is deliberately separate from EditPlan so single-video
+ * planner responses remain backwards compatible.
+ */
+export class CompositionEditPlan {
+    "schemaVersion": number;
+    "compositionId": string;
+    "title": string;
+    "summary": string;
+    "rankingMode": string;
+    "recommendationVersion": string;
+    "evidenceFingerprint": string;
+    "sourceAssetIds": string[];
+    "sources": CompositionSourceStatus[];
+    "clips": CompositionClip[];
+    "sourceRefs": SourceRef[];
+
+    /** Creates a new CompositionEditPlan instance. */
+    constructor($$source: Partial<CompositionEditPlan> = {}) {
+        if (!("schemaVersion" in $$source)) {
+            this["schemaVersion"] = 0;
+        }
+        if (!("compositionId" in $$source)) {
+            this["compositionId"] = "";
+        }
+        if (!("title" in $$source)) {
+            this["title"] = "";
+        }
+        if (!("summary" in $$source)) {
+            this["summary"] = "";
+        }
+        if (!("rankingMode" in $$source)) {
+            this["rankingMode"] = "";
+        }
+        if (!("recommendationVersion" in $$source)) {
+            this["recommendationVersion"] = "";
+        }
+        if (!("evidenceFingerprint" in $$source)) {
+            this["evidenceFingerprint"] = "";
+        }
+        if (!("sourceAssetIds" in $$source)) {
+            this["sourceAssetIds"] = [];
+        }
+        if (!("sources" in $$source)) {
+            this["sources"] = [];
+        }
+        if (!("clips" in $$source)) {
+            this["clips"] = [];
+        }
+        if (!("sourceRefs" in $$source)) {
+            this["sourceRefs"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CompositionEditPlan instance from a string or object.
+     */
+    static createFrom($$source: any = {}): CompositionEditPlan {
+        const $$createField7_0 = $$createType2;
+        const $$createField8_0 = $$createType4;
+        const $$createField9_0 = $$createType6;
+        const $$createField10_0 = $$createType1;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("sourceAssetIds" in $$parsedSource) {
+            $$parsedSource["sourceAssetIds"] = $$createField7_0($$parsedSource["sourceAssetIds"]);
+        }
+        if ("sources" in $$parsedSource) {
+            $$parsedSource["sources"] = $$createField8_0($$parsedSource["sources"]);
+        }
+        if ("clips" in $$parsedSource) {
+            $$parsedSource["clips"] = $$createField9_0($$parsedSource["clips"]);
+        }
+        if ("sourceRefs" in $$parsedSource) {
+            $$parsedSource["sourceRefs"] = $$createField10_0($$parsedSource["sourceRefs"]);
+        }
+        return new CompositionEditPlan($$parsedSource as Partial<CompositionEditPlan>);
+    }
+}
+
+export class CompositionSourceStatus {
+    "assetId": string;
+    "analysisJobId": string;
+    "status": string;
+    "durationMs": number;
+
+    /** Creates a new CompositionSourceStatus instance. */
+    constructor($$source: Partial<CompositionSourceStatus> = {}) {
+        if (!("assetId" in $$source)) {
+            this["assetId"] = "";
+        }
+        if (!("analysisJobId" in $$source)) {
+            this["analysisJobId"] = "";
+        }
+        if (!("status" in $$source)) {
+            this["status"] = "";
+        }
+        if (!("durationMs" in $$source)) {
+            this["durationMs"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CompositionSourceStatus instance from a string or object.
+     */
+    static createFrom($$source: any = {}): CompositionSourceStatus {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new CompositionSourceStatus($$parsedSource as Partial<CompositionSourceStatus>);
+    }
+}
+
 export class EditPlan {
     "schemaVersion": number;
     "videoId": string;
@@ -48,10 +220,10 @@ export class EditPlan {
      * Creates a new EditPlan instance from a string or object.
      */
     static createFrom($$source: any = {}): EditPlan {
-        const $$createField3_0 = $$createType0;
-        const $$createField6_0 = $$createType2;
-        const $$createField7_0 = $$createType4;
-        const $$createField8_0 = $$createType6;
+        const $$createField3_0 = $$createType2;
+        const $$createField6_0 = $$createType8;
+        const $$createField7_0 = $$createType10;
+        const $$createField8_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("sourceAssetIds" in $$parsedSource) {
             $$parsedSource["sourceAssetIds"] = $$createField3_0($$parsedSource["sourceAssetIds"]);
@@ -110,8 +282,8 @@ export class EditSuggestion {
      * Creates a new EditSuggestion instance from a string or object.
      */
     static createFrom($$source: any = {}): EditSuggestion {
-        const $$createField6_0 = $$createType6;
-        const $$createField7_0 = $$createType8;
+        const $$createField6_0 = $$createType1;
+        const $$createField7_0 = $$createType12;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("sourceRefs" in $$parsedSource) {
             $$parsedSource["sourceRefs"] = $$createField6_0($$parsedSource["sourceRefs"]);
@@ -163,7 +335,7 @@ export class Highlight {
      * Creates a new Highlight instance from a string or object.
      */
     static createFrom($$source: any = {}): Highlight {
-        const $$createField6_0 = $$createType6;
+        const $$createField6_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("sourceRefs" in $$parsedSource) {
             $$parsedSource["sourceRefs"] = $$createField6_0($$parsedSource["sourceRefs"]);
@@ -254,9 +426,9 @@ export class MediaSignals {
      * Creates a new MediaSignals instance from a string or object.
      */
     static createFrom($$source: any = {}): MediaSignals {
-        const $$createField2_0 = $$createType9;
-        const $$createField3_0 = $$createType10;
-        const $$createField4_0 = $$createType12;
+        const $$createField2_0 = $$createType13;
+        const $$createField3_0 = $$createType14;
+        const $$createField4_0 = $$createType16;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("video" in $$parsedSource) {
             $$parsedSource["video"] = $$createField2_0($$parsedSource["video"]);
@@ -395,7 +567,7 @@ export class SuggestedClip {
      * Creates a new SuggestedClip instance from a string or object.
      */
     static createFrom($$source: any = {}): SuggestedClip {
-        const $$createField7_0 = $$createType6;
+        const $$createField7_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("sourceRefs" in $$parsedSource) {
             $$parsedSource["sourceRefs"] = $$createField7_0($$parsedSource["sourceRefs"]);
@@ -464,7 +636,7 @@ export class TimelineClip {
      * Creates a new TimelineClip instance from a string or object.
      */
     static createFrom($$source: any = {}): TimelineClip {
-        const $$createField6_0 = $$createType13;
+        const $$createField6_0 = $$createType17;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("transition" in $$parsedSource) {
             $$parsedSource["transition"] = $$createField6_0($$parsedSource["transition"]);
@@ -505,7 +677,7 @@ export class TimelineDraft {
      * Creates a new TimelineDraft instance from a string or object.
      */
     static createFrom($$source: any = {}): TimelineDraft {
-        const $$createField4_0 = $$createType14;
+        const $$createField4_0 = $$createType18;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("primaryVideoTrack" in $$parsedSource) {
             $$parsedSource["primaryVideoTrack"] = $$createField4_0($$parsedSource["primaryVideoTrack"]);
@@ -538,7 +710,7 @@ export class TimelineTrack {
      * Creates a new TimelineTrack instance from a string or object.
      */
     static createFrom($$source: any = {}): TimelineTrack {
-        const $$createField2_0 = $$createType16;
+        const $$createField2_0 = $$createType20;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("clips" in $$parsedSource) {
             $$parsedSource["clips"] = $$createField2_0($$parsedSource["clips"]);
@@ -589,14 +761,14 @@ export class VideoIndexInsights {
      * Creates a new VideoIndexInsights instance from a string or object.
      */
     static createFrom($$source: any = {}): VideoIndexInsights {
-        const $$createField0_0 = $$createType18;
-        const $$createField1_0 = $$createType20;
-        const $$createField2_0 = $$createType22;
-        const $$createField3_0 = $$createType24;
-        const $$createField4_0 = $$createType26;
-        const $$createField5_0 = $$createType28;
-        const $$createField6_0 = $$createType30;
-        const $$createField7_0 = $$createType32;
+        const $$createField0_0 = $$createType22;
+        const $$createField1_0 = $$createType24;
+        const $$createField2_0 = $$createType26;
+        const $$createField3_0 = $$createType28;
+        const $$createField4_0 = $$createType30;
+        const $$createField5_0 = $$createType32;
+        const $$createField6_0 = $$createType34;
+        const $$createField7_0 = $$createType36;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("speakers" in $$parsedSource) {
             $$parsedSource["speakers"] = $$createField0_0($$parsedSource["speakers"]);
@@ -658,7 +830,7 @@ export class VideoIndexKeyframe {
      * Creates a new VideoIndexKeyframe instance from a string or object.
      */
     static createFrom($$source: any = {}): VideoIndexKeyframe {
-        const $$createField7_0 = $$createType33;
+        const $$createField7_0 = $$createType37;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("thumbnail" in $$parsedSource) {
             $$parsedSource["thumbnail"] = $$createField7_0($$parsedSource["thumbnail"]);
@@ -738,7 +910,7 @@ export class VideoIndexOCR {
      * Creates a new VideoIndexOCR instance from a string or object.
      */
     static createFrom($$source: any = {}): VideoIndexOCR {
-        const $$createField8_0 = $$createType34;
+        const $$createField8_0 = $$createType38;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("bounds" in $$parsedSource) {
             $$parsedSource["bounds"] = $$createField8_0($$parsedSource["bounds"]);
@@ -781,7 +953,7 @@ export class VideoIndexObject {
      * Creates a new VideoIndexObject instance from a string or object.
      */
     static createFrom($$source: any = {}): VideoIndexObject {
-        const $$createField9_0 = $$createType33;
+        const $$createField9_0 = $$createType37;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("thumbnail" in $$parsedSource) {
             $$parsedSource["thumbnail"] = $$createField9_0($$parsedSource["thumbnail"]);
@@ -840,11 +1012,11 @@ export class VideoIndexResult {
      * Creates a new VideoIndexResult instance from a string or object.
      */
     static createFrom($$source: any = {}): VideoIndexResult {
-        const $$createField5_0 = $$createType0;
-        const $$createField6_0 = $$createType0;
-        const $$createField7_0 = $$createType36;
-        const $$createField8_0 = $$createType37;
-        const $$createField9_0 = $$createType39;
+        const $$createField5_0 = $$createType2;
+        const $$createField6_0 = $$createType2;
+        const $$createField7_0 = $$createType40;
+        const $$createField8_0 = $$createType41;
+        const $$createField9_0 = $$createType43;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("sourceLanguages" in $$parsedSource) {
             $$parsedSource["sourceLanguages"] = $$createField5_0($$parsedSource["sourceLanguages"]);
@@ -893,7 +1065,7 @@ export class VideoIndexScene {
      * Creates a new VideoIndexScene instance from a string or object.
      */
     static createFrom($$source: any = {}): VideoIndexScene {
-        const $$createField6_0 = $$createType40;
+        const $$createField6_0 = $$createType44;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("thumbnail" in $$parsedSource) {
             $$parsedSource["thumbnail"] = $$createField6_0($$parsedSource["thumbnail"]);
@@ -931,8 +1103,8 @@ export class VideoIndexShot {
      * Creates a new VideoIndexShot instance from a string or object.
      */
     static createFrom($$source: any = {}): VideoIndexShot {
-        const $$createField5_0 = $$createType0;
-        const $$createField6_0 = $$createType0;
+        const $$createField5_0 = $$createType2;
+        const $$createField6_0 = $$createType2;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("tags" in $$parsedSource) {
             $$parsedSource["tags"] = $$createField5_0($$parsedSource["tags"]);
@@ -963,7 +1135,7 @@ export class VideoIndexSpeaker {
      * Creates a new VideoIndexSpeaker instance from a string or object.
      */
     static createFrom($$source: any = {}): VideoIndexSpeaker {
-        const $$createField3_0 = $$createType0;
+        const $$createField3_0 = $$createType2;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("transcriptIds" in $$parsedSource) {
             $$parsedSource["transcriptIds"] = $$createField3_0($$parsedSource["transcriptIds"]);
@@ -1037,44 +1209,48 @@ export class VideoIndexVideo {
 }
 
 // Private type creation functions
-const $$createType0 = $Create.Array($Create.Any);
-const $$createType1 = Highlight.createFrom;
-const $$createType2 = $Create.Array($$createType1);
-const $$createType3 = EditSuggestion.createFrom;
+const $$createType0 = SourceRef.createFrom;
+const $$createType1 = $Create.Array($$createType0);
+const $$createType2 = $Create.Array($Create.Any);
+const $$createType3 = CompositionSourceStatus.createFrom;
 const $$createType4 = $Create.Array($$createType3);
-const $$createType5 = SourceRef.createFrom;
+const $$createType5 = CompositionClip.createFrom;
 const $$createType6 = $Create.Array($$createType5);
-const $$createType7 = SuggestedClip.createFrom;
+const $$createType7 = Highlight.createFrom;
 const $$createType8 = $Create.Array($$createType7);
-const $$createType9 = MediaVideoSignals.createFrom;
-const $$createType10 = MediaAudioSignals.createFrom;
-const $$createType11 = SilenceInterval.createFrom;
+const $$createType9 = EditSuggestion.createFrom;
+const $$createType10 = $Create.Array($$createType9);
+const $$createType11 = SuggestedClip.createFrom;
 const $$createType12 = $Create.Array($$createType11);
-const $$createType13 = TimelineTransition.createFrom;
-const $$createType14 = TimelineTrack.createFrom;
-const $$createType15 = TimelineClip.createFrom;
+const $$createType13 = MediaVideoSignals.createFrom;
+const $$createType14 = MediaAudioSignals.createFrom;
+const $$createType15 = SilenceInterval.createFrom;
 const $$createType16 = $Create.Array($$createType15);
-const $$createType17 = VideoIndexSpeaker.createFrom;
-const $$createType18 = $Create.Array($$createType17);
-const $$createType19 = VideoIndexScene.createFrom;
+const $$createType17 = TimelineTransition.createFrom;
+const $$createType18 = TimelineTrack.createFrom;
+const $$createType19 = TimelineClip.createFrom;
 const $$createType20 = $Create.Array($$createType19);
-const $$createType21 = VideoIndexShot.createFrom;
+const $$createType21 = VideoIndexSpeaker.createFrom;
 const $$createType22 = $Create.Array($$createType21);
-const $$createType23 = VideoIndexKeyframe.createFrom;
+const $$createType23 = VideoIndexScene.createFrom;
 const $$createType24 = $Create.Array($$createType23);
-const $$createType25 = VideoIndexTranscript.createFrom;
+const $$createType25 = VideoIndexShot.createFrom;
 const $$createType26 = $Create.Array($$createType25);
-const $$createType27 = VideoIndexOCR.createFrom;
+const $$createType27 = VideoIndexKeyframe.createFrom;
 const $$createType28 = $Create.Array($$createType27);
-const $$createType29 = VideoIndexLabel.createFrom;
+const $$createType29 = VideoIndexTranscript.createFrom;
 const $$createType30 = $Create.Array($$createType29);
-const $$createType31 = VideoIndexObject.createFrom;
+const $$createType31 = VideoIndexOCR.createFrom;
 const $$createType32 = $Create.Array($$createType31);
-const $$createType33 = ThumbnailRef.createFrom;
-const $$createType34 = VideoIndexRect.createFrom;
-const $$createType35 = VideoIndexVideo.createFrom;
+const $$createType33 = VideoIndexLabel.createFrom;
+const $$createType34 = $Create.Array($$createType33);
+const $$createType35 = VideoIndexObject.createFrom;
 const $$createType36 = $Create.Array($$createType35);
-const $$createType37 = VideoIndexInsights.createFrom;
-const $$createType38 = MediaSignals.createFrom;
-const $$createType39 = $Create.Nullable($$createType38);
-const $$createType40 = $Create.Nullable($$createType33);
+const $$createType37 = ThumbnailRef.createFrom;
+const $$createType38 = VideoIndexRect.createFrom;
+const $$createType39 = VideoIndexVideo.createFrom;
+const $$createType40 = $Create.Array($$createType39);
+const $$createType41 = VideoIndexInsights.createFrom;
+const $$createType42 = MediaSignals.createFrom;
+const $$createType43 = $Create.Nullable($$createType42);
+const $$createType44 = $Create.Nullable($$createType37);
