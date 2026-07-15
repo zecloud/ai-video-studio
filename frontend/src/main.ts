@@ -1208,6 +1208,27 @@ function render(): void {
       }
 
       const createProject = target.closest<HTMLButtonElement>("[data-action='video-indexer-create-project']");
+      const openProject = target.closest<HTMLButtonElement>("[data-action='video-indexer-open-project']");
+      if (openProject) {
+        const projectID = openProject.dataset.projectId || "";
+        if (projectID) {
+          state.smartEdit.message = "Opening the persisted edit project...";
+          render();
+          void loadEditingData(state.editing).then(() => {
+            const persistedProject = state.editing.projects.find((project) => project.id === projectID);
+            if (!persistedProject) {
+              state.smartEdit.message = `The persisted edit project ${projectID} could not be loaded.`;
+              render();
+              return;
+            }
+            state.editing.activeProject = persistedProject;
+            state.activeView = "editing";
+            render();
+          });
+        }
+        return;
+      }
+
       if (createProject) {
         const jobID = createProject.dataset.jobId || "";
         const suggestionID = createProject.dataset.suggestionId || "";
@@ -1215,11 +1236,18 @@ function render(): void {
           const creation = createEditProjectFromVideoIndexerJob(state.smartEdit, jobID, suggestionID);
           render();
           void creation
-            .then((project) => {
+            .then(async (project) => {
               if (project) {
+                await loadEditingData(state.editing);
+                const persistedProject = state.editing.projects.find((item) => item.id === project.id);
+                if (!persistedProject) {
+                  state.smartEdit.message = `The edit project ${project.name || project.id} was created but could not be reloaded.`;
+                  render();
+                  return;
+                }
                 state.activeView = "editing";
-                state.editing.activeProject = project;
-                void loadEditingData(state.editing).then(() => render());
+                state.editing.activeProject = persistedProject;
+                render();
                 return;
               }
               render();

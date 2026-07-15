@@ -737,6 +737,9 @@ func TestVideoIndexerGenerateMultiVideoEditReusesCompletedAnalyses(t *testing.T)
 	if len(composition.CompositionPlan.Clips) != 2 || composition.CompositionPlan.Clips[0].SourceAssetID != "asset-2" {
 		t.Fatalf("composition plan did not preserve ranked clips: %#v", composition.CompositionPlan.Clips)
 	}
+	if len(composition.CompositionPlan.Sources) != 2 || composition.CompositionPlan.Sources[0].AssetID != "asset-1" || composition.CompositionPlan.Sources[0].AnalysisJobID != "analysis-1" || composition.CompositionPlan.Sources[1].DurationMs != 2200 {
+		t.Fatalf("composition plan did not retain source analysis status: %#v", composition.CompositionPlan.Sources)
+	}
 	if composition.CompositionPlan.EvidenceFingerprint == "" {
 		t.Fatal("composition plan did not persist its evidence fingerprint")
 	}

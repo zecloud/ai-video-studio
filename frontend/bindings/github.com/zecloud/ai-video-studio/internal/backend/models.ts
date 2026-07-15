@@ -200,6 +200,7 @@ export class VideoIndexerStudioJob {
     "videoIndexerVideoId"?: string;
     "videoIndexResult"?: videoindexerstudio$0.VideoIndexResult | null;
     "editPlan"?: videoindexerstudio$0.EditPlan | null;
+    "compositionPlan"?: videoindexerstudio$0.CompositionEditPlan | null;
     "timelineDrafts"?: videoindexerstudio$0.TimelineDraft[];
     "checkpoints"?: videoindexerstudio$0.JobCheckpoint[];
     "createdAt": string;
@@ -242,6 +243,7 @@ export class VideoIndexerStudioJob {
         const $$createField16_0 = $$createType4;
         const $$createField17_0 = $$createType6;
         const $$createField18_0 = $$createType8;
+        const $$createField19_0 = $$createType10;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("assetIds" in $$parsedSource) {
             $$parsedSource["assetIds"] = $$createField2_0($$parsedSource["assetIds"]);
@@ -255,11 +257,14 @@ export class VideoIndexerStudioJob {
         if ("editPlan" in $$parsedSource) {
             $$parsedSource["editPlan"] = $$createField16_0($$parsedSource["editPlan"]);
         }
+        if ("compositionPlan" in $$parsedSource) {
+            $$parsedSource["compositionPlan"] = $$createField17_0($$parsedSource["compositionPlan"]);
+        }
         if ("timelineDrafts" in $$parsedSource) {
-            $$parsedSource["timelineDrafts"] = $$createField17_0($$parsedSource["timelineDrafts"]);
+            $$parsedSource["timelineDrafts"] = $$createField18_0($$parsedSource["timelineDrafts"]);
         }
         if ("checkpoints" in $$parsedSource) {
-            $$parsedSource["checkpoints"] = $$createField18_0($$parsedSource["checkpoints"]);
+            $$parsedSource["checkpoints"] = $$createField19_0($$parsedSource["checkpoints"]);
         }
         return new VideoIndexerStudioJob($$parsedSource as Partial<VideoIndexerStudioJob>);
     }
@@ -271,7 +276,9 @@ const $$createType1 = videoindexerstudio$0.VideoIndexResult.createFrom;
 const $$createType2 = $Create.Nullable($$createType1);
 const $$createType3 = videoindexerstudio$0.EditPlan.createFrom;
 const $$createType4 = $Create.Nullable($$createType3);
-const $$createType5 = videoindexerstudio$0.TimelineDraft.createFrom;
-const $$createType6 = $Create.Array($$createType5);
-const $$createType7 = videoindexerstudio$0.JobCheckpoint.createFrom;
+const $$createType5 = videoindexerstudio$0.CompositionEditPlan.createFrom;
+const $$createType6 = $Create.Nullable($$createType5);
+const $$createType7 = videoindexerstudio$0.TimelineDraft.createFrom;
 const $$createType8 = $Create.Array($$createType7);
+const $$createType9 = videoindexerstudio$0.JobCheckpoint.createFrom;
+const $$createType10 = $Create.Array($$createType9);
