@@ -870,6 +870,11 @@ func TestBuildMultiVideoCompositionIsDeterministicAndRejectsIncompleteEvidence(t
 	if firstDrafts[0].PrimaryVideoTrack.Clips[0].ID != first.Clips[0].ID {
 		t.Fatalf("timeline draft did not preserve stable composition clip ids: %#v %#v", firstDrafts[0], first.Clips)
 	}
+	for _, clip := range first.Clips {
+		if !strings.HasPrefix(clip.ID, "clip-") || len(clip.ID) != len("clip-")+32 {
+			t.Fatalf("composition clip ID = %q, want clip- followed by 32 hexadecimal characters", clip.ID)
+		}
+	}
 
 	incomplete := append([]VideoIndexerStudioJob(nil), dependencies...)
 	incomplete[1].VideoIndexResult = nil

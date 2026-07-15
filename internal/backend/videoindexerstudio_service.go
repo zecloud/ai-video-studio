@@ -525,7 +525,7 @@ type compositionCandidate struct {
 func stableCompositionClipID(compositionID, assetID, suggestionID string, index int, clip videoindexerstudio.SuggestedClip) string {
 	input := strings.Join([]string{strings.TrimSpace(compositionID), strings.TrimSpace(assetID), strings.TrimSpace(suggestionID), strings.TrimSpace(clip.ID), fmt.Sprintf("%d", index), fmt.Sprintf("%d", clip.StartMs), fmt.Sprintf("%d", clip.EndMs)}, "\x1f")
 	sum := sha256.Sum256([]byte(input))
-	return "clip-" + hex.EncodeToString(sum[:8])
+	return "clip-" + hex.EncodeToString(sum[:16])
 }
 
 func compositionEvidenceFingerprint(assetIDs []string, sources []videoindexerstudio.CompositionSourceStatus, clips []videoindexerstudio.CompositionClip) string {
