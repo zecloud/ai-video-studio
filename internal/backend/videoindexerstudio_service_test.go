@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -727,8 +728,17 @@ func TestVideoIndexerGenerateMultiVideoEditReusesCompletedAnalyses(t *testing.T)
 		t.Fatalf("unexpected composition timeline: %#v", composition.TimelineDrafts)
 	}
 	clips := composition.TimelineDrafts[0].PrimaryVideoTrack.Clips
-	if clips[0].SourceAssetID != "asset-1" || clips[1].SourceAssetID != "asset-2" {
-		t.Fatalf("composition did not preserve source assets: %#v", clips)
+	if clips[0].SourceAssetID != "asset-2" || clips[1].SourceAssetID != "asset-1" {
+		t.Fatalf("composition did not rank grounded clips by score: %#v", clips)
+	}
+	if composition.CompositionPlan == nil || composition.CompositionPlan.RankingMode != "deterministic_grounded_v1" {
+		t.Fatalf("composition did not persist recommendation metadata: %#v", composition.CompositionPlan)
+	}
+	if len(composition.CompositionPlan.Clips) != 2 || composition.CompositionPlan.Clips[0].SourceAssetID != "asset-2" {
+		t.Fatalf("composition plan did not preserve ranked clips: %#v", composition.CompositionPlan.Clips)
+	}
+	if composition.CompositionPlan.EvidenceFingerprint == "" {
+		t.Fatal("composition plan did not persist its evidence fingerprint")
 	}
 }
 
@@ -808,12 +818,48 @@ func TestVideoIndexerCreateEditProjectFromMultiVideoComposition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateMultiVideoEdit: %v", err)
 	}
-	project, err := svc.CreateEditProject(context.Background(), composition.ID, "multi-video-highlights")
+	project, err := svc.CreateEditProject(context.Background(), composition.ID, "multi-video-narrative")
 	if err != nil {
 		t.Fatalf("CreateEditProject: %v", err)
 	}
-	if len(project.AssetIDs) != 2 || project.AssetIDs[0] != "asset-1" || project.AssetIDs[1] != "asset-2" {
-		t.Fatalf("project did not retain all source assets: %#v", project.AssetIDs)
+
+	if len(project.AssetIDs) != 2 || project.AssetIDs[0] != "asset-2" || project.AssetIDs[1] != "asset-1" {
+		t.Fatalf("project did not retain narrative source order: %#v", project.AssetIDs)
+	}
+}
+
+func TestBuildMultiVideoCompositionIsDeterministicAndRejectsIncompleteEvidence(t *testing.T) {
+	dependencies := []VideoIndexerStudioJob{
+		completedAnalysisJob("analysis-1", "asset-1", 0, 1200, 0.8),
+		completedAnalysisJob("analysis-2", "asset-2", 500, 2200, 0.9),
+	}
+	assetIDs := []string{"asset-1", "asset-2"}
+	_, first, firstDrafts, err := buildMultiVideoComposition("composition-1", assetIDs, dependencies)
+	if err != nil {
+		t.Fatalf("build first composition: %v", err)
+	}
+	_, second, secondDrafts, err := buildMultiVideoComposition("composition-1", assetIDs, dependencies)
+	if err != nil {
+		t.Fatalf("build second composition: %v", err)
+	}
+	if !reflect.DeepEqual(first, second) || !reflect.DeepEqual(firstDrafts, secondDrafts) {
+		t.Fatalf("composition must be deterministic: %#v != %#v", first, second)
+	}
+	_, reversed, reversedDrafts, err := buildMultiVideoComposition("composition-1", []string{"asset-2", "asset-1"}, []VideoIndexerStudioJob{dependencies[1], dependencies[0]})
+	if err != nil {
+		t.Fatalf("build reordered composition: %v", err)
+	}
+	if !reflect.DeepEqual(first, reversed) || !reflect.DeepEqual(firstDrafts, reversedDrafts) {
+		t.Fatalf("selection order must not change the recommendation: %#v != %#v", first, reversed)
+	}
+	if firstDrafts[0].PrimaryVideoTrack.Clips[0].ID != first.Clips[0].ID {
+		t.Fatalf("timeline draft did not preserve stable composition clip ids: %#v %#v", firstDrafts[0], first.Clips)
+	}
+
+	incomplete := append([]VideoIndexerStudioJob(nil), dependencies...)
+	incomplete[1].VideoIndexResult = nil
+	if _, _, _, err := buildMultiVideoComposition("composition-1", assetIDs, incomplete); err == nil || !strings.Contains(err.Error(), "incomplete grounded evidence") {
+		t.Fatalf("expected incomplete evidence rejection, got %v", err)
 	}
 }
 
