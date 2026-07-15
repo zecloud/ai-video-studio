@@ -826,6 +826,21 @@ func TestVideoIndexerCreateEditProjectFromMultiVideoComposition(t *testing.T) {
 	if len(project.AssetIDs) != 2 || project.AssetIDs[0] != "asset-2" || project.AssetIDs[1] != "asset-1" {
 		t.Fatalf("project did not retain narrative source order: %#v", project.AssetIDs)
 	}
+	if composition.CompositionPlan == nil {
+		t.Fatal("composition plan is missing")
+	}
+	if len(project.Timeline.Tracks) != 1 {
+		t.Fatalf("project track count = %d, want 1", len(project.Timeline.Tracks))
+	}
+	projectClips := project.Timeline.Tracks[0].Clips
+	if len(projectClips) != len(composition.CompositionPlan.Clips) {
+		t.Fatalf("project clip count = %d, want %d", len(projectClips), len(composition.CompositionPlan.Clips))
+	}
+	for index, clip := range projectClips {
+		if clip.ID != composition.CompositionPlan.Clips[index].ID {
+			t.Fatalf("project clip %d ID = %q, want preserved composition ID %q", index, clip.ID, composition.CompositionPlan.Clips[index].ID)
+		}
+	}
 }
 
 func TestBuildMultiVideoCompositionIsDeterministicAndRejectsIncompleteEvidence(t *testing.T) {
