@@ -839,7 +839,7 @@ func (s *EditingService) renderLegacy(ctx context.Context, projectID string) (*e
 
 	preset := project.RenderPreset
 	if preset == "" {
-		preset = "h264-1080p"
+		preset = "mpeg4-1080p"
 	}
 
 	// Obtain a OneDrive access token.

@@ -12,6 +12,7 @@ const (
 	ffmpegRenderOrchestrationName    = "ffmpeg-render-orchestration"
 	ffmpegRenderOrchestrationVersion = "v1"
 	renderProjectionTimeout          = 30 * time.Second
+	renderStagingRecoveryDelay       = 5 * time.Minute
 )
 
 // FFmpegRenderOrchestrationInput holds only durable Blob references. The
@@ -88,6 +89,16 @@ func (s *DurableRenderJobService) CreateRenderJob(ctx context.Context, req Creat
 		}
 		if existing.CorrelationID != req.CorrelationID || existing.RequestFingerprint == "" || existing.RequestFingerprint != fingerprint {
 			return RenderJob{}, newServiceError(http.StatusConflict, "render_correlation_conflict", "correlationId already belongs to a different render request", false)
+		}
+		if existing.Status == RenderJobStatusStaging && now.Sub(existing.UpdatedAt) >= renderStagingRecoveryDelay {
+			if recoveryErr := s.failStaging(existing.ID, existing.Clips, newServiceError(http.StatusServiceUnavailable, "render_staging_interrupted", "render input staging was interrupted; submit a new render request", true)); recoveryErr != nil {
+				return RenderJob{}, recoveryErr
+			}
+			refreshed, getErr := s.store.Get(ctx, existing.ID)
+			if getErr != nil {
+				return RenderJob{}, getErr
+			}
+			return refreshed.ToRenderJob(), nil
 		}
 		if existing.Status == RenderJobStatusQueued && existing.CancellationRequestedAt == nil {
 			if scheduleErr := s.schedule(ctx, existing); scheduleErr != nil {
@@ -185,6 +196,12 @@ func (s *DurableRenderJobService) ReconcileQueuedRenders(ctx context.Context) er
 		case job.CancellationRequestedAt != nil && job.Status == RenderJobStatusStaging:
 			_, cancelErr := s.finishCanceled(ctx, job.ID)
 			reconcileErr = errors.Join(reconcileErr, cancelErr)
+		case job.Status == RenderJobStatusStaging && s.clock.Now().Sub(job.UpdatedAt) >= renderStagingRecoveryDelay:
+			if failErr := s.failStaging(job.ID, job.Clips, newServiceError(http.StatusServiceUnavailable, "render_staging_interrupted", "render input staging was interrupted; submit a new render request", true)); failErr != nil {
+				if refreshed, getErr := s.store.Get(ctx, job.ID); getErr != nil || refreshed.Status != RenderJobStatusFailed {
+					reconcileErr = errors.Join(reconcileErr, failErr)
+				}
+			}
 		case job.CancellationRequestedAt != nil && !job.Status.Terminal():
 			if signalErr := s.scheduler.RequestRenderCancellation(ctx, job.ID); signalErr != nil {
 				reconcileErr = errors.Join(reconcileErr, fmt.Errorf("re-signaling cancellation for render %s: %w", job.ID, signalErr))

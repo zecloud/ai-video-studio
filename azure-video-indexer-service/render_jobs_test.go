@@ -164,7 +164,7 @@ func validRenderRequest() CreateRenderJobRequest {
 			{ID: "clip-b", OneDriveItemID: "drive-item-b", SourceName: "camera-b.mp4", InMS: 0, OutMS: 2000, Muted: true},
 		},
 		Transitions:   []RenderTransitionRequest{{Kind: "cut"}},
-		Preset:        "h264-1080p",
+		Preset:        "mpeg4-1080p",
 		OutputName:    "finished.mp4",
 		CorrelationID: "render-correlation",
 	}
@@ -243,9 +243,9 @@ func TestCreateRenderJobRequestValidation(t *testing.T) {
 
 func TestFFmpegSegmentArgsProduceUniformVideoOnlySegments(t *testing.T) {
 	clip := StagedRenderClip{InMS: 1250, OutMS: 2750, Muted: false}
-	args := ffmpegSegmentArgs("input.media", "output.mp4", clip, "h265-1080p")
+	args := ffmpegSegmentArgs("input.media", "output.mp4", clip, "mpeg4-1080p")
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"-ss 1.250", "-t 1.500", "-an", "libx265", "fps=30,scale=1920:1080", "pad=1920:1080"} {
+	for _, want := range []string{"-ss 1.250", "-t 1.500", "-an", "mpeg4", "fps=30,scale=1920:1080", "pad=1920:1080"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("args %q do not contain %q", joined, want)
 		}
@@ -407,7 +407,7 @@ func storedRenderDocument(id string, status RenderJobStatus) RenderJobDocument {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	return RenderJobDocument{
 		SchemaVersion: renderSchemaVersion, ID: id, ProjectID: "project-1", Status: status,
-		Preset: "h264-1080p", OutputName: "output.mp4", RequestFingerprint: "fingerprint",
+		Preset: "mpeg4-1080p", OutputName: "output.mp4", RequestFingerprint: "fingerprint",
 		Clips:           []StagedRenderClip{{ID: "clip-1", Container: "render-staging", BlobName: "render-inputs/" + id + "/clip.mp4", SourceName: "clip.mp4", InMS: 0, OutMS: 1000}},
 		OrchestrationID: id, OrchestrationName: ffmpegRenderOrchestrationName, OrchestrationVersion: ffmpegRenderOrchestrationVersion,
 		Output:    &RenderOutput{Container: "render-staging", BlobName: renderOutputBlobName(id, "output.mp4"), Size: 5, MediaType: "video/mp4"},
@@ -714,6 +714,14 @@ func TestCleanupFailureCannotChangeSuccessfulOutcome(t *testing.T) {
 	if transitioned, transitionErr := service.transition(context.Background(), doc.ID, RenderJobStatusFailed, nil); transitionErr != nil || transitioned.Status != RenderJobStatusSucceeded {
 		t.Fatalf("failed transition changed successful outcome: %#v, %v", transitioned, transitionErr)
 	}
+	blobs := &failingRenderExecutionBlobs{fakeRenderExecutionBlobs: &fakeRenderExecutionBlobs{fakeRenderStager: &stager.fakeRenderStager}, err: errors.New("output must be preserved")}
+	activities := NewFFmpegRenderActivities(store, blobs, Config{FFmpegPath: "ffmpeg", RenderWorkspaceRoot: ".", RenderTimeout: time.Minute}, fixedClock{now: doc.CreatedAt.Add(2 * time.Minute)})
+	if _, finishErr := activities.finishByID(context.Background(), doc.ID, RenderJobStatusFailed, "render_failed", "FFmpeg render failed"); finishErr != nil {
+		t.Fatalf("failed compensation changed successful output: %v", finishErr)
+	}
+	if len(stager.deletes) != 1 {
+		t.Fatalf("successful output was deleted during compensation: %#v", stager.deletes)
+	}
 }
 
 func TestCorrelationRetryReturnsAndReschedulesCompatibleJob(t *testing.T) {
@@ -731,15 +739,18 @@ func TestCorrelationRetryReturnsAndReschedulesCompatibleJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	retry := validRenderRequest()
 	retry.OneDriveAccessToken = "fresh-token"
 	second, err := service.CreateRenderJob(context.Background(), retry)
 	if err != nil {
 		t.Fatalf("compatible retry error = %v", err)
 	}
+
 	if second.ID != first.ID || len(stager.stages) != len(firstProjectClips(validRenderRequest())) || len(scheduler.inputs) != 2 {
 		t.Fatalf("retry was not idempotent/rescheduled: first=%#v second=%#v stages=%d schedules=%d", first, second, len(stager.stages), len(scheduler.inputs))
 	}
+
 	conflict := validRenderRequest()
 	conflict.OutputName = "other.mp4"
 	if _, err := service.CreateRenderJob(context.Background(), conflict); serviceErrorCode(err) != "render_correlation_conflict" {
@@ -748,6 +759,30 @@ func TestCorrelationRetryReturnsAndReschedulesCompatibleJob(t *testing.T) {
 }
 
 func firstProjectClips(req CreateRenderJobRequest) []RenderClipRequest { return req.Clips }
+
+func TestReconcileQueuedRendersFailsStaleStagingAndCleansInputs(t *testing.T) {
+	store := newMemoryRenderJobStore()
+	doc := storedRenderDocument("render-stale-staging", RenderJobStatusStaging)
+	doc.UpdatedAt = doc.CreatedAt
+	if err := store.Create(context.Background(), doc); err != nil {
+		t.Fatal(err)
+	}
+	stager := &fakeRenderStager{}
+	service := NewDurableRenderJobService(store, nil, stager, &recordingRenderScheduler{}, fixedClock{now: doc.CreatedAt.Add(renderStagingRecoveryDelay)})
+	if err := service.ReconcileQueuedRenders(context.Background()); err != nil {
+		t.Fatalf("ReconcileQueuedRenders() error = %v", err)
+	}
+	stored, err := store.Get(context.Background(), doc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != RenderJobStatusFailed || stored.Error == nil || stored.Error.Code != "render_staging_interrupted" || stored.InputsCleanupPending {
+		t.Fatalf("stale staging job was not failed and cleaned: %#v", stored.RenderJobDocument)
+	}
+	if len(stager.deletes) != len(doc.Clips) {
+		t.Fatalf("stale staging inputs were not cleaned: %#v", stager.deletes)
+	}
+}
 
 type staticRenderOutputService struct{ job RenderJob }
 

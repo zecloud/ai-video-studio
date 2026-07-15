@@ -17,7 +17,6 @@ import (
 
 	"github.com/zecloud/ai-video-studio/internal/backend"
 	"github.com/zecloud/ai-video-studio/internal/editing"
-	"github.com/zecloud/ai-video-studio/internal/mediaservice"
 	"github.com/zecloud/ai-video-studio/internal/videoindexerstudio"
 )
 
@@ -243,22 +242,6 @@ func TestEndToEndCreateJobCreatesEditProjectFromFixture(t *testing.T) {
 		t.Fatalf("project conversion mismatch: %#v != %#v", project, converted)
 	}
 
-	renderBackend := &e2eRenderBackend{}
-	editingSvc := backend.NewEditingService(nil, renderBackend, nil, editStore)
-	renderJob, err := editingSvc.Render(context.Background(), project.ID)
-	if err != nil {
-		t.Fatalf("Render: %v", err)
-	}
-	if renderJob.Status != "completed" {
-		t.Fatalf("unexpected render job: %#v", renderJob)
-	}
-	if len(renderBackend.requests) != 1 {
-		t.Fatalf("expected one render request, got %d", len(renderBackend.requests))
-	}
-	if got := renderBackend.requests[0].Clips[0].Input; got != "item-001" {
-		t.Fatalf("unexpected render clip input: %q", got)
-	}
-
 	roundTrip, err := json.Marshal(project)
 	if err != nil {
 		t.Fatalf("marshal project: %v", err)
@@ -301,18 +284,6 @@ func (s *e2eEditingProjectStore) Load(context.Context) ([]editing.EditProject, e
 func (s *e2eEditingProjectStore) Save(_ context.Context, projects []editing.EditProject) error {
 	s.saved = append([]editing.EditProject(nil), projects...)
 	return nil
-}
-
-type e2eRenderBackend struct {
-	mu       sync.Mutex
-	requests []mediaservice.RenderRequest
-}
-
-func (b *e2eRenderBackend) Render(_ context.Context, req mediaservice.RenderRequest) (*mediaservice.RenderResult, error) {
-	b.mu.Lock()
-	b.requests = append(b.requests, req)
-	b.mu.Unlock()
-	return &mediaservice.RenderResult{Status: "completed", OutputURL: "https://render.example.com/output.mp4"}, nil
 }
 
 func e2eDeterministicProjectID(jobID, suggestionID string) string {

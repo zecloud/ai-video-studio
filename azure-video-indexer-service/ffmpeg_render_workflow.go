@@ -39,7 +39,7 @@ func validateRenderExecutionInput(input FFmpegRenderOrchestrationInput) error {
 	if len(input.Clips) == 0 || len(input.Clips) > 64 {
 		return fmt.Errorf("render orchestration requires between 1 and 64 clips")
 	}
-	if input.Preset != "h264-1080p" && input.Preset != "h264-720p" && input.Preset != "h265-1080p" {
+	if input.Preset != "mpeg4-1080p" && input.Preset != "mpeg4-720p" {
 		return fmt.Errorf("render orchestration preset is unsupported")
 	}
 	if input.Output.Container == "" || input.Output.BlobName == "" {
@@ -343,6 +343,10 @@ func (a *FFmpegRenderActivities) finishByID(ctx context.Context, id string, stat
 	if err != nil {
 		return StoredRenderJob{}, err
 	}
+	if job.Status == RenderJobStatusSucceeded {
+		// A failed compensation activity must not remove an output already exposed as successful.
+		return job, nil
+	}
 	if job.CancellationRequestedAt != nil && status != RenderJobStatusCanceled {
 		status, code, message = RenderJobStatusCanceled, "canceled", "render job canceled"
 	}
@@ -459,11 +463,9 @@ func (b *ffmpegLogBuffer) Write(p []byte) (int, error) {
 }
 
 func ffmpegSegmentArgs(input, output string, clip StagedRenderClip, preset string) []string {
-	codec, width, height := "libx264", 1920, 1080
-	if preset == "h264-720p" {
+	codec, width, height := "mpeg4", 1920, 1080
+	if preset == "mpeg4-720p" {
 		width, height = 1280, 720
-	} else if preset == "h265-1080p" {
-		codec = "libx265"
 	}
 	filter := fmt.Sprintf("fps=30,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2", width, height, width, height)
 	duration := float64(clip.OutMS-clip.InMS) / 1000

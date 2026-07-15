@@ -44,14 +44,14 @@ func (f *fakeAsyncRenderClient) GetRenderJob(context.Context, string) (*videoind
 	f.mu.Lock()
 	f.getCalls++
 	f.mu.Unlock()
-	return &videoindexerstudio.RenderJobResponse{Job: videoindexerstudio.RenderJob{ID: "remote-render-1", ProjectID: "project-1", Status: videoindexerstudio.RenderJobStatusSucceeded, Preset: "h264-1080p", OutputName: "My edit.mp4", Output: &videoindexerstudio.RenderOutput{Size: int64(len(f.output)), MediaType: "video/mp4"}}}, nil
+	return &videoindexerstudio.RenderJobResponse{Job: videoindexerstudio.RenderJob{ID: "remote-render-1", ProjectID: "project-1", Status: videoindexerstudio.RenderJobStatusSucceeded, Preset: "mpeg4-1080p", OutputName: "My edit.mp4", Output: &videoindexerstudio.RenderOutput{Size: int64(len(f.output)), MediaType: "video/mp4"}}}, nil
 }
 
 func (f *fakeAsyncRenderClient) CancelRenderJob(context.Context, string) (*videoindexerstudio.RenderJobResponse, error) {
 	f.mu.Lock()
 	f.cancelCalls++
 	f.mu.Unlock()
-	return &videoindexerstudio.RenderJobResponse{Job: videoindexerstudio.RenderJob{ID: "remote-render-1", ProjectID: "project-1", Status: videoindexerstudio.RenderJobStatusCanceled, Preset: "h264-1080p", OutputName: "My edit.mp4"}}, nil
+	return &videoindexerstudio.RenderJobResponse{Job: videoindexerstudio.RenderJob{ID: "remote-render-1", ProjectID: "project-1", Status: videoindexerstudio.RenderJobStatusCanceled, Preset: "mpeg4-1080p", OutputName: "My edit.mp4"}}, nil
 }
 
 func (f *fakeAsyncRenderClient) OpenRenderOutput(context.Context, string) (*videoindexerstudio.RenderOutputStream, error) {
@@ -162,8 +162,12 @@ func TestEditingServiceCancellationDuringPollRemainsCanceled(t *testing.T) {
 	if err != nil || len(jobs) != 1 {
 		t.Fatalf("RenderJobs() = %#v, %v", jobs, err)
 	}
-	if _, err := service.CancelRender(context.Background(), jobs[0].ID); err != nil {
+	canceled, err := service.CancelRender(context.Background(), jobs[0].ID)
+	if err != nil {
 		t.Fatalf("CancelRender() error = %v", err)
+	}
+	if canceled.Status != "cancellation_requested" && canceled.Status != "canceled" {
+		t.Fatalf("CancelRender() returned stale job: %#v", canceled)
 	}
 	select {
 	case err := <-renderDone:
@@ -199,7 +203,7 @@ func (b *blockingLegacyRenderBackend) Render(ctx context.Context, _ mediaservice
 	return nil, ctx.Err()
 }
 
-func TestEditingServiceFallsBackToCancelableLegacyRenderWhenAsyncIsUnconfigured(t *testing.T) {
+func TestEditingServiceRejectsRenderWhenAsyncIsUnconfigured(t *testing.T) {
 	legacy := &blockingLegacyRenderBackend{started: make(chan struct{})}
 	od := &onedrive.Client{TokenProvider: renderTestTokenProvider{}, Scopes: onedrive.DefaultGraphScopes}
 	service := NewEditingService(&fakeLibraryStore{}, legacy, od, &memoryEditingProjectStore{})
@@ -209,33 +213,54 @@ func TestEditingServiceFallsBackToCancelableLegacyRenderWhenAsyncIsUnconfigured(
 		t.Fatal(err)
 	}
 
-	renderDone := make(chan error, 1)
-	go func() {
-		_, renderErr := service.Render(context.Background(), "legacy-project")
-		renderDone <- renderErr
-	}()
+	_, err = service.Render(context.Background(), "legacy-project")
+	if !errors.Is(err, errNotConfigured) {
+		t.Fatalf("Render() error = %v, want async configuration error", err)
+	}
 	select {
 	case <-legacy.started:
-	case <-time.After(time.Second):
-		t.Fatal("legacy render did not start")
+		t.Fatal("legacy render started despite missing async configuration")
+	default:
 	}
-	jobs, err := service.RenderJobs()
-	if err != nil || len(jobs) != 1 {
-		t.Fatalf("RenderJobs() = %#v, %v", jobs, err)
+}
+
+func TestEditingServicePreservesSavedCutTransition(t *testing.T) {
+	service := NewEditingService(&fakeLibraryStore{assets: []library.ProjectAsset{
+		{ID: "asset-1", Name: "first.mp4", CloudAssetID: "drive-source-1"},
+		{ID: "asset-2", Name: "second.mp4", CloudAssetID: "drive-source-2"},
+	}}, nil, nil, nil)
+	project := editing.EditProject{
+		ID: "project-cut-transition",
+		Timeline: editing.Timeline{Tracks: []editing.Track{{
+			Kind: "video",
+			Clips: []editing.ClipSegment{
+				{ID: "clip-1", SourceAssetID: "asset-1", InMS: 0, OutMS: 1000},
+				{ID: "clip-2", SourceAssetID: "asset-2", InMS: 100, OutMS: 1200, Transition: &editing.Transition{Kind: "CUT", DurationMS: 0}},
+			},
+		}}},
 	}
-	if _, err := service.CancelRender(context.Background(), jobs[0].ID); err != nil {
-		t.Fatalf("CancelRender() error = %v", err)
+	_, transitions, _, err := service.buildAsyncRenderTimeline(context.Background(), project)
+	if err != nil {
+		t.Fatalf("buildAsyncRenderTimeline() error = %v", err)
 	}
-	select {
-	case err := <-renderDone:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("legacy Render() error = %v, want context canceled", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("legacy render did not stop")
+	if len(transitions) != 1 || transitions[0].Kind != "cut" || transitions[0].DurationMS != 0 {
+		t.Fatalf("saved cut transition was not preserved: %#v", transitions)
 	}
-	stored, err := service.RenderJob(jobs[0].ID)
-	if err != nil || stored.Status != "canceled" {
-		t.Fatalf("legacy render state = %#v, %v", stored, err)
+}
+func TestEditingServiceRejectsUnsupportedSavedTransition(t *testing.T) {
+	service := NewEditingService(&fakeLibraryStore{assets: []library.ProjectAsset{{ID: "asset-1", Name: "source.mp4", CloudAssetID: "drive-source-1"}}}, nil, nil, nil)
+	project := editing.EditProject{
+		ID: "project-transition",
+		Timeline: editing.Timeline{Tracks: []editing.Track{{
+			Kind: "video",
+			Clips: []editing.ClipSegment{{
+				ID: "clip-1", SourceAssetID: "asset-1", InMS: 0, OutMS: 1000,
+				Transition: &editing.Transition{Kind: "fade", DurationMS: 250},
+			}},
+		}}},
+	}
+	_, _, _, err := service.buildAsyncRenderTimeline(context.Background(), project)
+	if err == nil || !strings.Contains(err.Error(), "unsupported transition") {
+		t.Fatalf("buildAsyncRenderTimeline() error = %v", err)
 	}
 }
