@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 
@@ -127,6 +128,31 @@ func isConflict(err error) bool {
 	return false
 }
 
+func classifyAzureBlobOperation(err error, code, message string) error {
+	if err == nil {
+		return nil
+	}
+	var serviceErr *ServiceError
+	if errors.As(err, &serviceErr) {
+		return err
+	}
+	status := http.StatusBadGateway
+	retryable := false
+	var responseErr *azcore.ResponseError
+	if errors.As(err, &responseErr) {
+		if responseErr.StatusCode > 0 {
+			status = responseErr.StatusCode
+		}
+		retryable = classifyHTTPStatus(responseErr.StatusCode)
+	} else {
+		var networkErr net.Error
+		retryable = errors.As(err, &networkErr) || errors.Is(err, io.ErrUnexpectedEOF)
+		if retryable {
+			status = http.StatusServiceUnavailable
+		}
+	}
+	return &ServiceError{Status: status, Code: code, Message: redactURLsInText(message), Retryable: retryable, Cause: err}
+}
 func toAPIError(err error) (APIErrorResponse, int) {
 	var se *ServiceError
 	if errors.As(err, &se) {

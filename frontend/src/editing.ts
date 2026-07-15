@@ -180,7 +180,7 @@ export async function startRender(state: EditingViewState): Promise<void> {
   state.message = "Render submitted to Azure Container App...";
   try {
     const job = await EditingService.Render(state.activeProject.id);
-        state.renderJob = job ?? null;
+    state.renderJob = job ?? null;
     state.renderInFlight = false;
     if (job && job.status === "completed") {
       state.message = `Render complete! Output: ${job.outputUrl || "uploaded to OneDrive"}`;
@@ -191,7 +191,23 @@ export async function startRender(state: EditingViewState): Promise<void> {
     }
   } catch (err) {
     state.renderInFlight = false;
-    state.message = `Render error: ${String(err)}`;
+    if (state.renderJob?.status === "canceled" || state.renderJob?.status === "cancellation_requested") {
+      state.message = "Render canceled.";
+    } else {
+      state.message = `Render error: ${String(err)}`;
+    }
+  }
+}
+
+export async function cancelRender(state: EditingViewState): Promise<void> {
+  const job = state.renderJob;
+  if (!job || !state.renderInFlight) return;
+  state.message = "Requesting render cancellation...";
+  try {
+    const canceled = await EditingService.CancelRender(job.id);
+    if (canceled) state.renderJob = canceled;
+  } catch (err) {
+    state.message = `Cancellation error: ${String(err)}`;
   }
 }
 
@@ -210,6 +226,7 @@ export function setupEditingEvents(
     const job = RenderJob.createFrom(ev.data as Partial<RenderJob>);
     state.renderJob = job;
     state.renderInFlight = false;
+    state.message = job.status === "completed" ? "Render uploaded to OneDrive." : job.status === "canceled" ? "Render canceled." : job.message || state.message;
     reRender();
   });
   return () => {
@@ -286,12 +303,12 @@ export function renderEditingPanel(state: EditingViewState): string {
       <div class="timeline-editor">
         <div class="timeline-toolbar">
           <select class="preset-select" data-action="set-preset">
-            <option value="h264-1080p" ${project?.renderPreset === "h264-1080p" || !project?.renderPreset ? "selected" : ""}>H.264 1080p (Web)</option>
-            <option value="h264-720p" ${project?.renderPreset === "h264-720p" ? "selected" : ""}>H.264 720p (Fast)</option>
-            <option value="h265-1080p" ${project?.renderPreset === "h265-1080p" ? "selected" : ""}>H.265 1080p (Efficient)</option>
+            <option value="mpeg4-1080p" ${project?.renderPreset === "mpeg4-1080p" || !project?.renderPreset ? "selected" : ""}>MPEG-4 1080p (LGPL)</option>
+            <option value="mpeg4-720p" ${project?.renderPreset === "mpeg4-720p" ? "selected" : ""}>MPEG-4 720p (LGPL)</option>
           </select>
           <button class="button secondary small" data-action="save-project">Save project</button>
           <span style="flex:1"></span>
+          ${state.renderInFlight && state.renderJob && state.renderJob.status !== "cancellation_requested" ? `<button class="button danger" data-action="cancel-render">Cancel render</button>` : ""}
           <button class="button" data-action="start-render" ${state.renderInFlight ? "disabled" : ""} style="background:#15803d">
             ${state.renderInFlight ? "Rendering..." : "► Render"}
           </button>
@@ -328,13 +345,14 @@ function buildRenderSection(state: EditingViewState): string {
 
   let progressHTML = "";
   if (state.renderInFlight) {
+    const percent = Math.max(0, Math.min(100, job?.percent ?? 0));
     progressHTML = `
       <div class="render-progress">
-        <div class="bar"><span style="width:80%"></span></div>
-        <div class="progress-meta"><span>Rendering on Azure Container App...</span><span>—</span></div>
+        <div class="bar"><span style="width:${percent}%"></span></div>
+        <div class="progress-meta"><span>${escapeHTML(job?.message || "Submitting render job...")}</span><span>${Math.round(percent)}%</span></div>
       </div>`;
   } else if (job) {
-    const statusTone = job.status === "completed" ? "success" : job.status === "failed" ? "danger" : "info";
+    const statusTone = job.status === "completed" ? "success" : job.status === "failed" ? "danger" : job.status === "canceled" ? "warning" : "info";
     progressHTML = `
       <div class="render-progress">
         <p>${badge(job.status, statusTone)}</p>

@@ -67,15 +67,18 @@ type RenderPreset struct {
 
 // RenderJob tracks a single render job dispatched to the Azure Container App.
 type RenderJob struct {
-	ID          string  `json:"id"`
-	ProjectID   string  `json:"projectId"`
-	Status      string  `json:"status"`
-	OutputURL   string  `json:"outputUrl,omitempty"`
-	Percent     float64 `json:"percent"`
-	CurrentMS   int64   `json:"currentMs"`
-	TotalMS     int64   `json:"totalMs"`
-	Message     string  `json:"message,omitempty"`
-	ErrorDetail string  `json:"errorDetail,omitempty"`
+	ID                string  `json:"id"`
+	ProjectID         string  `json:"projectId"`
+	RemoteJobID       string  `json:"remoteJobId,omitempty"`
+	Status            string  `json:"status"`
+	OutputURL         string  `json:"outputUrl,omitempty"`
+	OutputDriveItemID string  `json:"outputDriveItemId,omitempty"`
+	OutputName        string  `json:"outputName,omitempty"`
+	Percent           float64 `json:"percent"`
+	CurrentMS         int64   `json:"currentMs"`
+	TotalMS           int64   `json:"totalMs"`
+	Message           string  `json:"message,omitempty"`
+	ErrorDetail       string  `json:"errorDetail,omitempty"`
 }
 
 // RenderResult is what the media service returns after a successful render.

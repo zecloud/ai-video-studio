@@ -90,6 +90,7 @@ func validReadinessConfig() Config {
 		VideoIndexerTimeout:        time.Minute,
 		DTSEndpoint:                "https://scheduler.example.com",
 		DTSTaskHub:                 "video-indexer",
+		DTSRenderTaskHub:           "ffmpeg-render",
 	}
 }
 

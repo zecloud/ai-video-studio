@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -37,6 +38,12 @@ type StageOptions struct {
 type BlobStager interface {
 	Stage(ctx context.Context, jobID, sourceName string, body io.Reader, options StageOptions) (StagedAsset, error)
 	ReadURL(ctx context.Context, asset StagedAsset) (string, error)
+	Delete(ctx context.Context, asset StagedAsset) error
+	StagingContainer() string
+}
+
+type RenderBlobStager interface {
+	StageNamed(ctx context.Context, blobName string, body io.Reader, options StageOptions) (StagedAsset, error)
 	Delete(ctx context.Context, asset StagedAsset) error
 	StagingContainer() string
 }
@@ -135,14 +142,21 @@ func (s *AzureBlobService) CheckUserDelegationCredential(ctx context.Context) er
 }
 
 func (s *AzureBlobService) Stage(ctx context.Context, jobID, sourceName string, body io.Reader, options StageOptions) (asset StagedAsset, err error) {
+	return s.StageNamed(ctx, stageBlobName(jobID, sourceName), body, options)
+}
+
+func (s *AzureBlobService) StageNamed(ctx context.Context, blobName string, body io.Reader, options StageOptions) (asset StagedAsset, err error) {
 	asset = StagedAsset{
 		Container: s.stagingContainer,
-		BlobName:  stageBlobName(jobID, sourceName),
+		BlobName:  strings.TrimSpace(blobName),
+	}
+	if asset.BlobName == "" {
+		return StagedAsset{}, newServiceError(422, "blob_name_required", "staged blob name is required", false)
 	}
 	if options.ContentLength == 0 {
 		return StagedAsset{}, newServiceError(422, "source_media_empty", "OneDrive returned an empty media file", false)
 	}
-	contentType, err := mediaContentType(sourceName, options.ContentType)
+	contentType, err := mediaContentType(asset.BlobName, options.ContentType)
 	if err != nil {
 		return StagedAsset{}, err
 	}
@@ -159,7 +173,7 @@ func (s *AzureBlobService) Stage(ctx context.Context, jobID, sourceName string, 
 		Concurrency: 2,
 		HTTPHeaders: &blob.HTTPHeaders{BlobContentType: &contentType},
 	}); err != nil {
-		err = fmt.Errorf("staging blob %s: %w", asset.BlobName, err)
+		err = classifyAzureBlobOperation(err, "blob_stage_failed", fmt.Sprintf("staging blob %s failed", asset.BlobName))
 		return StagedAsset{}, err
 	}
 	defer func() {
@@ -174,7 +188,7 @@ func (s *AzureBlobService) Stage(ctx context.Context, jobID, sourceName string, 
 	}()
 	properties, err := s.client.ServiceClient().NewContainerClient(asset.Container).NewBlobClient(asset.BlobName).GetProperties(ctx, nil)
 	if err != nil {
-		return StagedAsset{}, fmt.Errorf("checking staged blob %s: %w", asset.BlobName, err)
+		return StagedAsset{}, classifyAzureBlobOperation(err, "blob_properties_failed", fmt.Sprintf("checking staged blob %s failed", asset.BlobName))
 	}
 	if properties.ContentLength == nil || *properties.ContentLength <= 0 {
 		return StagedAsset{}, newServiceError(502, "staged_blob_empty", "staged media blob is empty", true)
@@ -243,6 +257,37 @@ func (s *AzureBlobService) ReadURL(ctx context.Context, asset StagedAsset) (stri
 	return base.String(), nil
 }
 
+type BlobDownload struct {
+	Body          io.ReadCloser
+	ContentLength int64
+	ContentType   string
+	ETag          string
+}
+
+func (s *AzureBlobService) OpenDownload(ctx context.Context, asset StagedAsset) (BlobDownload, error) {
+	if s == nil || s.client == nil {
+		return BlobDownload{}, newServiceError(503, "blob_client_unavailable", "blob client is not configured", true)
+	}
+	if strings.TrimSpace(asset.Container) == "" || strings.TrimSpace(asset.BlobName) == "" {
+		return BlobDownload{}, newServiceError(422, "blob_identity_invalid", "blob container and name are required", false)
+	}
+	response, err := s.client.DownloadStream(ctx, asset.Container, asset.BlobName, nil)
+	if err != nil {
+		return BlobDownload{}, classifyAzureBlobOperation(err, "blob_download_failed", fmt.Sprintf("downloading blob %s failed", asset.BlobName))
+	}
+	download := BlobDownload{Body: response.Body}
+	if response.ContentLength != nil {
+		download.ContentLength = *response.ContentLength
+	}
+	if response.ContentType != nil {
+		download.ContentType = *response.ContentType
+	}
+	if response.ETag != nil {
+		download.ETag = string(*response.ETag)
+	}
+	return download, nil
+}
+
 func (s *AzureBlobService) Delete(ctx context.Context, asset StagedAsset) error {
 	if asset.Container == "" || asset.BlobName == "" {
 		return nil
@@ -251,9 +296,69 @@ func (s *AzureBlobService) Delete(ctx context.Context, asset StagedAsset) error 
 	if err == nil || isNotFound(err) {
 		return nil
 	}
-	return fmt.Errorf("deleting staged blob %s: %w", asset.BlobName, err)
+	return classifyAzureBlobOperation(err, "blob_delete_failed", fmt.Sprintf("deleting blob %s failed", asset.BlobName))
 }
 
+func (s *AzureBlobService) DownloadToFile(ctx context.Context, asset StagedAsset, destination string) (err error) {
+	download, err := s.OpenDownload(ctx, asset)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := download.Body.Close(); err == nil && closeErr != nil {
+			err = classifyAzureBlobOperation(closeErr, "blob_download_failed", fmt.Sprintf("closing blob %s download failed", asset.BlobName))
+		}
+	}()
+	file, err := os.Create(destination)
+	if err != nil {
+		return newServiceError(500, "render_input_create_failed", "creating render input file failed", false)
+	}
+	complete := false
+	defer func() {
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = newServiceError(500, "render_input_close_failed", "closing render input file failed", false)
+		}
+		if !complete || err != nil {
+			_ = os.Remove(destination)
+		}
+	}()
+	if _, err = io.Copy(file, download.Body); err != nil {
+		return classifyAzureBlobOperation(err, "blob_download_failed", fmt.Sprintf("reading blob %s failed", asset.BlobName))
+	}
+	complete = true
+	return nil
+}
+
+func (s *AzureBlobService) UploadFile(ctx context.Context, asset StagedAsset, source, contentType string) (size int64, err error) {
+	if s == nil || s.client == nil {
+		return 0, newServiceError(503, "blob_client_unavailable", "blob client is not configured", true)
+	}
+	file, err := os.Open(source)
+	if err != nil {
+		return 0, newServiceError(500, "render_output_open_failed", "opening render output file failed", false)
+	}
+	defer func() {
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = newServiceError(500, "render_output_close_failed", "closing render output file failed", false)
+		}
+	}()
+	info, err := file.Stat()
+	if err != nil {
+		return 0, newServiceError(500, "render_output_stat_failed", "stating render output file failed", false)
+	}
+	if info.Size() <= 0 {
+		return 0, newServiceError(422, "render_output_empty", "render output file is empty", false)
+	}
+	_, err = s.client.UploadStream(ctx, asset.Container, asset.BlobName, file, &azblob.UploadStreamOptions{
+		BlockSize:   4 << 20,
+		Concurrency: 2,
+		HTTPHeaders: &blob.HTTPHeaders{BlobContentType: ptr(contentType)},
+	})
+	if err != nil {
+		return 0, classifyAzureBlobOperation(err, "blob_upload_failed", fmt.Sprintf("uploading render output %s failed", asset.BlobName))
+	}
+	return info.Size(), nil
+}
 func (s *AzureBlobService) stagedAsset(jobID, sourceName string) StagedAsset {
 	return StagedAsset{
 		Container: s.StagingContainer(),

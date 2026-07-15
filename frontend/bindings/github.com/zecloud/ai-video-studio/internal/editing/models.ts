@@ -96,8 +96,11 @@ export class EditProject {
 export class RenderJob {
     "id": string;
     "projectId": string;
+    "remoteJobId"?: string;
     "status": string;
     "outputUrl"?: string;
+    "outputDriveItemId"?: string;
+    "outputName"?: string;
     "percent": number;
     "currentMs": number;
     "totalMs": number;

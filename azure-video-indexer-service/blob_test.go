@@ -1,6 +1,13 @@
 package main
 
-import "testing"
+import (
+	"errors"
+	"io"
+	"net/http"
+	"testing"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+)
 
 func TestMediaContentType(t *testing.T) {
 	tests := []struct {
@@ -30,5 +37,36 @@ func TestMediaContentType(t *testing.T) {
 				t.Fatalf("mediaContentType() = %q, %v; want %q, nil", got, err, test.want)
 			}
 		})
+	}
+}
+
+func TestClassifyAzureBlobOperationRetriesOnlyTransientResponses(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		retryable bool
+	}{
+		{name: "not found", status: http.StatusNotFound, retryable: false},
+		{name: "validation", status: http.StatusBadRequest, retryable: false},
+		{name: "conflict", status: http.StatusConflict, retryable: true},
+		{name: "throttled", status: http.StatusTooManyRequests, retryable: true},
+		{name: "service unavailable", status: http.StatusServiceUnavailable, retryable: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := classifyAzureBlobOperation(&azcore.ResponseError{StatusCode: tc.status}, "blob_download_failed", "download failed")
+			var serviceErr *ServiceError
+			if !errors.As(err, &serviceErr) || serviceErr.Retryable != tc.retryable || serviceErr.Status != tc.status {
+				t.Fatalf("classified error = %#v", serviceErr)
+			}
+		})
+	}
+}
+
+func TestClassifyAzureBlobOperationRetriesTruncatedNetworkRead(t *testing.T) {
+	err := classifyAzureBlobOperation(io.ErrUnexpectedEOF, "blob_download_failed", "download failed")
+	var serviceErr *ServiceError
+	if !errors.As(err, &serviceErr) || !serviceErr.Retryable || serviceErr.Status != http.StatusServiceUnavailable {
+		t.Fatalf("classified error = %#v", serviceErr)
 	}
 }

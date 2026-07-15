@@ -182,13 +182,23 @@ jobs:
             --parameters location="$AZURE_LOCATION" containerRegistryName="$ACR_NAME" \
             --only-show-errors
 
-      - name: Build and push immutable image
+      - name: Build and push immutable service image
         run: |
           set -euo pipefail
           az acr build \
             --registry "$ACR_NAME" \
             --image "ai-video-indexer-service:${GITHUB_SHA}" \
             --file "azure-video-indexer-service/Dockerfile" \
+            "." \
+            --only-show-errors
+
+      - name: Build and push immutable FFmpeg worker image
+        run: |
+          set -euo pipefail
+          az acr build \
+            --registry "$ACR_NAME" \
+            --image "ffmpeg-render-worker:${GITHUB_SHA}" \
+            --file "azure-video-indexer-service/Dockerfile.ffmpeg" \
             "." \
             --only-show-errors
 

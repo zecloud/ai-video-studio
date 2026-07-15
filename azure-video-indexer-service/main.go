@@ -34,9 +34,10 @@ func main() {
 	}
 	blobSvc.obs = obs
 
-	store := NewAzureJobStore(blobSvc.Client(), cfg.JobContainer)
 	var runErr error
-	if cfg.ServiceRole == "worker" {
+	switch cfg.ServiceRole {
+	case "worker":
+		store := NewAzureJobStore(blobSvc.Client(), cfg.JobContainer)
 		viClient, err := NewManagedIdentityVideoIndexerClient(videoIndexerConfigFromConfig(cfg), cfg.ManagedIdentityClientID, nil)
 		if err != nil {
 			logger.Error("video indexer client error", "error", redactURLsInText(err.Error()))
@@ -44,7 +45,11 @@ func main() {
 		}
 		viClient.obs = obs
 		runErr = runWorker(ctx, logger, cfg, store, blobSvc, viClient, obs)
-	} else {
+	case "ffmpeg-worker":
+		renderStore := NewAzureRenderJobStore(blobSvc.Client(), cfg.JobContainer)
+		runErr = runFFmpegWorker(ctx, logger, cfg, renderStore, blobSvc, obs)
+	default:
+		store := NewAzureJobStore(blobSvc.Client(), cfg.JobContainer)
 		runErr = runAPI(ctx, logger, cfg, store, blobSvc, obs)
 	}
 	if runErr != nil {
@@ -54,20 +59,30 @@ func main() {
 }
 
 func runAPI(ctx context.Context, logger *slog.Logger, cfg Config, store JobStore, blobSvc *AzureBlobService, obs *Observability) error {
-	runtime, err := NewDTSRuntime(ctx, cfg, nil)
+	indexRuntime, err := NewDTSRuntimeForHub(ctx, cfg, cfg.DTSTaskHub, nil)
 	if err != nil {
-		return fmt.Errorf("starting Durable Task Scheduler runtime: %w", err)
+		return fmt.Errorf("starting indexing Durable Task Scheduler runtime: %w", err)
 	}
-	defer runtime.Close(context.Background())
+	defer indexRuntime.Close(context.Background())
+	renderRuntime, err := NewDTSRuntimeForHub(ctx, cfg, cfg.DTSRenderTaskHub, nil)
+	if err != nil {
+		return fmt.Errorf("starting render Durable Task Scheduler runtime: %w", err)
+	}
+	defer renderRuntime.Close(context.Background())
 
 	oneDrive := NewOneDriveClient(cfg.GraphBaseURL, nil)
 	oneDrive.obs = obs
-	jobs := NewDurableJobService(store, oneDrive, blobSvc, runtime, nil, cfg.DTSCancellationGrace)
-	runtime.SetCancellationReconciler(jobs.ReconcileCancellation)
+	jobs := NewDurableJobService(store, oneDrive, blobSvc, indexRuntime, nil, cfg.DTSCancellationGrace)
+	renderStore := NewAzureRenderJobStore(blobSvc.Client(), cfg.JobContainer)
+	renderJobs := NewDurableRenderJobService(renderStore, oneDrive, blobSvc, renderRuntime, nil)
+	indexRuntime.SetCancellationReconciler(jobs.ReconcileCancellation)
 	startStagedJobReconciler(ctx, logger, jobs)
+	startQueuedRenderReconciler(ctx, logger, renderJobs)
 	server := NewServer(cfg, jobs)
+	server.SetRenderJobs(renderJobs)
 	server.obs = obs
 	server.blobSvc = blobSvc
+	server.SetRenderOutputStreamer(blobSvc)
 	server.readiness = newAPIReadinessChecker(cfg, blobSvc)
 
 	httpServer := &http.Server{Addr: cfg.ListenAddr, Handler: server.Handler()}
@@ -105,6 +120,44 @@ func startStagedJobReconciler(ctx context.Context, logger *slog.Logger, jobs *Du
 		}
 	}()
 }
+func startQueuedRenderReconciler(ctx context.Context, logger *slog.Logger, jobs *DurableRenderJobService) {
+	reconcile := func() {
+		if err := jobs.ReconcileQueuedRenders(ctx); err != nil && ctx.Err() == nil {
+			logger.Error("reconciling queued render jobs", "error", redactURLsInText(err.Error()))
+		}
+	}
+	reconcile()
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				reconcile()
+			}
+		}
+	}()
+}
+
+func runFFmpegWorker(ctx context.Context, logger *slog.Logger, cfg Config, store RenderJobStore, blobSvc *AzureBlobService, obs *Observability) error {
+	activities := NewFFmpegRenderActivities(store, blobSvc, cfg, nil)
+	registry, err := NewFFmpegRenderTaskRegistry(activities)
+	if err != nil {
+		return fmt.Errorf("creating FFmpeg Durable Task Scheduler registry: %w", err)
+	}
+	runtime, err := NewDTSRuntime(ctx, cfg, registry)
+	if err != nil {
+		return fmt.Errorf("starting Durable Task Scheduler runtime: %w", err)
+	}
+	activities.SetCancellationTerminator(runtime.ForceTerminate)
+	defer runtime.Close(context.Background())
+	logger.Info("FFmpeg durable worker started", "task_hub", cfg.DTSRenderTaskHub, "telemetry_mode", obs.mode)
+	<-ctx.Done()
+	return nil
+}
+
 func runWorker(ctx context.Context, logger *slog.Logger, cfg Config, store JobStore, blobSvc *AzureBlobService, viClient *VideoIndexerClient, obs *Observability) error {
 	planner, err := NewEditPlannerFromEnv(obs)
 	if err != nil {

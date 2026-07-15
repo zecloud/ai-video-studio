@@ -9,9 +9,15 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 // @ts-ignore: Unused imports
 import * as editing$0 from "../editing/models.js";
 
+export function CancelRender(jobID: string): $CancellablePromise<editing$0.RenderJob | null> {
+    return $Call.ByID(2725404402, jobID).then(($result: any) => {
+        return $$createType1($result);
+    });
+}
+
 export function CreateDraftProject(name: string): $CancellablePromise<editing$0.EditProject> {
     return $Call.ByID(2469632424, name).then(($result: any) => {
-        return $$createType0($result);
+        return $$createType2($result);
     });
 }
 
@@ -21,18 +27,18 @@ export function DeleteProject(projectID: string): $CancellablePromise<void> {
 
 export function ListProjects(): $CancellablePromise<editing$0.EditProject[]> {
     return $Call.ByID(3962621678).then(($result: any) => {
-        return $$createType1($result);
+        return $$createType3($result);
     });
 }
 
 /**
- * Render dispatches a render job to the Azure Container App. It blocks until
- * the remote service completes or fails, then stores the result.
- * Emits wails events "editing:render:progress" and "editing:render:completed".
+ * Render submits an asynchronous render job, polls it with the Wails call
+ * context, streams the completed output to a scoped temp file, and publishes it
+ * to OneDrive with the desktop delegated identity.
  */
 export function Render(projectID: string): $CancellablePromise<editing$0.RenderJob | null> {
     return $Call.ByID(2403669932, projectID).then(($result: any) => {
-        return $$createType3($result);
+        return $$createType1($result);
     });
 }
 
@@ -41,7 +47,7 @@ export function Render(projectID: string): $CancellablePromise<editing$0.RenderJ
  */
 export function RenderJob(jobID: string): $CancellablePromise<editing$0.RenderJob | null> {
     return $Call.ByID(916506303, jobID).then(($result: any) => {
-        return $$createType3($result);
+        return $$createType1($result);
     });
 }
 
@@ -56,13 +62,13 @@ export function RenderJobs(): $CancellablePromise<(editing$0.RenderJob | null)[]
 
 export function SaveProject(project: editing$0.EditProject): $CancellablePromise<editing$0.EditProject> {
     return $Call.ByID(2743046994, project).then(($result: any) => {
-        return $$createType0($result);
+        return $$createType2($result);
     });
 }
 
 // Private type creation functions
-const $$createType0 = editing$0.EditProject.createFrom;
-const $$createType1 = $Create.Array($$createType0);
-const $$createType2 = editing$0.RenderJob.createFrom;
-const $$createType3 = $Create.Nullable($$createType2);
-const $$createType4 = $Create.Array($$createType3);
+const $$createType0 = editing$0.RenderJob.createFrom;
+const $$createType1 = $Create.Nullable($$createType0);
+const $$createType2 = editing$0.EditProject.createFrom;
+const $$createType3 = $Create.Array($$createType2);
+const $$createType4 = $Create.Array($$createType1);
