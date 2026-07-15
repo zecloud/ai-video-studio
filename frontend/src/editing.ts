@@ -40,6 +40,10 @@ function isActiveRender(job: RenderJob | null): boolean {
   return Boolean(job && !["completed", "failed", "canceled"].includes(job.status));
 }
 
+function currentRenderJob(jobs: RenderJob[]): RenderJob | null {
+  return jobs.find(isActiveRender) ?? jobs.at(-1) ?? null;
+}
+
 export async function loadEditingData(state: EditingViewState): Promise<void> {
   try {
     const [projects, assets, capabilities, jobs] = await Promise.all([
@@ -56,7 +60,7 @@ export async function loadEditingData(state: EditingViewState): Promise<void> {
     const currentClips = videoClips(state.activeProject);
     if (!currentClips.some((clip) => clip.id === state.selectedClipID)) state.selectedClipID = currentClips[0]?.id ?? null;
     const projectJobs = (jobs ?? []).filter((job): job is RenderJob => Boolean(job) && job!.projectId === state.activeProject?.id);
-    state.renderJob = projectJobs.at(-1) ?? null;
+    state.renderJob = currentRenderJob(projectJobs);
     state.renderInFlight = isActiveRender(state.renderJob);
   } catch (err) {
     state.message = `Failed to load the editing workspace: ${String(err)}`;
@@ -132,7 +136,7 @@ export async function startRender(state: EditingViewState): Promise<void> {
     state.message = job?.status === "completed" ? "Render uploaded to OneDrive." : job?.message || "Render submitted.";
   } catch (err) {
     state.renderInFlight = false;
-    state.message = state.renderJob?.status === "canceled" ? "Render canceled." : `Render error: ${String(err)}`;
+    state.message = ["cancellation_requested", "canceled"].includes(state.renderJob?.status ?? "") ? "Render canceled." : `Render error: ${String(err)}`;
   }
 }
 
@@ -182,9 +186,9 @@ export function renderEditingPanel(state: EditingViewState): string {
     <div class="edit-workspace">
       <aside class="edit-projects-panel" aria-label="Edit projects">
         <div class="edit-pane-title"><strong>Projects</strong><span>${state.projects.length}</span></div>
-        <div class="edit-project-list">${state.projects.length ? state.projects.map((item) => `<button type="button" class="edit-project-row ${item.id === project?.id ? "is-selected" : ""}" data-action="select-project" data-project-id="${escapeHTML(item.id)}"><strong>${escapeHTML(item.name)}</strong><small>${videoClips(item).length} ordered video clip${videoClips(item).length === 1 ? "" : "s"}</small></button>`).join("") : `<div class="edit-empty"><strong>No edit projects</strong><p>Create a project from a Smart Edit suggestion, or start an empty project.</p></div>`}</div>
+        <div class="edit-project-list">${state.projects.length ? state.projects.map((item) => `<button type="button" class="edit-project-row ${item.id === project?.id ? "is-selected" : ""}" data-action="select-project" data-project-id="${escapeHTML(item.id)}" aria-pressed="${item.id === project?.id}"><strong>${escapeHTML(item.name)}</strong><small>${videoClips(item).length} ordered video clip${videoClips(item).length === 1 ? "" : "s"}</small></button>`).join("") : `<div class="edit-empty"><strong>No edit projects</strong><p>Create a project from a Smart Edit suggestion, or start an empty project.</p></div>`}</div>
       </aside>
-      <main class="edit-main-panel">
+      <div class="edit-main-panel">
         <section class="edit-overview" aria-labelledby="edit-timeline-title">
           <div><p class="edit-kicker">Ordered video track</p><h2 id="edit-timeline-title">${project ? escapeHTML(project.name) : "Select or create a project"}</h2><p>${project?.originJobId ? `Created from Smart Edit job ${escapeHTML(project.originJobId)}.` : "Only persisted source ranges are shown. Preview and timing preparation are not available yet."}</p></div>
           ${project ? `<div class="edit-provenance"><span>Sources</span><strong>${project.assetIds?.length || 0}</strong><span>Suggestion</span><strong>${escapeHTML(project.suggestionId || "Not recorded")}</strong></div>` : ""}
@@ -192,7 +196,7 @@ export function renderEditingPanel(state: EditingViewState): string {
         ${project ? renderOrderedTrack(clips, state.assets, state.selectedClipID, capabilities) : ""}
         ${project && clips.length === 0 ? `<div class="edit-unavailable"><strong>This project has no renderable clips.</strong><p>Addition and trim ranges require media preparation, which has not been implemented. Create a project from a Smart Edit suggestion with grounded time ranges.</p></div>` : ""}
         ${project ? renderRenderPanel(state, preset, renderable) : ""}
-      </main>
+      </div>
       <aside class="edit-assets-panel" aria-label="Analyzed source media">
         <div class="edit-pane-title"><strong>Analyzed media</strong><span>${eligibleAssets.length}</span></div>
         <div class="edit-asset-list">${eligibleAssets.length ? eligibleAssets.map((asset) => `<article class="edit-asset-row"><strong>${escapeHTML(asset.name || asset.id)}</strong><dl><div><dt>Analysis</dt><dd>${asset.analysisScenes} scene${asset.analysisScenes === 1 ? "" : "s"}</dd></div><div><dt>Source</dt><dd>${asset.cloudAssetId ? "OneDrive linked" : "OneDrive item unavailable"}</dd></div><div><dt>File</dt><dd>${escapeHTML(asset.contentType || "Type unavailable")} · ${formatBytes(asset.sizeBytes)}</dd></div></dl></article>`).join("") : `<div class="edit-empty"><strong>No analyzed media</strong><p>Analyze imported OneDrive assets before creating a Smart Edit project.</p></div>`}</div>

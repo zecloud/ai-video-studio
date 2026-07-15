@@ -2,12 +2,20 @@ package backend
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/zecloud/ai-video-studio/internal/editing"
 	"github.com/zecloud/ai-video-studio/internal/library"
 )
+
+type failingEditingProjectStore struct{ memoryEditingProjectStore }
+
+func (f *failingEditingProjectStore) Save(context.Context, []editing.EditProject) error {
+	return errors.New("save failed")
+}
 
 func TestEditingServiceDeleteClipPersistsCanonicalProject(t *testing.T) {
 	store := &memoryEditingProjectStore{}
@@ -80,6 +88,75 @@ func TestEditingServiceDeleteClipRejectsOnlyRemainingClip(t *testing.T) {
 	}
 }
 
+func TestEditingServiceMutationRejectsUnavailableProjectStorage(t *testing.T) {
+	service := NewEditingService(&fakeLibraryStore{}, nil, nil, nil)
+	_, err := service.DeleteClip(context.Background(), "project", "clip")
+	if err == nil || !strings.Contains(err.Error(), "persisted project storage") {
+		t.Fatalf("DeleteClip() error = %v", err)
+	}
+}
+
+func TestEditingServiceMutationFailureDoesNotChangeStoredProject(t *testing.T) {
+	store := &failingEditingProjectStore{}
+	service := NewEditingService(&fakeLibraryStore{assets: []library.ProjectAsset{
+		{ID: "asset-a", CloudAssetID: "drive-a"},
+		{ID: "asset-b", CloudAssetID: "drive-b"},
+		{ID: "asset-c", CloudAssetID: "drive-c"},
+	}}, nil, nil, store)
+	project := mutationTestProject()
+	service.projects[project.ID] = project
+	service.loaded = true
+
+	if _, err := service.DeleteClip(context.Background(), project.ID, "clip-b"); err == nil || !strings.Contains(err.Error(), "save failed") {
+		t.Fatalf("DeleteClip() error = %v", err)
+	}
+	assertMutationProject(t, service.projects[project.ID], []string{"clip-a", "clip-b", "clip-c"}, []int64{0, 1000, 2000})
+}
+
+func TestEditingServiceMutationPreservesOpaqueIdentifiers(t *testing.T) {
+	service := mutationTestService(t)
+	project := mutationTestProject()
+	project.ID = " project "
+	project.Timeline.Tracks[0].Clips[1].ID = " clip-b "
+	if _, err := service.SaveProject(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := service.MoveClipEarlier(context.Background(), project.ID, " clip-b ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMutationProject(t, updated, []string{" clip-b ", "clip-a", "clip-c"}, []int64{0, 1000, 2000})
+}
+func TestEditingServiceSaveProjectFailureRestoresPreviousProject(t *testing.T) {
+	store := &failingEditingProjectStore{}
+	service := NewEditingService(&fakeLibraryStore{}, nil, nil, store)
+	previous := mutationTestProject()
+	service.projects[previous.ID] = previous
+	service.loaded = true
+	updated := previous
+	updated.Name = "Updated composition"
+
+	if _, err := service.SaveProject(context.Background(), updated); err == nil || !strings.Contains(err.Error(), "save failed") {
+		t.Fatalf("SaveProject() error = %v", err)
+	}
+	if got := service.projects[previous.ID]; got.Name != previous.Name {
+		t.Fatalf("stored project was changed after persistence failure: %#v", got)
+	}
+}
+
+func TestEditingServiceSaveProjectRejectsMoreThanRenderClipLimit(t *testing.T) {
+	service := mutationTestService(t)
+	project := mutationTestProject()
+	clips := make([]editing.ClipSegment, maxEditingRenderClips+1)
+	for index := range clips {
+		clips[index] = editing.ClipSegment{ID: fmt.Sprintf("clip-%d", index), SourceAssetID: "asset-a", InMS: 0, OutMS: 1000}
+	}
+	project.Timeline.Tracks[0].Clips = clips
+
+	if _, err := service.SaveProject(context.Background(), project); err == nil || !strings.Contains(err.Error(), "clip limit") {
+		t.Fatalf("SaveProject() error = %v", err)
+	}
+}
 func mutationTestService(t *testing.T) *EditingService {
 	t.Helper()
 	return NewEditingService(&fakeLibraryStore{assets: []library.ProjectAsset{

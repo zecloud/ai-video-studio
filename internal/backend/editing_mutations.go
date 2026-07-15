@@ -46,13 +46,14 @@ func (s *EditingService) mutateVideoClip(ctx context.Context, projectID, clipID 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	projectID = strings.TrimSpace(projectID)
-	clipID = strings.TrimSpace(clipID)
-	if projectID == "" || clipID == "" {
+	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(clipID) == "" {
 		return editing.EditProject{}, fmt.Errorf("editing: project and clip IDs are required")
 	}
 	if err := s.ensureProjectsLoaded(ctx); err != nil {
 		return editing.EditProject{}, err
+	}
+	if s.projectStore == nil {
+		return editing.EditProject{}, fmt.Errorf("editing: persisted project storage is unavailable")
 	}
 	assets, err := s.loadEditingAssetRefs(ctx)
 	if err != nil {
@@ -61,10 +62,11 @@ func (s *EditingService) mutateVideoClip(ctx context.Context, projectID, clipID 
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	project, found := s.projects[projectID]
+	storedProject, found := s.projects[projectID]
 	if !found {
 		return editing.EditProject{}, fmt.Errorf("editing: project %q not found", projectID)
 	}
+	project := storedProject
 	trackIndex, clipIndex, err := findEditableVideoClip(project, clipID)
 	if err != nil {
 		return editing.EditProject{}, err
@@ -74,12 +76,14 @@ func (s *EditingService) mutateVideoClip(ctx context.Context, projectID, clipID 
 	if err != nil {
 		return editing.EditProject{}, err
 	}
+	project.Timeline.Tracks = append([]editing.Track(nil), project.Timeline.Tracks...)
 	project.Timeline.Tracks[trackIndex].Clips = normalizeOrderedVideoClips(clips)
 	if err := validateEditableProject(project, assets); err != nil {
 		return editing.EditProject{}, err
 	}
 	s.projects[project.ID] = project
 	if err := s.persistProjectsLocked(ctx); err != nil {
+		s.projects[project.ID] = storedProject
 		return editing.EditProject{}, err
 	}
 	return project, nil

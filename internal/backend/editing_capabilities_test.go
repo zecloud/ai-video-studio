@@ -69,7 +69,19 @@ func TestEditingCapabilitiesExplainsMissingOneDriveSignIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if capabilities.RenderReady || !capabilities.RenderServiceReady || capabilities.OneDriveReady || capabilities.RenderRecoveryMessage == "" {
 		t.Fatalf("unexpected capabilities: %#v", capabilities)
+	}
+}
+
+func TestEditingCapabilitiesHidePersistedMutationsWithoutProjectStore(t *testing.T) {
+	service := NewEditingService(&fakeLibraryStore{}, nil, nil, nil)
+	capabilities, err := service.Capabilities(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capabilities.ProjectPersistence || capabilities.ClipRemoval || capabilities.ClipReordering {
+		t.Fatalf("non-persistent mutations were exposed: %#v", capabilities)
 	}
 }

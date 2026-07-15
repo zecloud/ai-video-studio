@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -224,6 +225,38 @@ func TestEditingServiceRejectsRenderWhenAsyncIsUnconfigured(t *testing.T) {
 	}
 }
 
+func TestEditingServiceRenderJobsAreOrderedByID(t *testing.T) {
+	service := NewEditingService(&fakeLibraryStore{}, nil, nil, &memoryEditingProjectStore{})
+	service.jobs["render-30"] = &editing.RenderJob{ID: "render-30"}
+	service.jobs["render-10"] = &editing.RenderJob{ID: "render-10"}
+	service.jobs["render-20"] = &editing.RenderJob{ID: "render-20"}
+
+	jobs, err := service.RenderJobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []string{jobs[0].ID, jobs[1].ID, jobs[2].ID}
+	want := []string{"render-10", "render-20", "render-30"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("RenderJobs() IDs = %v, want %v", got, want)
+	}
+}
+
+func TestEditingServiceRejectsAsyncRenderAboveClipLimit(t *testing.T) {
+	assets := make([]library.ProjectAsset, maxEditingRenderClips+1)
+	clips := make([]editing.ClipSegment, maxEditingRenderClips+1)
+	for index := range clips {
+		assetID := fmt.Sprintf("asset-%d", index)
+		assets[index] = library.ProjectAsset{ID: assetID, CloudAssetID: fmt.Sprintf("drive-%d", index)}
+		clips[index] = editing.ClipSegment{ID: fmt.Sprintf("clip-%d", index), SourceAssetID: assetID, InMS: 0, OutMS: 1000}
+	}
+	service := NewEditingService(&fakeLibraryStore{assets: assets}, nil, nil, &memoryEditingProjectStore{})
+	project := editing.EditProject{ID: "over-limit", Timeline: editing.Timeline{Tracks: []editing.Track{{Kind: "video", Clips: clips}}}}
+
+	if _, _, _, err := service.buildAsyncRenderTimeline(context.Background(), project); err == nil || !strings.Contains(err.Error(), "clip limit") {
+		t.Fatalf("buildAsyncRenderTimeline() error = %v", err)
+	}
+}
 func TestEditingServicePreservesSavedCutTransition(t *testing.T) {
 	service := NewEditingService(&fakeLibraryStore{assets: []library.ProjectAsset{
 		{ID: "asset-1", Name: "first.mp4", CloudAssetID: "drive-source-1"},

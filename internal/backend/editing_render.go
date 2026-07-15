@@ -250,6 +250,9 @@ func (s *EditingService) buildAsyncRenderTimeline(ctx context.Context, project e
 	if len(clips) == 0 {
 		return nil, nil, 0, fmt.Errorf("project %q has no clips", project.ID)
 	}
+	if len(clips) > maxEditingRenderClips {
+		return nil, nil, 0, fmt.Errorf("editing: project %q exceeds the %d clip limit", project.ID, maxEditingRenderClips)
+	}
 	transitions := make([]videoindexerstudio.RenderTransitionRequest, 0, len(clips)-1)
 	for i := 1; i < len(clips); i++ {
 		transition := videoindexerstudio.RenderTransitionRequest{Kind: "cut"}
