@@ -573,7 +573,8 @@ function renderEditProjectAction(job: BackendModels.VideoIndexerStudioJob, state
     const opening = state.activeAction?.kind === "open-project" && state.activeAction.projectID === job.projectId;
     return `<button type="button" class="${className}" data-action="video-indexer-open-project" data-project-id="${escapeHTML(job.projectId)}" ${state.activeAction ? "disabled" : ""} ${opening ? 'aria-busy="true"' : ""}>${opening ? "Opening project..." : "Open in Editing"}</button>`;
   }
-  if (job.status !== "succeeded" || (job.timelineDrafts?.length || 0) !== 1) {
+  const canCreateForDraft = suggestionID.trim().length > 0 || (job.timelineDrafts?.length || 0) === 1;
+  if (job.status !== "succeeded" || !canCreateForDraft) {
     return "";
   }
   const creating = state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id;
