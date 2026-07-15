@@ -266,6 +266,44 @@ type EditPlan struct {
 	SourceRefs     []SourceRef      `json:"sourceRefs,omitempty"`
 }
 
+const CompositionEditPlanSchemaVersion = 1
+
+// CompositionEditPlan is the grounded, ordered recommendation for a Smart Edit
+// composition. It is deliberately separate from EditPlan so single-video
+// planner responses remain backwards compatible.
+type CompositionEditPlan struct {
+	SchemaVersion         int                       `json:"schemaVersion"`
+	CompositionID         string                    `json:"compositionId"`
+	Title                 string                    `json:"title"`
+	Summary               string                    `json:"summary"`
+	RankingMode           string                    `json:"rankingMode"`
+	RecommendationVersion string                    `json:"recommendationVersion"`
+	EvidenceFingerprint   string                    `json:"evidenceFingerprint"`
+	SourceAssetIDs        []string                  `json:"sourceAssetIds"`
+	Sources               []CompositionSourceStatus `json:"sources"`
+	Clips                 []CompositionClip         `json:"clips"`
+	SourceRefs            []SourceRef               `json:"sourceRefs"`
+}
+
+type CompositionSourceStatus struct {
+	AssetID       string `json:"assetId"`
+	AnalysisJobID string `json:"analysisJobId"`
+	Status        string `json:"status"`
+	DurationMs    int64  `json:"durationMs"`
+}
+
+type CompositionClip struct {
+	ID            string      `json:"id"`
+	SourceAssetID string      `json:"sourceAssetId"`
+	SuggestionID  string      `json:"suggestionId"`
+	Title         string      `json:"title"`
+	Reason        string      `json:"reason"`
+	StartMs       int64       `json:"startMs"`
+	EndMs         int64       `json:"endMs"`
+	Score         float64     `json:"score"`
+	SourceRefs    []SourceRef `json:"sourceRefs"`
+}
+
 type Highlight struct {
 	ID         string      `json:"id"`
 	Title      string      `json:"title"`
