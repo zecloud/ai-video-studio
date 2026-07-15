@@ -386,3 +386,48 @@ func deepEqualJSON(a, b any) bool {
 		return a == b
 	}
 }
+
+func narrativeRankingRequestFixture() NarrativeRankingRequest {
+	return NarrativeRankingRequest{
+		SchemaVersion: NarrativeRankingSchemaVersion,
+		CompositionID: "composition-1",
+		Candidates:    []NarrativeRankingCandidate{{ID: "clip-a", SourceAssetID: "asset-a", StartMs: 0, EndMs: 100}},
+	}
+}
+
+func TestRankNarrative_Success(t *testing.T) {
+	request := narrativeRankingRequestFixture()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/narrative-rankings" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer test-api-key" || r.Header.Get("X-API-Key") != "test-api-key" {
+			t.Fatalf("missing narrative ranking credentials")
+		}
+		var got NarrativeRankingRequest
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil || !reflect.DeepEqual(got, request) {
+			t.Fatalf("unexpected narrative request: %#v, %v", got, err)
+		}
+		_ = json.NewEncoder(w).Encode(NarrativeRankingResponse{SchemaVersion: NarrativeRankingSchemaVersion, OrderedClips: []NarrativeRankedClip{{CandidateID: "clip-a"}}})
+	}))
+	defer server.Close()
+
+	response, err := testClient(t, server).RankNarrative(context.Background(), request)
+	if err != nil || response.OrderedClips[0].CandidateID != "clip-a" {
+		t.Fatalf("RankNarrative = %#v, %v", response, err)
+	}
+}
+
+func TestRankNarrative_PropagatesServiceError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(APIErrorResponse{Code: "narrative_ranker_unavailable", Message: "unavailable", Retryable: true})
+	}))
+	defer server.Close()
+
+	_, err := testClient(t, server).RankNarrative(context.Background(), narrativeRankingRequestFixture())
+	var responseErr *ResponseError
+	if !errors.As(err, &responseErr) || responseErr.StatusCode != http.StatusServiceUnavailable || responseErr.Code != "narrative_ranker_unavailable" || !responseErr.Retryable {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

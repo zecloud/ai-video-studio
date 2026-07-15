@@ -79,6 +79,11 @@ func runAPI(ctx context.Context, logger *slog.Logger, cfg Config, store JobStore
 	startStagedJobReconciler(ctx, logger, jobs)
 	startQueuedRenderReconciler(ctx, logger, renderJobs)
 	server := NewServer(cfg, jobs)
+	if planner, plannerErr := NewEditPlannerFromEnv(obs); plannerErr == nil {
+		server.SetNarrativeRanker(narrativeRanker{planner: planner, max: cfg.NarrativeRankingMaxCandidates, maxSources: cfg.NarrativeRankingMaxSources, timeout: cfg.NarrativeRankingTimeout, obs: obs})
+	} else {
+		logger.Warn("narrative ranking unavailable", "error", redactURLsInText(plannerErr.Error()))
+	}
 	server.SetRenderJobs(renderJobs)
 	server.obs = obs
 	server.blobSvc = blobSvc
