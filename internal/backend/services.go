@@ -781,6 +781,9 @@ func (s *EditingService) SaveProject(_ context.Context, project editing.EditProj
 	if len(project.Timeline.Tracks) == 0 {
 		project.Timeline.Tracks = []editing.Track{{ID: "video-1", Kind: "video"}}
 	}
+	if editingProjectClipCount(project) > maxEditingRenderClips {
+		return editing.EditProject{}, fmt.Errorf("editing: project %q exceeds the %d clip limit", project.ID, maxEditingRenderClips)
+	}
 	if err := s.ensureProjectsLoaded(context.Background()); err != nil {
 		return editing.EditProject{}, err
 	}
@@ -789,8 +792,14 @@ func (s *EditingService) SaveProject(_ context.Context, project editing.EditProj
 	if s.projects == nil {
 		s.projects = map[string]editing.EditProject{}
 	}
+	previous, existed := s.projects[project.ID]
 	s.projects[project.ID] = project
 	if err := s.persistProjectsLocked(context.Background()); err != nil {
+		if existed {
+			s.projects[project.ID] = previous
+		} else {
+			delete(s.projects, project.ID)
+		}
 		return editing.EditProject{}, err
 	}
 	return project, nil
@@ -940,7 +949,18 @@ func (s *EditingService) RenderJobs() ([]*editing.RenderJob, error) {
 	for _, job := range s.jobs {
 		jobs = append(jobs, cloneEditingRenderJob(*job))
 	}
+	sort.Slice(jobs, func(i, j int) bool { return jobs[i].ID < jobs[j].ID })
 	return jobs, nil
+}
+
+func editingProjectClipCount(project editing.EditProject) int {
+	count := 0
+	for _, track := range project.Timeline.Tracks {
+		if track.Kind == "" || track.Kind == "video" {
+			count += len(track.Clips)
+		}
+	}
+	return count
 }
 
 func (s *EditingService) ensureProjectsLoaded(ctx context.Context) error {

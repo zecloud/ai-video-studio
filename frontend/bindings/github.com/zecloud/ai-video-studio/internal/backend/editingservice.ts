@@ -9,15 +9,37 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 // @ts-ignore: Unused imports
 import * as editing$0 from "../editing/models.js";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
 export function CancelRender(jobID: string): $CancellablePromise<editing$0.RenderJob | null> {
     return $Call.ByID(2725404402, jobID).then(($result: any) => {
         return $$createType1($result);
     });
 }
 
+/**
+ * Capabilities returns the safe, currently implemented editing surface.
+ */
+export function Capabilities(): $CancellablePromise<$models.EditingCapabilities> {
+    return $Call.ByID(129614138).then(($result: any) => {
+        return $$createType2($result);
+    });
+}
+
 export function CreateDraftProject(name: string): $CancellablePromise<editing$0.EditProject> {
     return $Call.ByID(2469632424, name).then(($result: any) => {
-        return $$createType2($result);
+        return $$createType3($result);
+    });
+}
+
+/**
+ * DeleteClip removes one existing Smart Edit clip and persists the canonical project.
+ */
+export function DeleteClip(projectID: string, clipID: string): $CancellablePromise<editing$0.EditProject> {
+    return $Call.ByID(2542314705, projectID, clipID).then(($result: any) => {
+        return $$createType3($result);
     });
 }
 
@@ -27,6 +49,24 @@ export function DeleteProject(projectID: string): $CancellablePromise<void> {
 
 export function ListProjects(): $CancellablePromise<editing$0.EditProject[]> {
     return $Call.ByID(3962621678).then(($result: any) => {
+        return $$createType4($result);
+    });
+}
+
+/**
+ * MoveClipEarlier moves one existing Smart Edit clip by one position and persists the canonical project.
+ */
+export function MoveClipEarlier(projectID: string, clipID: string): $CancellablePromise<editing$0.EditProject> {
+    return $Call.ByID(3911695009, projectID, clipID).then(($result: any) => {
+        return $$createType3($result);
+    });
+}
+
+/**
+ * MoveClipLater moves one existing Smart Edit clip by one position and persists the canonical project.
+ */
+export function MoveClipLater(projectID: string, clipID: string): $CancellablePromise<editing$0.EditProject> {
+    return $Call.ByID(24560219, projectID, clipID).then(($result: any) => {
         return $$createType3($result);
     });
 }
@@ -56,19 +96,20 @@ export function RenderJob(jobID: string): $CancellablePromise<editing$0.RenderJo
  */
 export function RenderJobs(): $CancellablePromise<(editing$0.RenderJob | null)[]> {
     return $Call.ByID(3407409956).then(($result: any) => {
-        return $$createType4($result);
+        return $$createType5($result);
     });
 }
 
 export function SaveProject(project: editing$0.EditProject): $CancellablePromise<editing$0.EditProject> {
     return $Call.ByID(2743046994, project).then(($result: any) => {
-        return $$createType2($result);
+        return $$createType3($result);
     });
 }
 
 // Private type creation functions
 const $$createType0 = editing$0.RenderJob.createFrom;
 const $$createType1 = $Create.Nullable($$createType0);
-const $$createType2 = editing$0.EditProject.createFrom;
-const $$createType3 = $Create.Array($$createType2);
-const $$createType4 = $Create.Array($$createType1);
+const $$createType2 = $models.EditingCapabilities.createFrom;
+const $$createType3 = editing$0.EditProject.createFrom;
+const $$createType4 = $Create.Array($$createType3);
+const $$createType5 = $Create.Array($$createType1);

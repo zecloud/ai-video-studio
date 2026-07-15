@@ -42,6 +42,116 @@ export class AppOverview {
     }
 }
 
+/**
+ * EditingCapabilities describes the editing operations and media evidence the
+ * desktop can safely present. It intentionally exposes readiness, never secrets.
+ */
+export class EditingCapabilities {
+    "projectPersistence": boolean;
+    "eligibleAssetCount": number;
+    "renderServiceReady": boolean;
+    "oneDriveReady": boolean;
+    "renderReady": boolean;
+    "renderRecoveryMessage"?: string;
+    "supportedRenderPresets": string[];
+    "maximumRenderClips": number;
+    "orderedVideoClips": boolean;
+    "cutTransitions": boolean;
+    "renderProgress": boolean;
+    "renderCancellation": boolean;
+    "manualClipAddition": boolean;
+    "clipRemoval": boolean;
+    "clipReordering": boolean;
+    "trimming": boolean;
+    "mediaMetadata": boolean;
+    "thumbnails": boolean;
+    "preview": boolean;
+    "titles": boolean;
+    "audio": boolean;
+    "multiTrack": boolean;
+
+    /** Creates a new EditingCapabilities instance. */
+    constructor($$source: Partial<EditingCapabilities> = {}) {
+        if (!("projectPersistence" in $$source)) {
+            this["projectPersistence"] = false;
+        }
+        if (!("eligibleAssetCount" in $$source)) {
+            this["eligibleAssetCount"] = 0;
+        }
+        if (!("renderServiceReady" in $$source)) {
+            this["renderServiceReady"] = false;
+        }
+        if (!("oneDriveReady" in $$source)) {
+            this["oneDriveReady"] = false;
+        }
+        if (!("renderReady" in $$source)) {
+            this["renderReady"] = false;
+        }
+        if (!("supportedRenderPresets" in $$source)) {
+            this["supportedRenderPresets"] = [];
+        }
+        if (!("maximumRenderClips" in $$source)) {
+            this["maximumRenderClips"] = 0;
+        }
+        if (!("orderedVideoClips" in $$source)) {
+            this["orderedVideoClips"] = false;
+        }
+        if (!("cutTransitions" in $$source)) {
+            this["cutTransitions"] = false;
+        }
+        if (!("renderProgress" in $$source)) {
+            this["renderProgress"] = false;
+        }
+        if (!("renderCancellation" in $$source)) {
+            this["renderCancellation"] = false;
+        }
+        if (!("manualClipAddition" in $$source)) {
+            this["manualClipAddition"] = false;
+        }
+        if (!("clipRemoval" in $$source)) {
+            this["clipRemoval"] = false;
+        }
+        if (!("clipReordering" in $$source)) {
+            this["clipReordering"] = false;
+        }
+        if (!("trimming" in $$source)) {
+            this["trimming"] = false;
+        }
+        if (!("mediaMetadata" in $$source)) {
+            this["mediaMetadata"] = false;
+        }
+        if (!("thumbnails" in $$source)) {
+            this["thumbnails"] = false;
+        }
+        if (!("preview" in $$source)) {
+            this["preview"] = false;
+        }
+        if (!("titles" in $$source)) {
+            this["titles"] = false;
+        }
+        if (!("audio" in $$source)) {
+            this["audio"] = false;
+        }
+        if (!("multiTrack" in $$source)) {
+            this["multiTrack"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new EditingCapabilities instance from a string or object.
+     */
+    static createFrom($$source: any = {}): EditingCapabilities {
+        const $$createField6_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("supportedRenderPresets" in $$parsedSource) {
+            $$parsedSource["supportedRenderPresets"] = $$createField6_0($$parsedSource["supportedRenderPresets"]);
+        }
+        return new EditingCapabilities($$parsedSource as Partial<EditingCapabilities>);
+    }
+}
+
 export class ProtectedEndpointStatus {
     "configured": boolean;
     "endpoint"?: string;
