@@ -24,7 +24,8 @@ export type VideoIndexerStudioAction =
   | { kind: "generate-composition"; count: number }
   | { kind: "submit-selected"; count: number }
   | { kind: "submit-pending"; count: number }
-  | { kind: "retry" | "cancel" | "create-project"; jobID: string };
+  | { kind: "retry" | "cancel" | "create-project"; jobID: string }
+  | { kind: "open-project"; projectID: string };
 
 export interface VideoIndexerStudioViewState {
   jobs: BackendModels.VideoIndexerStudioJob[];
@@ -35,6 +36,13 @@ export interface VideoIndexerStudioViewState {
   message: string;
   activeAction: VideoIndexerStudioAction | null;
   settings: VideoIndexerStudioSettingsState;
+}
+
+interface CompositionSourceState {
+  assetID: string;
+  analysisJobID: string;
+  status: string;
+  durationMs: number;
 }
 
 export function createVideoIndexerStudioState(): VideoIndexerStudioViewState {
@@ -147,6 +155,7 @@ function stageLabel(status: string | undefined): string {
 
 function localStatusTone(status: string): "success" | "warning" | "danger" | "info" | "neutral" {
   switch (status) {
+    case "complete":
     case "succeeded":
       return "success";
     case "failed":
@@ -160,6 +169,37 @@ function localStatusTone(status: string): "success" | "warning" | "danger" | "in
     default:
       return "neutral";
   }
+}
+
+function compositionSourceStates(job: BackendModels.VideoIndexerStudioJob, state: VideoIndexerStudioViewState): CompositionSourceState[] {
+  if (job.compositionPlan?.sources?.length) {
+    return job.compositionPlan.sources.map((source) => ({
+      assetID: source.assetId,
+      analysisJobID: source.analysisJobId,
+      status: source.status,
+      durationMs: source.durationMs,
+    }));
+  }
+
+  return (job.assetIds || []).map((assetID, index) => {
+    const analysisJobID = job.dependencyJobIds?.[index] || "";
+    const analysis = state.jobs.find((candidate) => candidate.id === analysisJobID);
+    return {
+      assetID,
+      analysisJobID,
+      status: analysis?.status || "pending",
+      durationMs: analysis?.videoIndexResult?.durationMs || 0,
+    };
+  });
+}
+
+function compositionSourceStatusLabel(status: string): string {
+  return status === "complete" ? "Complete" : stageLabel(status);
+}
+
+function formatScore(score: number | undefined | null): string {
+  if (!Number.isFinite(score ?? NaN)) return "Score unavailable";
+  return `${Math.round(Math.max(0, Math.min(1, score ?? 0)) * 100)}%`;
 }
 
 function inFlight(status: string): boolean {
@@ -197,23 +237,6 @@ function selectedAssets(state: VideoIndexerStudioViewState): LibraryModels.Proje
   if (state.selectedAssetIDs.length === 0) return [];
   const selected = new Set(state.selectedAssetIDs);
   return state.assets.filter((asset) => selected.has(asset.id));
-}
-
-function compositionAnalysisReady(
-  asset: LibraryModels.ProjectAsset,
-  latestJobs: Map<string, BackendModels.VideoIndexerStudioJob>,
-): boolean {
-  const job = latestJobs.get(asset.id);
-  return Boolean(
-    assetEligible(asset)
-      && job?.status === "succeeded"
-      && job.videoIndexResult
-      && job.editPlan?.suggestions?.length,
-  );
-}
-
-function selectedCompositionAssets(state: VideoIndexerStudioViewState): LibraryModels.ProjectAsset[] {
-  return selectedAssets(state).filter(assetEligible);
 }
 
 function pendingAssets(state: VideoIndexerStudioViewState): LibraryModels.ProjectAsset[] {
@@ -309,12 +332,12 @@ export async function submitVideoIndexerAssets(state: VideoIndexerStudioViewStat
 
 export async function generateMultiVideoEdit(state: VideoIndexerStudioViewState): Promise<BackendModels.VideoIndexerStudioJob | null> {
   if (state.activeAction) return null;
-  const targets = selectedCompositionAssets(state);
+  const targets = selectedAssets(state).filter(assetEligible);
   if (targets.length < 2) {
-    throw new Error("Select at least two distinct cloud-linked assets to create a composition recommendation.");
+    throw new Error("Select at least two eligible videos to generate a combined edit.");
   }
   state.activeAction = { kind: "generate-composition", count: targets.length };
-  state.message = `Requesting a composition recommendation from ${targets.length} videos...`;
+  state.message = `Preparing a combined edit from ${targets.length} videos...`;
   try {
     const job = await VideoIndexerStudioService.GenerateMultiVideoEdit(targets.map((asset) => asset.id));
     if (!job) {
@@ -323,8 +346,8 @@ export async function generateMultiVideoEdit(state: VideoIndexerStudioViewState)
     upsertJob(state, job);
     state.selectedJobID = job.id;
     state.message = job.status === "succeeded"
-      ? `Composition recommendation is ready for ${targets.length} videos.`
-      : `Composition recommendation is waiting for ${targets.length} source analyses.`;
+      ? `Combined edit is ready for ${targets.length} videos.`
+      : `Combined edit is waiting for ${targets.length} source analyses.`;
     return job;
   } finally {
     state.activeAction = null;
@@ -420,13 +443,12 @@ function renderAssetRows(state: VideoIndexerStudioViewState): string {
         .map((asset) => {
           const selected = state.selectedAssetIDs.includes(asset.id);
           const job = latest.get(asset.id);
-          const compositionReady = compositionAnalysisReady(asset, latest);
           const tone = job ? localStatusTone(job.status) : "neutral";
           return `
             <tr>
               <td><input class="check" type="checkbox" data-action="video-indexer-toggle-asset" data-asset-id="${escapeHTML(asset.id)}" ${selected ? "checked" : ""} ${state.activeAction ? "disabled" : ""} aria-label="Select ${escapeHTML(asset.name || asset.id)}" /></td>
               <td><strong>${escapeHTML(asset.name || asset.id)}</strong><br><span class="muted">${escapeHTML(asset.cloudAssetId || "No cloud asset ID")}</span></td>
-              <td>${badge(compositionReady ? "Ready for composition" : job ? stageLabel(job.status) : "Ready to index", compositionReady ? "success" : tone)}</td>
+              <td>${badge(job ? stageLabel(job.status) : "Eligible", tone)}</td>
               <td class="muted">${escapeHTML(formatRelative(job?.updatedAt || asset.createdAt))}</td>
               <td><span class="path-cell">${escapeHTML(asset.id)}</span></td>
             </tr>`;
@@ -465,11 +487,7 @@ function renderJobsTable(state: VideoIndexerStudioViewState): string {
                       ? `<button type="button" class="button small" data-action="video-indexer-retry-job" data-job-id="${escapeHTML(job.id)}" ${busy ? "disabled" : ""} ${state.activeAction?.kind === "retry" && state.activeAction.jobID === job.id ? 'aria-busy="true"' : ""}>${state.activeAction?.kind === "retry" && state.activeAction.jobID === job.id ? "Retrying..." : "Retry"}</button>`
                       : ""
                   }
-                  ${
-                    !job.composition && job.status === "succeeded" && (job.timelineDrafts?.length || 0) === 1
-                      ? `<button type="button" class="button small" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}" ${busy ? "disabled" : ""} ${state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id ? 'aria-busy="true"' : ""}>${state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id ? "Creating project..." : "Create edit project"}</button>`
-                      : ""
-                  }
+                  ${renderEditProjectAction(job, state, "button small")}
                 </div>
               </td>
             </tr>`;
@@ -534,14 +552,62 @@ function renderSourceRefs(refs: VI.SourceRef[] | undefined): string {
   }
   return refs
     .map(
-      (ref) => `
-        <span class="source-ref" title="${escapeHTML(`${ref.sourceKind || "source"} · ${ref.sourceAssetId || "asset"}`)}">
+      (ref) => {
+        const detail = [
+          firstNonEmpty(ref.sourceKind, "source"),
+          firstNonEmpty(ref.sourceAssetId, "asset"),
+          ref.startMs === undefined && ref.endMs === undefined ? "" : `${formatMs(ref.startMs)} - ${formatMs(ref.endMs)}`,
+          ref.text || "",
+        ].filter(Boolean).join(" · ");
+        return `
+        <span class="source-ref" title="${escapeHTML(detail)}" aria-label="${escapeHTML(detail)}">
           ${escapeHTML(firstNonEmpty(ref.factKind, ref.sourceKind, ref.refId))}
-        </span>`,
+        </span>`;
+      },
     )
     .join("");
 }
 
+function canonicalCompositionDraft(job: BackendModels.VideoIndexerStudioJob): VI.TimelineDraft | null {
+  const plan = job.compositionPlan;
+  const drafts = job.timelineDrafts || [];
+  const draft = drafts[0];
+  const proposalClips = plan?.clips || [];
+  const clips = draft?.primaryVideoTrack?.clips || [];
+  if (!plan || plan.compositionId !== job.id || !proposalClips.length || !draft || drafts.length !== 1 || draft.originJobId !== job.id || clips.length !== proposalClips.length) return null;
+  return clips.every((clip, index) => {
+    const proposalClip = proposalClips[index];
+    return proposalClip
+      && clip.id === proposalClip.id
+      && clip.sourceAssetId === proposalClip.sourceAssetId
+      && clip.inMs === proposalClip.startMs
+      && clip.outMs === proposalClip.endMs
+      && clip.transition?.kind === "cut"
+      && clip.transition?.durationMs === 0;
+  }) ? draft : null;
+}
+
+function legacyCompositionDraft(job: BackendModels.VideoIndexerStudioJob): VI.TimelineDraft | null {
+  const drafts = job.timelineDrafts || [];
+  const draft = drafts[0];
+  const clips = draft?.primaryVideoTrack?.clips || [];
+  if (job.status !== "succeeded" || job.compositionPlan || !draft || drafts.length !== 1 || draft.originJobId !== job.id || !clips.length) return null;
+  return clips.every((clip) => clip.transition?.kind === "cut" && clip.transition?.durationMs === 0) ? draft : null;
+}
+
+function renderEditProjectAction(job: BackendModels.VideoIndexerStudioJob, state: VideoIndexerStudioViewState, className = "button", suggestionID = ""): string {
+  if (job.projectId) {
+    const opening = state.activeAction?.kind === "open-project" && state.activeAction.projectID === job.projectId;
+    return `<button type="button" class="${className}" data-action="video-indexer-open-project" data-project-id="${escapeHTML(job.projectId)}" ${state.activeAction ? "disabled" : ""} ${opening ? 'aria-busy="true"' : ""}>${opening ? "Opening project..." : "Open in Editing"}</button>`;
+  }
+  const validDraft = job.composition
+    ? canonicalCompositionDraft(job) ?? legacyCompositionDraft(job)
+    : (job.timelineDrafts?.length || 0) === 1 ? job.timelineDrafts?.[0] ?? null : null;
+  if (job.status !== "succeeded" || !validDraft) return "";
+  const creating = state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id;
+  const requestedSuggestionID = suggestionID || validDraft.suggestionId || "";
+  return `<button type="button" class="${className}" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}" data-suggestion-id="${escapeHTML(requestedSuggestionID)}" ${state.activeAction ? "disabled" : ""} ${creating ? 'aria-busy="true"' : ""}>${creating ? "Creating project..." : "Create edit project"}</button>`;
+}
 function renderTimelineDrafts(job: BackendModels.VideoIndexerStudioJob, state: VideoIndexerStudioViewState): string {
   const drafts = job.timelineDrafts || [];
   if (!drafts.length) {
@@ -554,12 +620,12 @@ function renderTimelineDrafts(job: BackendModels.VideoIndexerStudioJob, state: V
         <article class="timeline-draft">
           <div class="panel-header">
             <div>
-              <p class="eyebrow">Persistable timeline draft</p>
+              <p class="eyebrow">Timeline draft</p>
               <h3>${escapeHTML(firstNonEmpty(draft.suggestionId, draft.promptVersion, "Draft"))}</h3>
             </div>
             <div class="toolbar">
               ${badge(`Schema ${draft.schemaVersion}`, "neutral")}
-              <button type="button" class="button" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}" data-suggestion-id="${escapeHTML(draft.suggestionId || "")}" ${state.activeAction ? "disabled" : ""} ${state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id ? 'aria-busy="true"' : ""}>${state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id ? "Creating project..." : "Create edit project"}</button>
+              ${renderEditProjectAction(job, state, "button", draft.suggestionId || "")}
             </div>
           </div>
           <div class="detail-body">
@@ -590,128 +656,56 @@ function renderTimelineDrafts(job: BackendModels.VideoIndexerStudioJob, state: V
     .join("");
 }
 
-function canonicalCompositionDraft(job: BackendModels.VideoIndexerStudioJob): VI.TimelineDraft | null {
-  const plan = job.compositionPlan;
-  const drafts = job.timelineDrafts || [];
-  const proposalClips = plan?.clips || [];
-  const draft = drafts[0];
-  if (!plan || plan.compositionId !== job.id || !proposalClips.length || !draft || drafts.length !== 1) return null;
-  const clips = draft.primaryVideoTrack?.clips || [];
-  if (draft.originJobId !== job.id || clips.length !== proposalClips.length) return null;
-  const matches = clips.every((clip, index) => {
-    const proposalClip = proposalClips[index];
-    if (!proposalClip) return false;
-    return clip.id === proposalClip.id
-      && clip.sourceAssetId === proposalClip.sourceAssetId
-      && clip.inMs === proposalClip.startMs
-      && clip.outMs === proposalClip.endMs
-      && clip.transition?.kind === "cut"
-      && clip.transition?.durationMs === 0;
-  });
-  return matches ? draft : null;
-}
-
-function legacyCompositionDraft(job: BackendModels.VideoIndexerStudioJob): VI.TimelineDraft | null {
-  const drafts = job.timelineDrafts || [];
-  const draft = drafts[0];
-  const clips = draft?.primaryVideoTrack?.clips || [];
-  if (
-    job.status !== "succeeded"
-    || job.compositionPlan
-    || !draft
-    || drafts.length !== 1
-    || draft.originJobId !== job.id
-    || !clips.length
-  ) {
-    return null;
-  }
-  return clips.every((clip) => clip.transition?.kind === "cut" && clip.transition?.durationMs === 0) ? draft : null;
-}
-
-function compositionStatusMessage(job: BackendModels.VideoIndexerStudioJob): string {
-  if (job.status === "failed") return job.errorMessage || "The composition recommendation could not be created.";
-  if (job.status === "canceled") return "The composition recommendation was canceled.";
-  if (job.status === "succeeded") return "The backend returned no usable composition recommendation.";
-  return "Waiting for the selected source analyses to complete before the backend can return a recommendation.";
-}
-
-function renderCompositionProposal(job: BackendModels.VideoIndexerStudioJob, state: VideoIndexerStudioViewState): string {
+function renderCompositionRecommendation(job: BackendModels.VideoIndexerStudioJob, state: VideoIndexerStudioViewState): string {
   if (!job.composition) return "";
-  const plan = job.compositionPlan;
-  if (!plan) {
-    const legacyDraft = legacyCompositionDraft(job);
-    if (legacyDraft) {
-      return `
-        <section class="panel composition-proposal" aria-labelledby="composition-proposal-title">
-          <div class="panel-header"><div><p class="eyebrow">Smart Edit composition</p><h3 id="composition-proposal-title">Persisted legacy recommendation</h3></div>${badge(stageLabel(job.status), localStatusTone(job.status))}</div>
-          <div class="detail-body">
-            <div class="edit-render-blocked"><strong>Composition provenance is unavailable for this older job.</strong><p>The backend retained one grounded, zero-duration-cut timeline draft. Create a persisted edit project from that draft, or request a new recommendation to receive composition provenance.</p></div>
-            <div class="signal-grid">
-              <div class="kv"><span>Origin job</span><strong>${escapeHTML(legacyDraft.originJobId)}</strong></div>
-              <div class="kv"><span>Suggestion</span><strong>${escapeHTML(legacyDraft.suggestionId)}</strong></div>
-              <div class="kv"><span>Recommendation version</span><strong>${escapeHTML(legacyDraft.promptVersion)}</strong></div>
-              <div class="kv"><span>Ordered clips</span><strong>${legacyDraft.primaryVideoTrack?.clips?.length || 0}</strong></div>
-            </div>
-            <div class="actions composition-action">${job.projectId?.trim()
-              ? `<button type="button" class="button" data-action="video-indexer-open-project" data-project-id="${escapeHTML(job.projectId)}">Open persisted edit project</button>`
-              : `<button type="button" class="button" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}" data-suggestion-id="${escapeHTML(legacyDraft.suggestionId)}" ${state.activeAction ? "disabled" : ""}>${state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id ? "Creating persisted project..." : "Create persisted edit project"}</button>`}</div>
-          </div>
-        </section>`;
-    }
-    return `
-      <section class="panel composition-proposal" aria-labelledby="composition-proposal-title">
-        <div class="panel-header"><div><p class="eyebrow">Smart Edit composition</p><h3 id="composition-proposal-title">Recommendation status</h3></div>${badge(stageLabel(job.status), localStatusTone(job.status))}</div>
-        <div class="detail-body"><div class="edit-render-blocked"><strong>No recommendation is available yet.</strong><p>${escapeHTML(compositionStatusMessage(job))}</p></div></div>
-      </section>`;
-  }
 
-  const draft = canonicalCompositionDraft(job);
-  const assetNames = new Map(state.assets.map((asset) => [asset.id, asset.name || asset.id]));
-  const createdProject = (job.projectId || "").trim();
-  const sourceRows = (plan.sources || []).map((source) => `
-    <tr>
-      <td>${escapeHTML(assetNames.get(source.assetId) || source.assetId)}</td>
-      <td><span class="path-cell">${escapeHTML(source.assetId)}</span></td>
-      <td>${escapeHTML(source.analysisJobId)}</td>
-      <td>${escapeHTML(source.status)}</td>
-      <td>${escapeHTML(formatMs(source.durationMs))}</td>
-    </tr>`).join("") || `<tr><td colspan="5" class="empty-state">No source-analysis status was returned.</td></tr>`;
-  const clipRows = (plan.clips || []).map((clip, index) => `
-    <article class="composition-clip">
-      <span class="badge neutral">${index + 1}</span>
-      <div>
-        <strong>${escapeHTML(clip.title || clip.id)}</strong>
-        <p>${escapeHTML(clip.reason || "No backend rationale was supplied.")}</p>
-        <p class="muted">${escapeHTML(assetNames.get(clip.sourceAssetId) || clip.sourceAssetId)} · ${escapeHTML(formatMs(clip.startMs))} – ${escapeHTML(formatMs(clip.endMs))} · ${Math.round(clip.score * 100)}%</p>
-        <div class="source-chip-list">${renderSourceRefs(clip.sourceRefs)}</div>
-      </div>
-      <code>${escapeHTML(clip.id)}</code>
-    </article>`).join("") || `<div class="empty-state">The backend returned no recommended clips.</div>`;
-  const action = createdProject
-    ? `<button type="button" class="button" data-action="video-indexer-open-project" data-project-id="${escapeHTML(createdProject)}">Open persisted edit project</button>`
-    : draft
-      ? `<button type="button" class="button" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}" data-suggestion-id="${escapeHTML(draft.suggestionId)}" ${state.activeAction ? "disabled" : ""} ${state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id ? 'aria-busy="true"' : ""}>${state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id ? "Creating persisted project..." : "Create persisted edit project"}</button>`
-      : `<div class="edit-render-blocked"><strong>Project creation is unavailable.</strong><p>The backend response does not contain a canonical zero-duration-cut timeline draft. Refresh this job before creating a project.</p></div>`;
+  const plan = job.compositionPlan;
+  const sources = compositionSourceStates(job, state);
+  const planReady = job.status === "succeeded" && Boolean(plan);
+  const statusMessage = job.status === "failed"
+    ? firstNonEmpty(job.errorMessage, "One or more source analyses failed before a recommendation could be created.")
+    : job.status === "canceled"
+      ? "This composition was canceled. Submit a new composition when the source videos are ready."
+    : job.status === "succeeded"
+      ? "This older composition completed without a CompositionPlan. Its timeline draft can still be opened in Editing."
+      : "Waiting for every selected source analysis to complete before ranking grounded clips.";
 
   return `
-    <section class="panel composition-proposal" aria-labelledby="composition-proposal-title">
+    <section class="panel composition-recommendation" aria-labelledby="composition-recommendation-title">
       <div class="panel-header">
-        <div><p class="eyebrow">Smart Edit composition</p><h3 id="composition-proposal-title">${escapeHTML(plan.title || "Composition recommendation")}</h3></div>
-        ${badge(stageLabel(job.status), localStatusTone(job.status))}
+        <div>
+          <p class="eyebrow">Multi-video recommendation</p>
+          <h3 id="composition-recommendation-title">${escapeHTML(plan?.title || "Composition in progress")}</h3>
+        </div>
+        <div class="toolbar">
+          ${badge(planReady ? "Ready" : stageLabel(job.status), planReady ? "success" : localStatusTone(job.status))}
+          ${plan ? badge(`${plan.clips.length} ranked clips`, "info") : ""}
+        </div>
       </div>
       <div class="detail-body">
-        <p class="composition-summary">${escapeHTML(plan.summary || "No backend summary was supplied.")}</p>
-        <div class="signal-grid">
-          <div class="kv"><span>Composition</span><strong>${escapeHTML(plan.compositionId)}</strong></div>
-          <div class="kv"><span>Ranking</span><strong>${escapeHTML(plan.rankingMode)}</strong></div>
-          <div class="kv"><span>Recommendation version</span><strong>${escapeHTML(plan.recommendationVersion)}</strong></div>
-          <div class="kv"><span>Evidence fingerprint</span><strong class="path-cell">${escapeHTML(plan.evidenceFingerprint)}</strong></div>
+        ${planReady ? `
+          <div class="composition-summary">
+            <div class="kv"><span>Summary</span><strong>${escapeHTML(plan?.summary || "—")}</strong></div>
+            <div class="kv"><span>Ranking</span><strong>${escapeHTML(plan?.rankingMode || "Grounded ranking")}</strong></div>
+            <div class="kv"><span>Evidence</span><strong class="path-detail">${escapeHTML(plan?.evidenceFingerprint || "Unavailable")}</strong></div>
+          </div>` : `<div class="empty-state"><strong>${job.status === "failed" ? "Composition unavailable" : job.status === "canceled" ? "Composition canceled" : "Composition not ready"}</strong><p>${escapeHTML(statusMessage)}</p></div>`}
+        <div>
+          <h4>Source analysis status</h4>
+          ${sources.length ? `<div class="table-wrap"><table aria-label="Composition source analysis status"><thead><tr><th>Source</th><th>Analysis</th><th>Status</th><th>Duration</th></tr></thead><tbody>${sources.map((source) => {
+            const assetName = state.assets.find((asset) => asset.id === source.assetID)?.name || source.assetID;
+            return `<tr><td><strong>${escapeHTML(assetName)}</strong><br><span class="path-cell">${escapeHTML(source.assetID)}</span></td><td class="path-cell">${escapeHTML(source.analysisJobID || "Awaiting submission")}</td><td>${badge(compositionSourceStatusLabel(source.status), localStatusTone(source.status))}</td><td>${escapeHTML(source.durationMs > 0 ? formatMs(source.durationMs) : "—")}</td></tr>`;
+          }).join("")}</tbody></table></div>` : `<div class="empty-state">Source analysis status has not been recorded for this legacy composition.</div>`}
         </div>
-        <h4>Source analyses</h4>
-        <div class="table-wrap"><table aria-label="Composition source analyses"><thead><tr><th>Asset</th><th>Asset ID</th><th>Analysis job</th><th>Status</th><th>Duration</th></tr></thead><tbody>${sourceRows}</tbody></table></div>
-        <h4>Recommended clip order</h4>
-        <div class="composition-clip-list" aria-label="Backend recommended clips">${clipRows}</div>
-        <div class="actions composition-action">${action}</div>
+        ${!plan && legacyCompositionDraft(job) ? `<div class="edit-render-blocked"><strong>Composition provenance is unavailable for this older job.</strong><p>The backend retained one grounded, zero-duration-cut timeline draft. Create a persisted edit project from that draft, or request a new recommendation to receive composition provenance.</p></div>` : ""}
+        ${planReady ? `<div>
+          <h4>Ranked source clips</h4>
+          ${plan?.clips.length ? `<ol class="composition-clip-list">${plan.clips.map((clip, index) => {
+            const assetName = state.assets.find((asset) => asset.id === clip.sourceAssetId)?.name || clip.sourceAssetId;
+            return `<li class="composition-clip"><span class="composition-rank">${index + 1}</span><div><div class="composition-clip-heading"><strong>${escapeHTML(clip.title || `Clip ${index + 1}`)}</strong><span>${escapeHTML(formatScore(clip.score))}</span></div><p>${escapeHTML(clip.reason || "No rationale was recorded.")}</p><dl><div><dt>Source</dt><dd>${escapeHTML(assetName)}</dd></div><div><dt>Range</dt><dd>${escapeHTML(formatMs(clip.startMs))} - ${escapeHTML(formatMs(clip.endMs))}</dd></div><div><dt>Suggestion</dt><dd>${escapeHTML(clip.suggestionId || "—")}</dd></div></dl><div class="source-chip-list">${renderSourceRefs(clip.sourceRefs)}</div></div></li>`;
+          }).join("")}</ol>` : `<div class="empty-state">The completed CompositionPlan contains no ranked clips.</div>`}
+        </div>
+        <div class="composition-actions">${renderEditProjectAction(job, state)}</div>
+        <p class="queue-message">The Editing workspace persists this sequence. Use its existing move-earlier, move-later, and remove controls to revise the saved project.</p>` : ""}
       </div>
     </section>`;
 }
@@ -763,9 +757,9 @@ function renderJobDetails(job: BackendModels.VideoIndexerStudioJob | null, state
       </div>
     </section>
 
-    ${renderCompositionProposal(job, state)}
+    ${renderCompositionRecommendation(job, state)}
 
-    ${!job.composition ? `<section class="panel">
+    <section class="panel">
       <div class="panel-header">
         <div>
           <p class="eyebrow">Checkpoints</p>
@@ -792,7 +786,7 @@ function renderJobDetails(job: BackendModels.VideoIndexerStudioJob | null, state
       </div>
     </section>
 
-    <section class="panel">
+    ${!job.composition ? `<section class="panel">
       <div class="panel-header">
         <div>
           <p class="eyebrow">Video index result</p>
@@ -950,9 +944,9 @@ function renderJobDetails(job: BackendModels.VideoIndexerStudioJob | null, state
             : `<div class="empty-state">No detailed result payload is attached to this job yet.</div>`
         }
       </div>
-    </section>
+    </section>` : ""}
 
-    <section class="panel">
+    ${!job.composition ? `<section class="panel">
       <div class="panel-header">
         <div>
           <p class="eyebrow">Grounded edit plan</p>
@@ -1026,23 +1020,23 @@ function renderJobDetails(job: BackendModels.VideoIndexerStudioJob | null, state
       </div>
     </section>` : ""}
 
-    ${!job.composition ? `<section class="panel">
+    <section class="panel">
       <div class="panel-header">
         <div>
-          <p class="eyebrow">Timeline draft</p>
-          <h3>Persistable non-destructive ranges</h3>
+          <p class="eyebrow">Timeline draft preview</p>
+          <h3>Non-destructive output preview</h3>
         </div>
       </div>
       <div class="detail-body">
         ${renderTimelineDrafts(job, state)}
       </div>
-    </section>` : ""}
+    </section>
   `;
 }
 
 export function renderVideoIndexerStudioPanel(state: VideoIndexerStudioViewState): string {
   const selectedAssetsList = selectedAssets(state);
-  const selectedEligibleAssets = selectedCompositionAssets(state);
+  const selectedEligibleAssets = selectedAssetsList.filter(assetEligible);
   const pending = pendingAssets(state);
   const selectedJob = state.jobs.find((job) => job.id === state.selectedJobID) || state.jobs[0] || null;
   const action = state.activeAction;
@@ -1067,22 +1061,22 @@ export function renderVideoIndexerStudioPanel(state: VideoIndexerStudioViewState
       </div>
       <div class="detail-body">
         <div class="toolbar">
-          <button type="button" class="button" data-action="video-indexer-generate-composition" ${selectedEligibleAssets.length >= 2 && !busy ? "" : "disabled"} ${generatingComposition ? 'aria-busy="true"' : ""}>${generatingComposition ? `Requesting recommendation for ${action.count} videos...` : `Create composition recommendation${selectedEligibleAssets.length >= 2 ? ` (${selectedEligibleAssets.length})` : ""}`}</button>
+          <button type="button" class="button" data-action="video-indexer-generate-composition" ${selectedEligibleAssets.length >= 2 && !busy ? "" : "disabled"} ${generatingComposition ? 'aria-busy="true"' : ""}>${generatingComposition ? `Preparing ${action.count} videos...` : `Generate combined edit${selectedEligibleAssets.length >= 2 ? ` (${selectedEligibleAssets.length})` : ""}`}</button>
           <button type="button" class="button" data-action="video-indexer-submit-selected" ${selectedAssetsList.length && !busy ? "" : "disabled"} ${submittingSelected ? 'aria-busy="true"' : ""}>${submittingSelected ? `Submitting ${selectedSubmissionCount}...` : "Submit selected"}</button>
           <button type="button" class="button secondary" data-action="video-indexer-submit-pending" ${pending.length && !busy ? "" : "disabled"} ${submittingPending ? 'aria-busy="true"' : ""}>${submittingPending ? `Submitting ${pendingSubmissionCount}...` : "Submit pending"}</button>
           <button type="button" class="button secondary" data-action="video-indexer-refresh" ${busy ? "disabled" : ""} ${refreshing ? 'aria-busy="true"' : ""}>${refreshing ? "Refreshing..." : "Refresh"}</button>
         </div>
-        <p class="queue-message" role="status" aria-live="polite">${escapeHTML(state.message || "Select at least two cloud-linked assets. Smart Edit submits or reuses source analyses, then returns the composition recommendation.")}</p>
+        <p class="queue-message" role="status" aria-live="polite">${escapeHTML(state.message || "Select eligible library assets to submit them to Video Indexer.")}</p>
       </div>
     </section>
 
     <section class="panel">
       <div class="panel-header">
         <div>
-          <p class="eyebrow">Library assets</p>
-          <h3>Select sources for analysis or composition</h3>
+          <p class="eyebrow">Eligible assets</p>
+          <h3>Library assets ready for indexing</h3>
         </div>
-        ${badge(`${selectedEligibleAssets.length} selected for composition`, selectedEligibleAssets.length >= 2 ? "success" : "neutral")}
+        ${badge(`${selectedAssetsList.length} selected`, selectedAssetsList.length ? "success" : "neutral")}
       </div>
       <div class="table-wrap">
         <table aria-label="Eligible assets">

@@ -1208,6 +1208,35 @@ function render(): void {
       }
 
       const createProject = target.closest<HTMLButtonElement>("[data-action='video-indexer-create-project']");
+      const openProject = target.closest<HTMLButtonElement>("[data-action='video-indexer-open-project']");
+      if (openProject) {
+        const projectID = openProject.dataset.projectId || "";
+        if (projectID && !state.smartEdit.activeAction) {
+          state.smartEdit.activeAction = { kind: "open-project", projectID };
+          state.smartEdit.message = "Opening the persisted edit project...";
+          render();
+          void loadEditingData(state.editing, projectID)
+            .then((loaded) => {
+              if (!loaded) {
+                state.smartEdit.message = `The persisted edit project ${projectID} could not be reloaded.`;
+                return;
+              }
+              const persistedProject = state.editing.projects.find((project) => project.id === projectID);
+              if (!persistedProject) {
+                state.smartEdit.message = `The persisted edit project ${projectID} could not be loaded.`;
+                return;
+              }
+              state.editing.activeProject = persistedProject;
+              state.activeView = "editing";
+            })
+            .finally(() => {
+              state.smartEdit.activeAction = null;
+              render();
+            });
+        }
+        return;
+      }
+
       if (createProject) {
         const jobID = createProject.dataset.jobId || "";
         const suggestionID = createProject.dataset.suggestionId || "";
@@ -1215,11 +1244,25 @@ function render(): void {
           const creation = createEditProjectFromVideoIndexerJob(state.smartEdit, jobID, suggestionID);
           render();
           void creation
-            .then((project) => {
+            .then(async (project) => {
               if (project) {
+                state.smartEdit.activeAction = { kind: "open-project", projectID: project.id };
+                const loaded = await loadEditingData(state.editing, project.id);
+                state.smartEdit.activeAction = null;
+                if (!loaded) {
+                  state.smartEdit.message = `The edit project ${project.name || project.id} was created but could not be reloaded.`;
+                  render();
+                  return;
+                }
+                const persistedProject = state.editing.projects.find((item) => item.id === project.id);
+                if (!persistedProject) {
+                  state.smartEdit.message = `The edit project ${project.name || project.id} was created but could not be reloaded.`;
+                  render();
+                  return;
+                }
                 state.activeView = "editing";
-                state.editing.activeProject = project;
-                void loadEditingData(state.editing, project.id).then(() => render());
+                state.editing.activeProject = persistedProject;
+                render();
                 return;
               }
               render();
@@ -1228,25 +1271,6 @@ function render(): void {
               state.smartEdit.message = error instanceof Error ? error.message : "Creating the edit project failed.";
               render();
             });
-        }
-        return;
-      }
-
-      const openProject = target.closest<HTMLButtonElement>("[data-action='video-indexer-open-project']");
-      if (openProject) {
-        const projectID = openProject.dataset.projectId || "";
-        if (projectID) {
-          state.activeView = "editing";
-          void loadEditingData(state.editing, projectID).then(() => {
-            const project = state.editing.projects.find((item) => item.id === projectID);
-            if (project) {
-              state.editing.activeProject = project;
-              state.editing.selectedClipID = project.timeline.tracks[0]?.clips[0]?.id ?? null;
-            } else {
-              state.editing.message = `The persisted edit project ${projectID} could not be loaded.`;
-            }
-            render();
-          });
         }
         return;
       }

@@ -44,7 +44,7 @@ function currentRenderJob(jobs: RenderJob[]): RenderJob | null {
   return jobs.find(isActiveRender) ?? jobs.at(-1) ?? null;
 }
 
-export async function loadEditingData(state: EditingViewState, activeProjectID?: string): Promise<void> {
+export async function loadEditingData(state: EditingViewState, activeProjectID?: string): Promise<boolean> {
   try {
     const [projects, assets, capabilities, jobs] = await Promise.all([
       EditingService.ListProjects(),
@@ -63,8 +63,10 @@ export async function loadEditingData(state: EditingViewState, activeProjectID?:
     const projectJobs = (jobs ?? []).filter((job): job is RenderJob => Boolean(job) && job!.projectId === state.activeProject?.id);
     state.renderJob = currentRenderJob(projectJobs);
     state.renderInFlight = isActiveRender(state.renderJob);
+    return true;
   } catch (err) {
     state.message = `Failed to load the editing workspace: ${String(err)}`;
+    return false;
   }
 }
 
