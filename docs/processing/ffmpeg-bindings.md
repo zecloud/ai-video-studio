@@ -40,3 +40,13 @@ This keeps the app shippable without committing to a specific third-party wrappe
 - Document that LGPL builds of FFmpeg are preferred unless a GPL codec/filter is explicitly required.
 - Do not hide FFmpeg availability; surface missing binary/library status in the UI and settings.
 - Validate Windows, macOS, and Linux packaging before enabling render/export features by default.
+
+## Azure render worker packaging
+
+The asynchronous cloud renderer runs in a dedicated private Container App image built from `azure-video-indexer-service/Dockerfile.ffmpeg`. The API and indexing worker image does not install FFmpeg.
+
+- The image uses Alpine's distribution `ffmpeg` package and runs the service as a non-root user.
+- The deployment sets `SERVICE_ROLE=ffmpeg-worker`, `FFMPEG_PATH=/usr/bin/ffmpeg`, `RENDER_WORKSPACE_ROOT=/render-work`, and `RENDER_TIMEOUT=2h`.
+- Each 2 vCPU / 4 GiB worker has an ephemeral `EmptyDir` workspace. Container Apps limits this replica size to 8 GiB of ephemeral storage; render operations must keep their aggregate temporary working set within the documented 6 GiB operational budget. API-side admission enforcement is tracked separately.
+- The image policy is LGPL-oriented: do not deliberately add GPL-only codecs or filters. Verify the packaged FFmpeg build configuration and retain applicable package and FFmpeg notices before production release.
+- The worker receives only Blob references and uses its managed identity for Blob and Durable Task Scheduler access. It never receives delegated OneDrive credentials.

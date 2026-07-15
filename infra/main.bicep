@@ -24,6 +24,8 @@ param foundryDeploymentCapacity int = 100
 @secure()
 param serviceApiKey string
 param containerImageRepository string = 'ai-video-indexer-service'
+@description('Dedicated ACR repository for the private FFmpeg render worker image.')
+param ffmpegWorkerImageRepository string = 'ffmpeg-render-worker'
 param containerImageTag string = 'latest'
 param storageAccountName string = toLower('st${uniqueString(resourceGroup().id, 'azure-video-indexer-service')}')
 param logAnalyticsWorkspaceName string = toLower('law-${uniqueString(resourceGroup().id, 'azure-video-indexer-service')}')
@@ -32,12 +34,17 @@ param appInsightsName string = toLower('appi-${uniqueString(resourceGroup().id, 
 param durableTaskSchedulerName string = 'dts-${uniqueString(resourceGroup().id)}'
 @description('Durable Task task hub name.')
 param durableTaskHubName string = 'video-indexer'
+@description('Dedicated Durable Task Scheduler task hub for FFmpeg render orchestration.')
+param durableTaskRenderHubName string = 'ffmpeg-render'
 param apiMaxReplicas int = 5
 param workerMaxReplicas int = 10
+@minValue(1)
+param ffmpegWorkerMaxReplicas int = 3
 
 var serviceName = 'azure-video-indexer-service'
 var apiAppName = 'video-indexer-api'
 var workerAppName = 'video-indexer-worker'
+var ffmpegWorkerAppName = 'ffmpeg-render-worker'
 var stagingContainerName = 'video-indexer-staging'
 var jobsContainerName = 'video-indexer-jobs'
 var acrPullRoleDefinitionId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
@@ -206,6 +213,11 @@ resource taskHub 'Microsoft.DurableTask/schedulers/taskHubs@2025-11-01' = {
   name: durableTaskHubName
 }
 
+resource renderTaskHub 'Microsoft.DurableTask/schedulers/taskHubs@2025-11-01' = {
+  parent: scheduler
+  name: durableTaskRenderHubName
+}
+
 resource apiIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${apiAppName}-identity'
   location: location
@@ -216,7 +228,13 @@ resource workerIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-0
   location: location
 }
 
+resource ffmpegWorkerIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${ffmpegWorkerAppName}-identity'
+  location: location
+}
+
 var image = '${acr.properties.loginServer}/${containerImageRepository}:${containerImageTag}'
+var ffmpegWorkerImage = '${acr.properties.loginServer}/${ffmpegWorkerImageRepository}:${containerImageTag}'
 var storageEnvironment = [
   {
     name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
@@ -241,6 +259,10 @@ var storageEnvironment = [
   {
     name: 'DTS_TASK_HUB'
     value: taskHub.name
+  }
+  {
+    name: 'DTS_RENDER_TASK_HUB'
+    value: renderTaskHub.name
   }
   // The pinned Go backend uses DefaultAzureCredential; AZURE_CLIENT_ID selects this app's UAMI.
 ]
@@ -476,6 +498,89 @@ resource workerApp 'Microsoft.App/containerApps@2025-01-01' = {
   }
 }
 
+resource ffmpegWorkerApp 'Microsoft.App/containerApps@2025-01-01' = {
+  name: ffmpegWorkerAppName
+  location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${ffmpegWorkerIdentity.id}': {}
+    }
+  }
+  properties: {
+    environmentId: containerAppsEnvironmentId
+    configuration: {
+      activeRevisionsMode: 'Single'
+      registries: [{
+        server: acr.properties.loginServer
+        identity: ffmpegWorkerIdentity.id
+      }]
+      secrets: [{
+        name: 'appinsights-connection-string'
+        value: appInsights.properties.ConnectionString
+      }]
+    }
+    template: {
+      containers: [{
+        name: 'ffmpeg-worker'
+        image: ffmpegWorkerImage
+        env: concat(storageEnvironment, [
+          { name: 'AZURE_CLIENT_ID', value: ffmpegWorkerIdentity.properties.clientId }
+          { name: 'SERVICE_ROLE', value: 'ffmpeg-worker' }
+          { name: 'FFMPEG_PATH', value: '/usr/bin/ffmpeg' }
+          { name: 'RENDER_WORKSPACE_ROOT', value: '/render-work' }
+          { name: 'RENDER_TIMEOUT', value: '2h' }
+          { name: 'OTEL_SERVICE_NAME', value: ffmpegWorkerAppName }
+        ])
+        resources: {
+          cpu: json('2.0')
+          memory: '4Gi'
+        }
+        volumeMounts: [{
+          volumeName: 'render-work'
+          mountPath: '/render-work'
+        }]
+      }]
+      volumes: [{
+        name: 'render-work'
+        storageType: 'EmptyDir'
+      }]
+      scale: {
+        minReplicas: 0
+        maxReplicas: ffmpegWorkerMaxReplicas
+        rules: [
+          {
+            name: 'dts-render-orchestration'
+            custom: {
+              type: 'azure-durabletask-scheduler'
+              metadata: {
+                endpoint: scheduler.properties.endpoint
+                maxConcurrentWorkItemsCount: '1'
+                taskhubName: renderTaskHub.name
+                workItemType: 'Orchestration'
+              }
+              identity: ffmpegWorkerIdentity.id
+            }
+          }
+          {
+            name: 'dts-render-activity'
+            custom: {
+              type: 'azure-durabletask-scheduler'
+              metadata: {
+                endpoint: scheduler.properties.endpoint
+                maxConcurrentWorkItemsCount: '1'
+                taskhubName: renderTaskHub.name
+                workItemType: 'Activity'
+              }
+              identity: ffmpegWorkerIdentity.id
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+
 module apiStorageRole 'storage-role-assignment.bicep' = {
   name: 'api-storage-role'
   params: {
@@ -490,6 +595,15 @@ module workerStorageRole 'storage-role-assignment.bicep' = {
   params: {
     storageAccountName: storageAccount.name
     principalId: workerIdentity.properties.principalId
+    roleDefinitionId: storageBlobDataContributorRoleDefinitionId
+  }
+}
+
+module ffmpegWorkerStorageRole 'storage-role-assignment.bicep' = {
+  name: 'ffmpeg-worker-storage-role'
+  params: {
+    storageAccountName: storageAccount.name
+    principalId: ffmpegWorkerIdentity.properties.principalId
     roleDefinitionId: storageBlobDataContributorRoleDefinitionId
   }
 }
@@ -512,6 +626,15 @@ module workerDtsRole 'durable-task-role-assignment.bicep' = {
   }
 }
 
+module ffmpegWorkerDtsRole 'durable-task-role-assignment.bicep' = {
+  name: 'ffmpeg-worker-dts-role'
+  params: {
+    schedulerName: scheduler.name
+    principalId: ffmpegWorkerIdentity.properties.principalId
+    roleDefinitionId: durableTaskDataContributorRoleDefinitionId
+  }
+}
+
 module apiAcrPull 'acr-role-assignment.bicep' = {
   name: 'api-acr-pull'
   dependsOn: [acr]
@@ -528,6 +651,16 @@ module workerAcrPull 'acr-role-assignment.bicep' = {
   params: {
     registryName: containerRegistryName
     principalId: workerIdentity.properties.principalId
+    roleDefinitionId: acrPullRoleDefinitionId
+  }
+}
+
+module ffmpegWorkerAcrPull 'acr-role-assignment.bicep' = {
+  name: 'ffmpeg-worker-acr-pull'
+  dependsOn: [acr]
+  params: {
+    registryName: containerRegistryName
+    principalId: ffmpegWorkerIdentity.properties.principalId
     roleDefinitionId: acrPullRoleDefinitionId
   }
 }
@@ -566,8 +699,10 @@ module workerVideoIndexerRole 'video-indexer-role-assignment.bicep' = {
 output containerAppName string = apiApp.name
 output containerAppFqdn string = apiApp.properties.configuration.ingress.fqdn
 output workerContainerAppName string = workerApp.name
+output ffmpegWorkerContainerAppName string = ffmpegWorkerApp.name
 output durableTaskSchedulerEndpoint string = scheduler.properties.endpoint
 output durableTaskHubName string = taskHub.name
+output durableTaskRenderHubName string = renderTaskHub.name
 output storageAccountResourceId string = storageAccount.id
 output storageAccountName string = storageAccount.name
 output storageAccountBlobEndpoint string = storageAccount.properties.primaryEndpoints.blob
