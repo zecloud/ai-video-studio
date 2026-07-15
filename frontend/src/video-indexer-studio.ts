@@ -24,7 +24,8 @@ export type VideoIndexerStudioAction =
   | { kind: "generate-composition"; count: number }
   | { kind: "submit-selected"; count: number }
   | { kind: "submit-pending"; count: number }
-  | { kind: "retry" | "cancel" | "create-project"; jobID: string };
+  | { kind: "retry" | "cancel" | "create-project"; jobID: string }
+  | { kind: "open-project"; projectID: string };
 
 export interface VideoIndexerStudioViewState {
   jobs: BackendModels.VideoIndexerStudioJob[];
@@ -567,15 +568,16 @@ function renderSourceRefs(refs: VI.SourceRef[] | undefined): string {
     .join("");
 }
 
-function renderEditProjectAction(job: BackendModels.VideoIndexerStudioJob, state: VideoIndexerStudioViewState, className = "button"): string {
+function renderEditProjectAction(job: BackendModels.VideoIndexerStudioJob, state: VideoIndexerStudioViewState, className = "button", suggestionID = ""): string {
   if (job.projectId) {
-    return `<button type="button" class="${className}" data-action="video-indexer-open-project" data-project-id="${escapeHTML(job.projectId)}">Open in Editing</button>`;
+    const opening = state.activeAction?.kind === "open-project" && state.activeAction.projectID === job.projectId;
+    return `<button type="button" class="${className}" data-action="video-indexer-open-project" data-project-id="${escapeHTML(job.projectId)}" ${state.activeAction ? "disabled" : ""} ${opening ? 'aria-busy="true"' : ""}>${opening ? "Opening project..." : "Open in Editing"}</button>`;
   }
   if (job.status !== "succeeded" || (job.timelineDrafts?.length || 0) !== 1) {
     return "";
   }
   const creating = state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id;
-  return `<button type="button" class="${className}" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}" ${state.activeAction ? "disabled" : ""} ${creating ? 'aria-busy="true"' : ""}>${creating ? "Creating project..." : "Create edit project"}</button>`;
+  return `<button type="button" class="${className}" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}" data-suggestion-id="${escapeHTML(suggestionID)}" ${state.activeAction ? "disabled" : ""} ${creating ? 'aria-busy="true"' : ""}>${creating ? "Creating project..." : "Create edit project"}</button>`;
 }
 
 function renderTimelineDrafts(job: BackendModels.VideoIndexerStudioJob, state: VideoIndexerStudioViewState): string {
@@ -595,7 +597,7 @@ function renderTimelineDrafts(job: BackendModels.VideoIndexerStudioJob, state: V
             </div>
             <div class="toolbar">
               ${badge(`Schema ${draft.schemaVersion}`, "neutral")}
-              ${renderEditProjectAction(job, state)}
+              ${renderEditProjectAction(job, state, "button", draft.suggestionId || "")}
             </div>
           </div>
           <div class="detail-body">
@@ -634,6 +636,8 @@ function renderCompositionRecommendation(job: BackendModels.VideoIndexerStudioJo
   const planReady = job.status === "succeeded" && Boolean(plan);
   const statusMessage = job.status === "failed"
     ? firstNonEmpty(job.errorMessage, "One or more source analyses failed before a recommendation could be created.")
+    : job.status === "canceled"
+      ? "This composition was canceled. Submit a new composition when the source videos are ready."
     : job.status === "succeeded"
       ? "This older composition completed without a CompositionPlan. Its timeline draft can still be opened in Editing."
       : "Waiting for every selected source analysis to complete before ranking grounded clips.";
@@ -656,7 +660,7 @@ function renderCompositionRecommendation(job: BackendModels.VideoIndexerStudioJo
             <div class="kv"><span>Summary</span><strong>${escapeHTML(plan?.summary || "—")}</strong></div>
             <div class="kv"><span>Ranking</span><strong>${escapeHTML(plan?.rankingMode || "Grounded ranking")}</strong></div>
             <div class="kv"><span>Evidence</span><strong class="path-detail">${escapeHTML(plan?.evidenceFingerprint || "Unavailable")}</strong></div>
-          </div>` : `<div class="empty-state"><strong>${job.status === "failed" ? "Composition unavailable" : "Composition not ready"}</strong><p>${escapeHTML(statusMessage)}</p></div>`}
+          </div>` : `<div class="empty-state"><strong>${job.status === "failed" ? "Composition unavailable" : job.status === "canceled" ? "Composition canceled" : "Composition not ready"}</strong><p>${escapeHTML(statusMessage)}</p></div>`}
         <div>
           <h4>Source analysis status</h4>
           ${sources.length ? `<div class="table-wrap"><table aria-label="Composition source analysis status"><thead><tr><th>Source</th><th>Analysis</th><th>Status</th><th>Duration</th></tr></thead><tbody>${sources.map((source) => {

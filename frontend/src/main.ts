@@ -1211,20 +1211,28 @@ function render(): void {
       const openProject = target.closest<HTMLButtonElement>("[data-action='video-indexer-open-project']");
       if (openProject) {
         const projectID = openProject.dataset.projectId || "";
-        if (projectID) {
+        if (projectID && !state.smartEdit.activeAction) {
+          state.smartEdit.activeAction = { kind: "open-project", projectID };
           state.smartEdit.message = "Opening the persisted edit project...";
           render();
-          void loadEditingData(state.editing).then(() => {
-            const persistedProject = state.editing.projects.find((project) => project.id === projectID);
-            if (!persistedProject) {
-              state.smartEdit.message = `The persisted edit project ${projectID} could not be loaded.`;
+          void loadEditingData(state.editing)
+            .then((loaded) => {
+              if (!loaded) {
+                state.smartEdit.message = `The persisted edit project ${projectID} could not be reloaded.`;
+                return;
+              }
+              const persistedProject = state.editing.projects.find((project) => project.id === projectID);
+              if (!persistedProject) {
+                state.smartEdit.message = `The persisted edit project ${projectID} could not be loaded.`;
+                return;
+              }
+              state.editing.activeProject = persistedProject;
+              state.activeView = "editing";
+            })
+            .finally(() => {
+              state.smartEdit.activeAction = null;
               render();
-              return;
-            }
-            state.editing.activeProject = persistedProject;
-            state.activeView = "editing";
-            render();
-          });
+            });
         }
         return;
       }
@@ -1238,7 +1246,14 @@ function render(): void {
           void creation
             .then(async (project) => {
               if (project) {
-                await loadEditingData(state.editing);
+                state.smartEdit.activeAction = { kind: "open-project", projectID: project.id };
+                const loaded = await loadEditingData(state.editing);
+                state.smartEdit.activeAction = null;
+                if (!loaded) {
+                  state.smartEdit.message = `The edit project ${project.name || project.id} was created but could not be reloaded.`;
+                  render();
+                  return;
+                }
                 const persistedProject = state.editing.projects.find((item) => item.id === project.id);
                 if (!persistedProject) {
                   state.smartEdit.message = `The edit project ${project.name || project.id} was created but could not be reloaded.`;
