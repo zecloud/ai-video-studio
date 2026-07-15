@@ -600,6 +600,9 @@ func (s *VideoIndexerStudioService) CreateEditProject(ctx context.Context, jobID
 	if err != nil {
 		return editing.EditProject{}, err
 	}
+	if err := validateCompositionProjectDraft(job, draft); err != nil {
+		return editing.EditProject{}, err
+	}
 	project, err := editing.ProjectFromTimelineDraft(draft)
 	if err != nil {
 		return editing.EditProject{}, err
@@ -633,6 +636,37 @@ func (s *VideoIndexerStudioService) CreateEditProject(ctx context.Context, jobID
 		return editing.EditProject{}, err
 	}
 	return saved, nil
+}
+
+func validateCompositionProjectDraft(job VideoIndexerStudioJob, draft videoindexerstudio.TimelineDraft) error {
+	if !job.Composition {
+		return nil
+	}
+	if job.Status != videoIndexerJobStatusSucceeded {
+		return fmt.Errorf("composition job %q must succeed before creating an edit project", job.ID)
+	}
+	if job.CompositionPlan == nil {
+		if len(job.TimelineDrafts) != 1 {
+			return fmt.Errorf("legacy composition job %q must contain exactly one timeline draft", job.ID)
+		}
+		return nil
+	}
+	plan := job.CompositionPlan
+	if plan.CompositionID != job.ID || draft.OriginJobID != job.ID || len(draft.PrimaryVideoTrack.Clips) != len(plan.Clips) {
+		return fmt.Errorf("composition job %q has a timeline draft that does not match its recommendation", job.ID)
+	}
+	for index, timelineClip := range draft.PrimaryVideoTrack.Clips {
+		recommendation := plan.Clips[index]
+		if timelineClip.ID != recommendation.ID ||
+			timelineClip.SourceAssetID != recommendation.SourceAssetID ||
+			timelineClip.InMS != recommendation.StartMs ||
+			timelineClip.OutMS != recommendation.EndMs ||
+			timelineClip.Transition.Kind != videoindexerstudio.TimelineTransitionKindCut ||
+			timelineClip.Transition.DurationMS != 0 {
+			return fmt.Errorf("composition job %q has a timeline draft that does not match recommendation clip %d", job.ID, index+1)
+		}
+	}
+	return nil
 }
 
 func (s *VideoIndexerStudioService) loadJob(ctx context.Context, jobID string) (VideoIndexerStudioJob, error) {

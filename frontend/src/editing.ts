@@ -44,7 +44,7 @@ function currentRenderJob(jobs: RenderJob[]): RenderJob | null {
   return jobs.find(isActiveRender) ?? jobs.at(-1) ?? null;
 }
 
-export async function loadEditingData(state: EditingViewState): Promise<boolean> {
+export async function loadEditingData(state: EditingViewState, activeProjectID?: string): Promise<boolean> {
   try {
     const [projects, assets, capabilities, jobs] = await Promise.all([
       EditingService.ListProjects(),
@@ -55,8 +55,9 @@ export async function loadEditingData(state: EditingViewState): Promise<boolean>
     state.projects = projects ?? [];
     state.assets = assets ?? [];
     state.capabilities = capabilities;
+    const requestedProject = activeProjectID ? state.projects.find((project) => project.id === activeProjectID) : null;
     const currentProject = state.activeProject ? state.projects.find((project) => project.id === state.activeProject!.id) : null;
-    state.activeProject = currentProject ?? state.projects[0] ?? null;
+    state.activeProject = requestedProject ?? currentProject ?? state.projects[0] ?? null;
     const currentClips = videoClips(state.activeProject);
     if (!currentClips.some((clip) => clip.id === state.selectedClipID)) state.selectedClipID = currentClips[0]?.id ?? null;
     const projectJobs = (jobs ?? []).filter((job): job is RenderJob => Boolean(job) && job!.projectId === state.activeProject?.id);

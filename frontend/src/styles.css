@@ -1216,6 +1216,23 @@ tr[data-selected="true"] td {
 .edit-provenance { display: grid; grid-template-columns: auto auto; align-content: start; gap: 4px 12px; min-width: 145px; color: var(--edit-muted); font-size: 10px; }
 .edit-provenance strong { color: var(--edit-ink); font-variant-numeric: tabular-nums; text-align: right; }
 
+.composition-proposal h4 { margin: 20px 0 8px; font-size: 12px; }
+.composition-summary { margin: 0 0 16px; color: var(--ink-muted); line-height: 1.5; }
+.composition-clip-list { display: grid; gap: 8px; }
+.composition-clip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(110px, 0.4fr);
+  align-items: start;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+}
+.composition-clip strong { display: block; }
+.composition-clip p { margin: 4px 0 0; color: var(--ink-muted); line-height: 1.4; }
+.composition-clip code { overflow-wrap: anywhere; color: var(--ink-subtle); font-size: 10px; }
+.composition-action { margin-top: 16px; }
+
 .edit-track { margin-top: 24px; border: 1px solid var(--edit-line); border-radius: 7px; overflow: hidden; background: var(--edit-panel); }
 .edit-track-head { justify-content: space-between; min-height: 38px; border: 0; border-bottom: 1px solid var(--edit-line); padding: 0 12px; background: transparent; }
 .edit-track-head strong { margin: 0; padding: 0; color: var(--edit-ink); font-size: 12px; }

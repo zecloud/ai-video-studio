@@ -1215,7 +1215,7 @@ function render(): void {
           state.smartEdit.activeAction = { kind: "open-project", projectID };
           state.smartEdit.message = "Opening the persisted edit project...";
           render();
-          void loadEditingData(state.editing)
+          void loadEditingData(state.editing, projectID)
             .then((loaded) => {
               if (!loaded) {
                 state.smartEdit.message = `The persisted edit project ${projectID} could not be reloaded.`;
@@ -1247,7 +1247,7 @@ function render(): void {
             .then(async (project) => {
               if (project) {
                 state.smartEdit.activeAction = { kind: "open-project", projectID: project.id };
-                const loaded = await loadEditingData(state.editing);
+                const loaded = await loadEditingData(state.editing, project.id);
                 state.smartEdit.activeAction = null;
                 if (!loaded) {
                   state.smartEdit.message = `The edit project ${project.name || project.id} was created but could not be reloaded.`;

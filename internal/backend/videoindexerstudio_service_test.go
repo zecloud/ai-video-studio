@@ -815,6 +815,96 @@ func TestVideoIndexerGenerateMultiVideoEditSubmitsOnlyMissingAnalysis(t *testing
 	}
 }
 
+func TestVideoIndexerGenerateMultiVideoEditAcceptsCloudLinkedAssetsWithoutAnalyses(t *testing.T) {
+	assets := []library.ProjectAsset{
+		{ID: "asset-1", Name: "one.mp4", CloudAssetID: "drive-1"},
+		{ID: "asset-2", Name: "two.mp4", CloudAssetID: "drive-2"},
+	}
+	client := &fakeVideoIndexerClient{createScript: []scriptedCreateOutcome{
+		{resp: &videoindexerstudio.JobResponse{Job: videoindexerstudio.Job{ID: "remote-1", Status: videoindexerstudio.JobStatusQueued}}},
+		{resp: &videoindexerstudio.JobResponse{Job: videoindexerstudio.Job{ID: "remote-2", Status: videoindexerstudio.JobStatusQueued}}},
+	}}
+	drive := &onedrive.Client{TokenProvider: staticTokenProvider{token: "delegated-token"}, Scopes: []string{onedrive.GraphScopeFilesReadWriteAppFolder}}
+	svc := NewVideoIndexerStudioService(&fakeLibraryStore{assets: assets}, fakeOneDriveSource{client: drive}, &fakeEditingSaver{}, client, &memoryVideoIndexerJobStore{})
+
+	composition, err := svc.GenerateMultiVideoEdit(context.Background(), []string{"asset-1", "asset-2"})
+	if err != nil {
+		t.Fatalf("GenerateMultiVideoEdit: %v", err)
+	}
+	if len(client.createReqs) != 2 {
+		t.Fatalf("analysis submissions = %d, want 2", len(client.createReqs))
+	}
+	if client.createReqs[0].OneDriveItemID != "drive-1" || client.createReqs[1].OneDriveItemID != "drive-2" {
+		t.Fatalf("analysis submissions did not preserve cloud-linked assets: %#v", client.createReqs)
+	}
+	if composition.Status != videoIndexerJobStatusPending || composition.Stage != "waiting_for_analyses" || len(composition.DependencyJobIDs) != 2 {
+		t.Fatalf("cloud-linked composition was not persisted pending its analyses: %#v", composition)
+	}
+}
+
+func TestVideoIndexerCreateEditProjectFromLegacyCompositionDraft(t *testing.T) {
+	assets := []library.ProjectAsset{{ID: "asset-1", Name: "one.mp4", CloudAssetID: "drive-1"}}
+	draft := videoindexerstudio.TimelineDraft{
+		SchemaVersion: videoindexerstudio.TimelineDraftSchemaVersion,
+		OriginJobID:   "composition-legacy",
+		SuggestionID:  "multi-video-narrative",
+		PromptVersion: "multi-video-composition-v2",
+		PrimaryVideoTrack: videoindexerstudio.TimelineTrack{
+			ID:   "primary-video",
+			Kind: videoindexerstudio.TimelineTrackKindVideo,
+			Clips: []videoindexerstudio.TimelineClip{{
+				ID:              "clip-legacy",
+				SourceAssetID:   "asset-1",
+				InMS:            50,
+				OutMS:           550,
+				TimelineStartMS: 0,
+				DurationMS:      500,
+				Transition:      videoindexerstudio.TimelineTransition{Kind: videoindexerstudio.TimelineTransitionKindCut},
+			}},
+		},
+	}
+	jobs := &memoryVideoIndexerJobStore{jobs: []VideoIndexerStudioJob{{
+		ID: "composition-legacy", AssetID: "asset-1", AssetIDs: []string{"asset-1"}, AssetName: "Legacy composition",
+		Composition: true, Status: videoIndexerJobStatusSucceeded, TimelineDrafts: []videoindexerstudio.TimelineDraft{draft},
+	}}}
+	projects := &memoryEditingProjectStore{}
+	edit := NewEditingService(&fakeLibraryStore{assets: assets}, nil, nil, projects)
+	svc := NewVideoIndexerStudioService(&fakeLibraryStore{assets: assets}, nil, edit, &fakeVideoIndexerClient{}, jobs)
+
+	project, err := svc.CreateEditProject(context.Background(), "composition-legacy", "")
+	if err != nil {
+		t.Fatalf("CreateEditProject: %v", err)
+	}
+	if project.OriginJobID != draft.OriginJobID || project.SuggestionID != draft.SuggestionID || project.PromptVersion != draft.PromptVersion {
+		t.Fatalf("legacy project provenance = %#v, want draft %#v", project, draft)
+	}
+	clips := project.Timeline.Tracks[0].Clips
+	if len(clips) != 1 || clips[0].ID != "clip-legacy" || clips[0].SourceAssetID != "asset-1" || clips[0].InMS != 50 || clips[0].OutMS != 550 {
+		t.Fatalf("legacy project did not preserve its persisted draft clip: %#v", clips)
+	}
+	if jobs.jobs[0].ProjectID != project.ID {
+		t.Fatalf("legacy composition did not persist project linkage: %#v", jobs.jobs[0])
+	}
+
+	for _, status := range []string{videoIndexerJobStatusPending, videoIndexerJobStatusFailed, videoIndexerJobStatusCanceled} {
+		t.Run(status, func(t *testing.T) {
+			unreadyJob := jobs.jobs[0]
+			unreadyJob.Status = status
+			unreadyJob.ProjectID = ""
+			unreadyProjects := &memoryEditingProjectStore{}
+			unreadyEditing := NewEditingService(&fakeLibraryStore{assets: assets}, nil, nil, unreadyProjects)
+			unreadyService := NewVideoIndexerStudioService(&fakeLibraryStore{assets: assets}, nil, unreadyEditing, &fakeVideoIndexerClient{}, &memoryVideoIndexerJobStore{jobs: []VideoIndexerStudioJob{unreadyJob}})
+
+			if _, err := unreadyService.CreateEditProject(context.Background(), unreadyJob.ID, ""); err == nil {
+				t.Fatalf("CreateEditProject accepted a %s legacy composition", status)
+			}
+			if len(unreadyProjects.projects) != 0 {
+				t.Fatalf("CreateEditProject saved a project for a %s legacy composition", status)
+			}
+		})
+	}
+}
+
 func TestVideoIndexerCreateEditProjectFromMultiVideoComposition(t *testing.T) {
 	assets := []library.ProjectAsset{{ID: "asset-1", Name: "one.mp4", CloudAssetID: "drive-1"}, {ID: "asset-2", Name: "two.mp4", CloudAssetID: "drive-2"}}
 	store := &memoryVideoIndexerJobStore{jobs: []VideoIndexerStudioJob{
@@ -848,10 +938,34 @@ func TestVideoIndexerCreateEditProjectFromMultiVideoComposition(t *testing.T) {
 		t.Fatalf("project clip count = %d, want %d", len(projectClips), len(composition.CompositionPlan.Clips))
 	}
 	for index, clip := range projectClips {
-		if clip.ID != composition.CompositionPlan.Clips[index].ID {
-			t.Fatalf("project clip %d ID = %q, want preserved composition ID %q", index, clip.ID, composition.CompositionPlan.Clips[index].ID)
+		recommendation := composition.CompositionPlan.Clips[index]
+		if clip.ID != recommendation.ID || clip.SourceAssetID != recommendation.SourceAssetID || clip.InMS != recommendation.StartMs || clip.OutMS != recommendation.EndMs {
+			t.Fatalf("project clip %d did not retain recommendation provenance: %#v, want %#v", index, clip, recommendation)
+		}
+		if clip.Transition == nil || clip.Transition.Kind != "cut" || clip.Transition.DurationMS != 0 {
+			t.Fatalf("project clip %d transition = %#v, want zero-duration cut", index, clip.Transition)
 		}
 	}
+	if project.OriginJobID != composition.ID || project.SuggestionID != "multi-video-narrative" || project.PromptVersion != "multi-video-composition-v2" {
+		t.Fatalf("project provenance changed: %#v", project)
+	}
+
+	t.Run("rejects persisted draft mismatch", func(t *testing.T) {
+		mismatched := *composition
+		mismatched.TimelineDrafts = append([]videoindexerstudio.TimelineDraft(nil), composition.TimelineDrafts...)
+		mismatched.TimelineDrafts[0].PrimaryVideoTrack.Clips = append([]videoindexerstudio.TimelineClip(nil), composition.TimelineDrafts[0].PrimaryVideoTrack.Clips...)
+		mismatched.TimelineDrafts[0].PrimaryVideoTrack.Clips[0].SourceAssetID = "different-asset"
+		mismatchProjects := &memoryEditingProjectStore{}
+		mismatchEditing := NewEditingService(&fakeLibraryStore{assets: assets}, nil, nil, mismatchProjects)
+		mismatchService := NewVideoIndexerStudioService(&fakeLibraryStore{assets: assets}, nil, mismatchEditing, &fakeVideoIndexerClient{}, &memoryVideoIndexerJobStore{jobs: []VideoIndexerStudioJob{mismatched}})
+
+		if _, err := mismatchService.CreateEditProject(context.Background(), mismatched.ID, "multi-video-narrative"); err == nil {
+			t.Fatal("CreateEditProject accepted a composition draft with mismatched provenance")
+		}
+		if len(mismatchProjects.projects) != 0 {
+			t.Fatalf("CreateEditProject saved a project from a mismatched composition draft: %#v", mismatchProjects.projects)
+		}
+	})
 }
 
 func TestBuildMultiVideoCompositionIsDeterministicAndRejectsIncompleteEvidence(t *testing.T) {

@@ -568,19 +568,46 @@ function renderSourceRefs(refs: VI.SourceRef[] | undefined): string {
     .join("");
 }
 
+function canonicalCompositionDraft(job: BackendModels.VideoIndexerStudioJob): VI.TimelineDraft | null {
+  const plan = job.compositionPlan;
+  const drafts = job.timelineDrafts || [];
+  const draft = drafts[0];
+  const proposalClips = plan?.clips || [];
+  const clips = draft?.primaryVideoTrack?.clips || [];
+  if (!plan || plan.compositionId !== job.id || !proposalClips.length || !draft || drafts.length !== 1 || draft.originJobId !== job.id || clips.length !== proposalClips.length) return null;
+  return clips.every((clip, index) => {
+    const proposalClip = proposalClips[index];
+    return proposalClip
+      && clip.id === proposalClip.id
+      && clip.sourceAssetId === proposalClip.sourceAssetId
+      && clip.inMs === proposalClip.startMs
+      && clip.outMs === proposalClip.endMs
+      && clip.transition?.kind === "cut"
+      && clip.transition?.durationMs === 0;
+  }) ? draft : null;
+}
+
+function legacyCompositionDraft(job: BackendModels.VideoIndexerStudioJob): VI.TimelineDraft | null {
+  const drafts = job.timelineDrafts || [];
+  const draft = drafts[0];
+  const clips = draft?.primaryVideoTrack?.clips || [];
+  if (job.status !== "succeeded" || job.compositionPlan || !draft || drafts.length !== 1 || draft.originJobId !== job.id || !clips.length) return null;
+  return clips.every((clip) => clip.transition?.kind === "cut" && clip.transition?.durationMs === 0) ? draft : null;
+}
+
 function renderEditProjectAction(job: BackendModels.VideoIndexerStudioJob, state: VideoIndexerStudioViewState, className = "button", suggestionID = ""): string {
   if (job.projectId) {
     const opening = state.activeAction?.kind === "open-project" && state.activeAction.projectID === job.projectId;
     return `<button type="button" class="${className}" data-action="video-indexer-open-project" data-project-id="${escapeHTML(job.projectId)}" ${state.activeAction ? "disabled" : ""} ${opening ? 'aria-busy="true"' : ""}>${opening ? "Opening project..." : "Open in Editing"}</button>`;
   }
-  const canCreateForDraft = suggestionID.trim().length > 0 || (job.timelineDrafts?.length || 0) === 1;
-  if (job.status !== "succeeded" || !canCreateForDraft) {
-    return "";
-  }
+  const validDraft = job.composition
+    ? canonicalCompositionDraft(job) ?? legacyCompositionDraft(job)
+    : (job.timelineDrafts?.length || 0) === 1 ? job.timelineDrafts?.[0] ?? null : null;
+  if (job.status !== "succeeded" || !validDraft) return "";
   const creating = state.activeAction?.kind === "create-project" && state.activeAction.jobID === job.id;
-  return `<button type="button" class="${className}" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}" data-suggestion-id="${escapeHTML(suggestionID)}" ${state.activeAction ? "disabled" : ""} ${creating ? 'aria-busy="true"' : ""}>${creating ? "Creating project..." : "Create edit project"}</button>`;
+  const requestedSuggestionID = suggestionID || validDraft.suggestionId || "";
+  return `<button type="button" class="${className}" data-action="video-indexer-create-project" data-job-id="${escapeHTML(job.id)}" data-suggestion-id="${escapeHTML(requestedSuggestionID)}" ${state.activeAction ? "disabled" : ""} ${creating ? 'aria-busy="true"' : ""}>${creating ? "Creating project..." : "Create edit project"}</button>`;
 }
-
 function renderTimelineDrafts(job: BackendModels.VideoIndexerStudioJob, state: VideoIndexerStudioViewState): string {
   const drafts = job.timelineDrafts || [];
   if (!drafts.length) {
@@ -669,6 +696,7 @@ function renderCompositionRecommendation(job: BackendModels.VideoIndexerStudioJo
             return `<tr><td><strong>${escapeHTML(assetName)}</strong><br><span class="path-cell">${escapeHTML(source.assetID)}</span></td><td class="path-cell">${escapeHTML(source.analysisJobID || "Awaiting submission")}</td><td>${badge(compositionSourceStatusLabel(source.status), localStatusTone(source.status))}</td><td>${escapeHTML(source.durationMs > 0 ? formatMs(source.durationMs) : "—")}</td></tr>`;
           }).join("")}</tbody></table></div>` : `<div class="empty-state">Source analysis status has not been recorded for this legacy composition.</div>`}
         </div>
+        ${!plan && legacyCompositionDraft(job) ? `<div class="edit-render-blocked"><strong>Composition provenance is unavailable for this older job.</strong><p>The backend retained one grounded, zero-duration-cut timeline draft. Create a persisted edit project from that draft, or request a new recommendation to receive composition provenance.</p></div>` : ""}
         ${planReady ? `<div>
           <h4>Ranked source clips</h4>
           ${plan?.clips.length ? `<ol class="composition-clip-list">${plan.clips.map((clip, index) => {
