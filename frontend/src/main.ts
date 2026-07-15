@@ -64,10 +64,6 @@ import {
   setupEditingEvents,
   createNewProject,
   saveProject,
-  addClipToTimeline,
-  removeClip,
-  moveClipUp,
-  moveClipDown,
   startRender,
   cancelRender,
 } from "./editing.js";
@@ -619,21 +615,7 @@ function renderCameraMediaPanel(selectedCount: number): string {
 }
 
 function renderEditingPanelWrapper(): string {
-  return `
-    <section class="panel" aria-labelledby="edit-title">
-      <div class="topbar">
-        <div>
-          <p class="eyebrow">AI Video Studio</p>
-          <h2>Editing Studio</h2>
-          <p class="lede">Drag analyzed assets into the timeline. Trim, reorder, add transitions, and render via Azure Container App.</p>
-        </div>
-        <div style="display:flex;gap:10px;align-items:center">
-          <button class="button secondary" data-action="save-project">Save</button>
-        </div>
-      </div>
-      ${renderEditingPanel(state.editing)}
-    </section>
-  `;
+  return renderEditingPanel(state.editing);
 }
 
 function renderDetailsPanel(destinationPath: string): string {
@@ -883,6 +865,7 @@ function render(): void {
     : [{ label: "Services", detail: "Waiting for Wails runtime status.", tone: "neutral" }];
   const destination = state.settings?.oneDriveDestination;
   const destinationPath = destination?.path || "/Apps/AI Video Studio/Imports";
+  const isEditing = state.activeView === "editing";
 
   root.innerHTML = `
     <main class="shell">
@@ -909,8 +892,8 @@ function render(): void {
         </section>
       </aside>
 
-      <section class="workspace" id="${state.activeView}">
-        <header class="topbar">
+      <section class="workspace ${isEditing ? "editing-workspace" : ""}" id="${state.activeView}">
+        ${isEditing ? "" : `<header class="topbar">
           <div>
             <p class="eyebrow">DJI Osmo Action 4 to OneDrive 365 to Azure AI</p>
             <h2>${escapeHTML(viewTitle())}</h2>
@@ -926,9 +909,9 @@ function render(): void {
                   : ""
             }
           </div>
-        </header>
+        </header>`}
 
-        <section class="status-strip" aria-label="System status">
+        ${isEditing ? "" : `<section class="status-strip" aria-label="System status">
           ${state.status
             .map(
               (item) => `
@@ -939,14 +922,14 @@ function render(): void {
               `,
             )
             .join("")}
-        </section>
+        </section>`}
 
-        <section class="content">
+        <section class="content ${isEditing ? "editing-content" : ""}">
           <div class="main-stack">
             ${renderActiveView(selectedCount)}
           </div>
 
-          <aside class="details" aria-label="Details and diagnostics">
+          ${isEditing ? "" : `<aside class="details" aria-label="Details and diagnostics">
             ${renderDetailsPanel(destinationPath)}
 
             <section class="panel">
@@ -980,7 +963,7 @@ function render(): void {
               </div>
               <div class="detail-body"><div class="empty-state">Completed render jobs will appear here when an export is started in Editing.</div></div>
             </section>
-          </aside>
+          </aside>`}
         </section>
       </section>
     </main>
@@ -1250,41 +1233,6 @@ function render(): void {
         root.addEventListener("click", (event) => {
           const target = event.target as HTMLElement;
 
-          // Add asset to timeline
-          const addBtn = target.closest<HTMLElement>("[data-action='add-asset']");
-          if (addBtn) {
-            const assetId = addBtn.dataset.assetId || "";
-            const asset = state.editing.assets.find((a) => a.id === assetId);
-            if (asset) {
-              void addClipToTimeline(state.editing, asset).then(() => render());
-            }
-            return;
-          }
-
-          // Remove clip
-          const removeBtn = target.closest<HTMLElement>("[data-action='remove-clip']");
-          if (removeBtn) {
-            removeClip(state.editing, removeBtn.dataset.clipId || "");
-            render();
-            return;
-          }
-
-          // Move clip up
-          const upBtn = target.closest<HTMLElement>("[data-action='move-up']");
-          if (upBtn) {
-            moveClipUp(state.editing, upBtn.dataset.clipId || "");
-            render();
-            return;
-          }
-
-          // Move clip down
-          const downBtn = target.closest<HTMLElement>("[data-action='move-down']");
-          if (downBtn) {
-            moveClipDown(state.editing, downBtn.dataset.clipId || "");
-            render();
-            return;
-          }
-
           // Save project
           const saveBtn = target.closest<HTMLElement>("[data-action='save-project']");
           if (saveBtn) {
@@ -1313,7 +1261,9 @@ function render(): void {
             const found = state.editing.projects.find((p) => p.id === pid);
             if (found) {
               state.editing.activeProject = found;
-              render();
+              state.editing.renderJob = null;
+              state.editing.renderInFlight = false;
+              void loadEditingData(state.editing).then(() => render());
             }
             return;
           }
@@ -1331,6 +1281,8 @@ function render(): void {
           const target = event.target as HTMLSelectElement;
           if (target.dataset.action === "set-preset" && state.editing.activeProject) {
             state.editing.activeProject.renderPreset = target.value;
+            state.editing.message = "Preset changed. Save the project to keep it.";
+            render();
           }
         });
 

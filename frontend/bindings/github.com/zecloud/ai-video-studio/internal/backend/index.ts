@@ -30,6 +30,7 @@ export {
 
 export {
     AppOverview,
+    EditingCapabilities,
     ProtectedEndpointStatus,
     VideoIndexerStudioJob
 } from "./models.js";
