@@ -837,9 +837,16 @@ func TestVideoIndexerCreateEditProjectFromMultiVideoComposition(t *testing.T) {
 		t.Fatalf("project clip count = %d, want %d", len(projectClips), len(composition.CompositionPlan.Clips))
 	}
 	for index, clip := range projectClips {
-		if clip.ID != composition.CompositionPlan.Clips[index].ID {
-			t.Fatalf("project clip %d ID = %q, want preserved composition ID %q", index, clip.ID, composition.CompositionPlan.Clips[index].ID)
+		recommendation := composition.CompositionPlan.Clips[index]
+		if clip.ID != recommendation.ID || clip.SourceAssetID != recommendation.SourceAssetID || clip.InMS != recommendation.StartMs || clip.OutMS != recommendation.EndMs {
+			t.Fatalf("project clip %d did not retain recommendation provenance: %#v, want %#v", index, clip, recommendation)
 		}
+		if clip.Transition == nil || clip.Transition.Kind != "cut" || clip.Transition.DurationMS != 0 {
+			t.Fatalf("project clip %d transition = %#v, want zero-duration cut", index, clip.Transition)
+		}
+	}
+	if project.OriginJobID != composition.ID || project.SuggestionID != "multi-video-narrative" || project.PromptVersion != "multi-video-composition-v2" {
+		t.Fatalf("project provenance changed: %#v", project)
 	}
 }
 

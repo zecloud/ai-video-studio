@@ -1231,6 +1231,25 @@ function render(): void {
         }
         return;
       }
+
+      const openProject = target.closest<HTMLButtonElement>("[data-action='video-indexer-open-project']");
+      if (openProject) {
+        const projectID = openProject.dataset.projectId || "";
+        if (projectID) {
+          state.activeView = "editing";
+          void loadEditingData(state.editing).then(() => {
+            const project = state.editing.projects.find((item) => item.id === projectID);
+            if (project) {
+              state.editing.activeProject = project;
+              state.editing.selectedClipID = project.timeline.tracks[0]?.clips[0]?.id ?? null;
+            } else {
+              state.editing.message = `The persisted edit project ${projectID} could not be loaded.`;
+            }
+            render();
+          });
+        }
+        return;
+      }
     });
 
         // Editing Studio actions
