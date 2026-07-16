@@ -13,26 +13,30 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/zecloud/ai-video-studio/internal/videoindexerstudio"
 )
 
 type Server struct {
-	cfg           Config
-	jobs          JobService
-	renderJobs    RenderJobService
-	obs           *Observability
-	blobSvc       *AzureBlobService
-	renderOutputs RenderOutputStreamer
-	videoIndexer  videoIndexerReadiness
-	planner       EditPlanner
-	lookPath      func(string) (string, error)
-	readiness     readinessReporter
-	readinessOnce sync.Once
+	cfg             Config
+	jobs            JobService
+	renderJobs      RenderJobService
+	obs             *Observability
+	blobSvc         *AzureBlobService
+	renderOutputs   RenderOutputStreamer
+	videoIndexer    videoIndexerReadiness
+	planner         EditPlanner
+	narrativeRanker NarrativeRanker
+	lookPath        func(string) (string, error)
+	readiness       readinessReporter
+	readinessOnce   sync.Once
 }
 
 type RenderOutputStreamer interface {
 	OpenDownload(context.Context, StagedAsset) (BlobDownload, error)
 }
 
+func (s *Server) SetNarrativeRanker(ranker NarrativeRanker)            { s.narrativeRanker = ranker }
 func (s *Server) SetRenderJobs(jobs RenderJobService)                  { s.renderJobs = jobs }
 func (s *Server) SetRenderOutputStreamer(outputs RenderOutputStreamer) { s.renderOutputs = outputs }
 
@@ -58,13 +62,44 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/render-jobs/{jobID}/output", s.requireAPIKey(http.HandlerFunc(s.handleGetRenderOutput)))
 	mux.Handle("POST /api/v1/render-jobs/{jobID}/cancel", s.requireAPIKey(http.HandlerFunc(s.handleCancelRenderJob)))
 	mux.Handle("POST /api/v1/jobs", s.requireAPIKey(http.HandlerFunc(s.handleCreateJob)))
+	mux.Handle("POST /api/v1/narrative-rankings", s.requireAPIKey(http.HandlerFunc(s.handleNarrativeRanking)))
 	mux.Handle("GET /api/v1/jobs", s.requireAPIKey(http.HandlerFunc(s.handleListJobs)))
 	mux.Handle("GET /api/v1/jobs/{jobID}", s.requireAPIKey(http.HandlerFunc(s.handleGetJob)))
 	mux.Handle("POST /api/v1/jobs/{jobID}/cancel", s.requireAPIKey(http.HandlerFunc(s.handleCancelJob)))
 	if s.obs != nil {
 		return s.obs.HTTPMiddleware(mux)
 	}
+
 	return mux
+}
+
+func (s *Server) handleNarrativeRanking(w http.ResponseWriter, r *http.Request) {
+	if s.narrativeRanker == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "narrative ranker is not configured", "narrative_ranker_unavailable", true)
+		return
+	}
+	var req videoindexerstudio.NarrativeRankingRequest
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid JSON request body", "bad_request", false)
+		return
+	}
+	if err := req.Validate(); err != nil {
+		writeAPIError(w, http.StatusUnprocessableEntity, "invalid narrative ranking request", "narrative_ranking_invalid", false)
+		return
+	}
+	response, err := s.narrativeRanker.Rank(r.Context(), req)
+	if err != nil {
+		status, code, retryable := http.StatusBadGateway, "narrative_ranking_failed", false
+		if errors.Is(err, context.DeadlineExceeded) {
+			status, code, retryable = http.StatusGatewayTimeout, "narrative_ranking_timeout", true
+		}
+		if strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "unique") {
+			status, code = http.StatusUnprocessableEntity, "narrative_ranking_invalid"
+		}
+		writeAPIError(w, status, "narrative ranking failed", code, retryable)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleCreateRenderJob(w http.ResponseWriter, r *http.Request) {

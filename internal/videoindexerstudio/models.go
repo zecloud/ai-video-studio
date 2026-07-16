@@ -268,6 +268,45 @@ type EditPlan struct {
 
 const CompositionEditPlanSchemaVersion = 1
 
+const NarrativeRankingSchemaVersion = 1
+
+// NarrativeRankingRequest contains only immutable clip identities and canonical
+// evidence. The ranker cannot alter source assets or time ranges.
+type NarrativeRankingRequest struct {
+	SchemaVersion int                         `json:"schemaVersion"`
+	CompositionID string                      `json:"compositionId"`
+	Candidates    []NarrativeRankingCandidate `json:"candidates"`
+	Evidence      []NarrativeEvidence         `json:"evidence"`
+}
+
+type NarrativeRankingCandidate struct {
+	ID            string   `json:"id"`
+	SourceAssetID string   `json:"sourceAssetId"`
+	StartMs       int64    `json:"startMs"`
+	EndMs         int64    `json:"endMs"`
+	Score         float64  `json:"score"`
+	EvidenceIDs   []string `json:"evidenceIds"`
+}
+
+type NarrativeEvidence struct {
+	ID            string `json:"id"`
+	SourceAssetID string `json:"sourceAssetId"`
+	Kind          string `json:"kind"`
+	StartMs       int64  `json:"startMs"`
+	EndMs         int64  `json:"endMs"`
+	Text          string `json:"text,omitempty"`
+}
+
+type NarrativeRankingResponse struct {
+	SchemaVersion int                   `json:"schemaVersion"`
+	OrderedClips  []NarrativeRankedClip `json:"orderedClips"`
+}
+
+type NarrativeRankedClip struct {
+	CandidateID string   `json:"candidateId"`
+	EvidenceIDs []string `json:"evidenceIds"`
+}
+
 // CompositionEditPlan is the grounded, ordered recommendation for a Smart Edit
 // composition. It is deliberately separate from EditPlan so single-video
 // planner responses remain backwards compatible.

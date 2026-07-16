@@ -122,9 +122,11 @@ func (c *Client) CancelJob(ctx context.Context, id string) (*JobResponse, error)
 	if c == nil {
 		return nil, fmt.Errorf("%w: nil client", ErrInvalidConfig)
 	}
+
 	if err := c.cfg.validate(); err != nil {
 		return nil, err
 	}
+
 	if err := validateID(id, "id"); err != nil {
 		return nil, err
 	}

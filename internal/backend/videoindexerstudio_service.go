@@ -37,6 +37,10 @@ type videoIndexerClient interface {
 	CancelJob(context.Context, string) (*videoindexerstudio.JobResponse, error)
 }
 
+type narrativeRankingClient interface {
+	RankNarrative(context.Context, videoindexerstudio.NarrativeRankingRequest) (*videoindexerstudio.NarrativeRankingResponse, error)
+}
+
 type videoIndexerJobStore interface {
 	Load(context.Context) ([]VideoIndexerStudioJob, error)
 	Save(context.Context, []VideoIndexerStudioJob) error
@@ -420,6 +424,14 @@ func (s *VideoIndexerStudioService) evaluateComposition(ctx context.Context, com
 	if err != nil {
 		return failComposition(composition, s.nowTime(), err.Error())
 	}
+	compositionPlan.RankingMode = "deterministic_grounded_fallback_v1"
+	if client, clientErr := s.clientFor(ctx); clientErr == nil {
+		if ranker, ok := client.(narrativeRankingClient); ok {
+			if rankedPlan, rankedComposition, rankedDrafts, rankErr := rankMultiVideoComposition(ctx, ranker, plan, compositionPlan, dependencies); rankErr == nil {
+				plan, compositionPlan, drafts = rankedPlan, rankedComposition, rankedDrafts
+			}
+		}
+	}
 	now := s.nowTime()
 	composition.Status = videoIndexerJobStatusSucceeded
 	composition.RemoteStatus = "succeeded"
@@ -446,6 +458,7 @@ func buildMultiVideoComposition(compositionID string, assetIDs []string, depende
 	if len(assetIDs) < 2 || len(dependencies) != len(assetIDs) {
 		return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, errors.New("composition requires a completed analysis for every selected asset")
 	}
+
 	candidates := make([]compositionCandidate, 0, len(dependencies))
 	sources := make([]videoindexerstudio.CompositionSourceStatus, 0, len(dependencies))
 	for i, dependency := range dependencies {
@@ -455,23 +468,24 @@ func buildMultiVideoComposition(compositionID string, assetIDs []string, depende
 		if dependency.EditPlan == nil || len(dependency.EditPlan.Suggestions) == 0 {
 			return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, fmt.Errorf("analysis %q has no edit suggestions", dependency.ID)
 		}
-		suggestion := bestEditSuggestion(dependency.EditPlan.Suggestions)
-		sourceClips := suggestion.Clips
-		if len(sourceClips) == 0 {
-			sourceClips = []videoindexerstudio.SuggestedClip{{ID: suggestion.ID, Title: suggestion.Title, Reason: suggestion.Reason, StartMs: suggestion.StartMs, EndMs: suggestion.EndMs, Score: suggestion.Score, SourceRefs: suggestion.SourceRefs}}
-		}
-		for clipIndex, clip := range sourceClips {
-			if clip.StartMs < 0 || clip.EndMs <= clip.StartMs || clip.EndMs > dependency.VideoIndexResult.DurationMs {
-				return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, fmt.Errorf("analysis %q contains an invalid grounded clip range", dependency.ID)
+		for _, suggestion := range dependency.EditPlan.Suggestions {
+			sourceClips := suggestion.Clips
+			if len(sourceClips) == 0 {
+				sourceClips = []videoindexerstudio.SuggestedClip{{ID: suggestion.ID, Title: suggestion.Title, Reason: suggestion.Reason, StartMs: suggestion.StartMs, EndMs: suggestion.EndMs, Score: suggestion.Score, SourceRefs: suggestion.SourceRefs}}
 			}
-			clip.SourceRefs = append([]videoindexerstudio.SourceRef(nil), clip.SourceRefs...)
-			clip.ID = stableCompositionClipID(compositionID, assetIDs[i], suggestion.ID, clipIndex, clip)
-			clip.SourceAssetID = assetIDs[i]
-			for refIndex := range clip.SourceRefs {
-				clip.SourceRefs[refIndex].SourceAssetID = assetIDs[i]
-				clip.SourceRefs[refIndex].RefID = fmt.Sprintf("%s:%s", sanitizeIdentifier(assetIDs[i]), clip.SourceRefs[refIndex].RefID)
+			for clipIndex, clip := range sourceClips {
+				if clip.StartMs < 0 || clip.EndMs <= clip.StartMs || clip.EndMs > dependency.VideoIndexResult.DurationMs {
+					return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, fmt.Errorf("analysis %q contains an invalid grounded clip range", dependency.ID)
+				}
+				clip.SourceRefs = append([]videoindexerstudio.SourceRef(nil), clip.SourceRefs...)
+				clip.ID = stableCompositionClipID(compositionID, assetIDs[i], suggestion.ID, clipIndex, clip)
+				clip.SourceAssetID = assetIDs[i]
+				for refIndex := range clip.SourceRefs {
+					clip.SourceRefs[refIndex].SourceAssetID = assetIDs[i]
+					clip.SourceRefs[refIndex].RefID = fmt.Sprintf("%s:%s", sanitizeIdentifier(assetIDs[i]), clip.SourceRefs[refIndex].RefID)
+				}
+				candidates = append(candidates, compositionCandidate{clip: clip, suggestionID: suggestion.ID, sourceStartMS: clip.StartMs})
 			}
-			candidates = append(candidates, compositionCandidate{clip: clip, suggestionID: suggestion.ID, sourceStartMS: clip.StartMs})
 		}
 		sources = append(sources, videoindexerstudio.CompositionSourceStatus{AssetID: assetIDs[i], AnalysisJobID: dependency.ID, Status: "complete", DurationMs: dependency.VideoIndexResult.DurationMs})
 	}
@@ -491,6 +505,9 @@ func buildMultiVideoComposition(compositionID string, assetIDs []string, depende
 		}
 		return candidates[i].clip.ID < candidates[j].clip.ID
 	})
+	if len(candidates) > narrativeMaxCandidates {
+		candidates = candidates[:narrativeMaxCandidates]
+	}
 	clips := make([]videoindexerstudio.SuggestedClip, 0, len(candidates))
 	compositionClips := make([]videoindexerstudio.CompositionClip, 0, len(candidates))
 	refs := make([]videoindexerstudio.SourceRef, 0, len(candidates))

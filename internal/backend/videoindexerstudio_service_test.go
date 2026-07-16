@@ -731,7 +731,7 @@ func TestVideoIndexerGenerateMultiVideoEditReusesCompletedAnalyses(t *testing.T)
 	if clips[0].SourceAssetID != "asset-2" || clips[1].SourceAssetID != "asset-1" {
 		t.Fatalf("composition did not rank grounded clips by score: %#v", clips)
 	}
-	if composition.CompositionPlan == nil || composition.CompositionPlan.RankingMode != "deterministic_grounded_v1" {
+	if composition.CompositionPlan == nil || composition.CompositionPlan.RankingMode != "deterministic_grounded_fallback_v1" {
 		t.Fatalf("composition did not persist recommendation metadata: %#v", composition.CompositionPlan)
 	}
 	if len(composition.CompositionPlan.Clips) != 2 || composition.CompositionPlan.Clips[0].SourceAssetID != "asset-2" {
