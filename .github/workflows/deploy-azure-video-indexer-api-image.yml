@@ -1,0 +1,136 @@
+# Build and deploy the API and durable-worker image. The infrastructure workflow
+# must have provisioned the registry and Container Apps before this can run.
+
+name: Deploy Video Indexer API image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'azure-video-indexer-service/**'
+      - '!azure-video-indexer-service/Dockerfile.ffmpeg'
+      - 'internal/**'
+      - 'frontend/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/deploy-azure-video-indexer-api-image.yml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-video-indexer-api-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-api-image:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      ACR_NAME: ${{ vars.ACR_NAME || 'acrvideostudio' }}
+      API_APP_NAME: video-indexer-api
+      WORKER_APP_NAME: video-indexer-worker
+      IMAGE_REPOSITORY: ai-video-indexer-service
+      IMAGE_TAG: ${{ github.sha }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate deployment inputs
+        run: |
+          set -euo pipefail
+          for name in AZURE_RESOURCE_GROUP ACR_NAME; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required deployment input: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: azure-video-indexer-service/go.mod
+          cache-dependency-path: azure-video-indexer-service/go.sum
+
+      - name: Install Wails Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libgtk-4-dev libwebkitgtk-6.0-dev libglib2.0-dev libsoup-3.0-dev
+
+      - name: Build embedded frontend assets
+        run: |
+          npm ci --prefix frontend
+          npm run build --prefix frontend
+
+      - name: Test durable Video Indexer service
+        run: go test ./...
+        working-directory: azure-video-indexer-service
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Container Apps CLI extension
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az extension add --name containerapp --upgrade --yes
+
+      - name: Verify infrastructure prerequisites
+        run: |
+          set -euo pipefail
+          if ! az acr show --name "$ACR_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --only-show-errors >/dev/null; then
+            echo "Azure Container Registry '$ACR_NAME' does not exist. Run the infrastructure workflow first." >&2
+            exit 1
+          fi
+          for app_name in "$API_APP_NAME" "$WORKER_APP_NAME"; do
+            if ! az containerapp show --name "$app_name" --resource-group "$AZURE_RESOURCE_GROUP" --only-show-errors >/dev/null; then
+              echo "Container App '$app_name' does not exist. Run the infrastructure workflow first." >&2
+              exit 1
+            fi
+          done
+          echo "ACR_LOGIN_SERVER=$(az acr show --name "$ACR_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --query loginServer -o tsv)" >> "$GITHUB_ENV"
+
+      - name: Build and push immutable API image
+        run: |
+          set -euo pipefail
+          az acr build --registry "$ACR_NAME" --image "${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
+            --file azure-video-indexer-service/Dockerfile . --only-show-errors
+          az acr repository show --name "$ACR_NAME" --image "${IMAGE_REPOSITORY}:${IMAGE_TAG}" --only-show-errors >/dev/null
+
+      - name: Update API and durable worker
+        run: |
+          set -euo pipefail
+          image="${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          az containerapp update --name "$API_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --image "$image" --only-show-errors
+          az containerapp update --name "$WORKER_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --image "$image" --only-show-errors
+
+      - name: Smoke test API
+        run: |
+          set -euo pipefail
+          fqdn="$(az containerapp show --name "$API_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)"
+          if [ -z "$fqdn" ]; then
+            echo "Unable to resolve the API Container App FQDN." >&2
+            exit 1
+          fi
+          url="https://${fqdn}/ready"
+          for attempt in $(seq 1 30); do
+            response="$(curl -sS --max-time 10 -w $'\n%{http_code}' "$url")" || true
+            body="${response%$'\n'*}"
+            code="${response##*$'\n'}"
+            if [ "$code" = 200 ] && printf '%s' "$body" | grep -q '"status":"ready"'; then
+              exit 0
+            fi
+            echo "Readiness check attempt ${attempt}/30 failed; retrying." >&2
+            sleep 10
+          done
+          echo "API deployment smoke test failed." >&2
+          exit 1
