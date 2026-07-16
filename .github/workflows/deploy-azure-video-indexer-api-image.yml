@@ -10,9 +10,6 @@ on:
     paths:
       - 'azure-video-indexer-service/**'
       - '!azure-video-indexer-service/Dockerfile.ffmpeg'
-      - '!azure-video-indexer-service/*render*.go'
-      - '!azure-video-indexer-service/render_*.go'
-      - '!azure-video-indexer-service/ffmpeg_*.go'
       - 'internal/**'
       - 'frontend/**'
       - 'go.mod'

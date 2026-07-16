@@ -8,19 +8,8 @@ on:
     branches:
       - main
     paths:
-      - 'azure-video-indexer-service/Dockerfile.ffmpeg'
-      - 'azure-video-indexer-service/*render*.go'
-      - 'azure-video-indexer-service/render_*.go'
-      - 'azure-video-indexer-service/ffmpeg_*.go'
-      - 'azure-video-indexer-service/config.go'
-      - 'azure-video-indexer-service/main.go'
-      - 'azure-video-indexer-service/dts_runtime.go'
-      - 'azure-video-indexer-service/durable_job_service.go'
-      - 'azure-video-indexer-service/blob.go'
-      - 'azure-video-indexer-service/types.go'
-      - 'azure-video-indexer-service/errors.go'
-      - 'azure-video-indexer-service/go.mod'
-      - 'azure-video-indexer-service/go.sum'
+      - 'azure-video-indexer-service/**'
+      - '!azure-video-indexer-service/Dockerfile'
       - 'internal/**'
       - 'go.mod'
       - 'go.sum'
@@ -65,6 +54,12 @@ jobs:
         with:
           go-version-file: azure-video-indexer-service/go.mod
           cache-dependency-path: azure-video-indexer-service/go.sum
+
+      - name: Install Wails Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libgtk-4-dev libwebkitgtk-6.0-dev libglib2.0-dev libsoup-3.0-dev
 
       - name: Test durable Video Indexer service
         run: go test ./...
