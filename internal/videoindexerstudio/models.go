@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const maxErrorBodyBytes = 4096
@@ -270,13 +272,16 @@ const CompositionEditPlanSchemaVersion = 1
 
 const NarrativeRankingSchemaVersion = 1
 
+const NarrativeIntentMaxRunes = 240
+
 // NarrativeRankingRequest contains only immutable clip identities and canonical
 // evidence. The ranker cannot alter source assets or time ranges.
 type NarrativeRankingRequest struct {
-	SchemaVersion int                         `json:"schemaVersion"`
-	CompositionID string                      `json:"compositionId"`
-	Candidates    []NarrativeRankingCandidate `json:"candidates"`
-	Evidence      []NarrativeEvidence         `json:"evidence"`
+	SchemaVersion   int                         `json:"schemaVersion"`
+	CompositionID   string                      `json:"compositionId"`
+	NarrativeIntent string                      `json:"narrativeIntent,omitempty"`
+	Candidates      []NarrativeRankingCandidate `json:"candidates"`
+	Evidence        []NarrativeEvidence         `json:"evidence"`
 }
 
 type NarrativeRankingCandidate struct {
@@ -313,6 +318,7 @@ type NarrativeRankedClip struct {
 type CompositionEditPlan struct {
 	SchemaVersion         int                       `json:"schemaVersion"`
 	CompositionID         string                    `json:"compositionId"`
+	NarrativeIntent       string                    `json:"narrativeIntent,omitempty"`
 	Title                 string                    `json:"title"`
 	Summary               string                    `json:"summary"`
 	RankingMode           string                    `json:"rankingMode"`
@@ -322,6 +328,19 @@ type CompositionEditPlan struct {
 	Sources               []CompositionSourceStatus `json:"sources"`
 	Clips                 []CompositionClip         `json:"clips"`
 	SourceRefs            []SourceRef               `json:"sourceRefs"`
+}
+
+// NormalizeNarrativeIntent creates a bounded editorial preference suitable for
+// persistence and for the grounded ranker's input packet.
+func NormalizeNarrativeIntent(value string) (string, error) {
+	if !utf8.ValidString(value) {
+		return "", fmt.Errorf("%w: narrativeIntent must be valid UTF-8", ErrInvalidRequest)
+	}
+	value = strings.Join(strings.FieldsFunc(value, unicode.IsSpace), " ")
+	if utf8.RuneCountInString(value) > NarrativeIntentMaxRunes {
+		return "", fmt.Errorf("%w: narrativeIntent exceeds %d characters", ErrInvalidRequest, NarrativeIntentMaxRunes)
+	}
+	return value, nil
 }
 
 type CompositionSourceStatus struct {

@@ -389,10 +389,11 @@ func deepEqualJSON(a, b any) bool {
 
 func narrativeRankingRequestFixture() NarrativeRankingRequest {
 	return NarrativeRankingRequest{
-		SchemaVersion: NarrativeRankingSchemaVersion,
-		CompositionID: "composition-1",
-		Candidates:    []NarrativeRankingCandidate{{ID: "clip-a", SourceAssetID: "asset-a", StartMs: 0, EndMs: 100, EvidenceIDs: []string{"asset-a:scene:scene-a"}}},
-		Evidence:      []NarrativeEvidence{{ID: "asset-a:scene:scene-a", SourceAssetID: "asset-a", Kind: "scene", StartMs: 0, EndMs: 100}},
+		SchemaVersion:   NarrativeRankingSchemaVersion,
+		CompositionID:   "composition-1",
+		NarrativeIntent: "action-forward",
+		Candidates:      []NarrativeRankingCandidate{{ID: "clip-a", SourceAssetID: "asset-a", StartMs: 0, EndMs: 100, EvidenceIDs: []string{"asset-a:scene:scene-a"}}},
+		Evidence:        []NarrativeEvidence{{ID: "asset-a:scene:scene-a", SourceAssetID: "asset-a", Kind: "scene", StartMs: 0, EndMs: 100}},
 	}
 }
 

@@ -42,6 +42,24 @@ func TestRankMultiVideoCompositionPreservesKnownClips(t *testing.T) {
 	}
 }
 
+func TestNarrativeIntentPropagatesWithoutChangingGroundedClips(t *testing.T) {
+	dependencies := narrativeDependencies()
+	plan, composition, _, err := buildMultiVideoComposition("composition-1", []string{"asset-a", "asset-b"}, dependencies)
+	if err != nil {
+		t.Fatalf("build composition: %v", err)
+	}
+	composition.NarrativeIntent = "action-forward"
+	_, ranked, _, err := rankMultiVideoComposition(context.Background(), rankingClientFunc(func(_ context.Context, request videoindexerstudio.NarrativeRankingRequest) (*videoindexerstudio.NarrativeRankingResponse, error) {
+		if request.NarrativeIntent != "action-forward" {
+			t.Fatalf("narrative intent = %q", request.NarrativeIntent)
+		}
+		return &videoindexerstudio.NarrativeRankingResponse{SchemaVersion: 1, OrderedClips: []videoindexerstudio.NarrativeRankedClip{{CandidateID: request.Candidates[1].ID, EvidenceIDs: []string{request.Candidates[1].EvidenceIDs[0]}}, {CandidateID: request.Candidates[0].ID, EvidenceIDs: []string{request.Candidates[0].EvidenceIDs[0]}}}}, nil
+	}), plan, composition, dependencies)
+	if err != nil || ranked.NarrativeIntent != composition.NarrativeIntent || len(ranked.Clips) != len(composition.Clips) {
+		t.Fatalf("ranked composition = %#v, %v", ranked, err)
+	}
+}
+
 func TestRankMultiVideoCompositionPermutesFilteredCandidates(t *testing.T) {
 	dependencies := narrativeDependencies()
 	dependencies[0].EditPlan.Suggestions = []videoindexerstudio.EditSuggestion{
@@ -109,8 +127,9 @@ func TestBuildNarrativeRankingRequestRetainsEvidenceForEveryCandidateWithinBudge
 	}
 	lateResult := &videoindexerstudio.VideoIndexResult{Insights: videoindexerstudio.VideoIndexInsights{Scenes: []videoindexerstudio.VideoIndexScene{{ID: "late-scene", StartMs: 0, EndMs: 5}}}}
 	composition := videoindexerstudio.CompositionEditPlan{
-		CompositionID:  "composition-1",
-		SourceAssetIDs: []string{"asset-a", "asset-z"},
+		CompositionID:   "composition-1",
+		NarrativeIntent: "chronological",
+		SourceAssetIDs:  []string{"asset-a", "asset-z"},
 		Clips: []videoindexerstudio.CompositionClip{
 			{ID: "candidate-a", SourceAssetID: "asset-a", StartMs: 0, EndMs: 5},
 			{ID: "candidate-z", SourceAssetID: "asset-z", StartMs: 0, EndMs: 5},
@@ -122,6 +141,9 @@ func TestBuildNarrativeRankingRequestRetainsEvidenceForEveryCandidateWithinBudge
 	})
 	if err != nil {
 		t.Fatalf("build narrative ranking request: %v", err)
+	}
+	if request.NarrativeIntent != composition.NarrativeIntent {
+		t.Fatalf("narrative intent = %q", request.NarrativeIntent)
 	}
 	if len(request.Evidence) != narrativeMaxEvidence {
 		t.Fatalf("evidence count = %d, want %d", len(request.Evidence), narrativeMaxEvidence)

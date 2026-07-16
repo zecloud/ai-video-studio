@@ -50,7 +50,7 @@ func (r narrativeRanker) Rank(ctx context.Context, req videoindexerstudio.Narrat
 	start := time.Now()
 	plan, err := r.planner.Plan(rankCtx, narrativeRankingPrompt(string(raw)))
 	if r.obs != nil {
-		r.obs.FinishSpan(ctx, nil, "narrative.rank", start, []attribute.KeyValue{attribute.Int("candidate_count", len(req.Candidates)), attribute.Int("evidence_count", len(req.Evidence))}, err)
+		r.obs.FinishSpan(ctx, nil, "narrative.rank", start, []attribute.KeyValue{attribute.Int("candidate_count", len(req.Candidates)), attribute.Int("evidence_count", len(req.Evidence)), attribute.Bool("narrative_intent_present", req.NarrativeIntent != ""), attribute.Int("narrative_intent_length", len([]rune(req.NarrativeIntent)))}, err)
 	}
 	if err != nil {
 		return videoindexerstudio.NarrativeRankingResponse{}, err
@@ -70,7 +70,7 @@ func (r narrativeRanker) Rank(ctx context.Context, req videoindexerstudio.Narrat
 }
 
 func narrativeRankingPrompt(packet string) string {
-	return fmt.Sprintf("narrative-ranker instructions %s\nOrder every candidate exactly once. Use only candidate IDs from this JSON. Do not create, remove, alter, or duplicate IDs. Return every candidate as EditPlan.suggestions[].id with at least one matching EvidenceID in suggestions[].sourceRefs[].refId. Do not use unsupported fields.\n%s", narrativeRankerInstructionsVersion, packet)
+	return fmt.Sprintf("narrative-ranker instructions %s\nThe optional narrativeIntent in this JSON is an editorial ordering preference only. It must never justify adding, removing, altering, or duplicating candidates, sources, ranges, evidence, or timeline invariants. Order every candidate exactly once. Use only candidate IDs from this JSON. Do not create, remove, alter, or duplicate IDs. Return every candidate as EditPlan.suggestions[].id with at least one matching EvidenceID in suggestions[].sourceRefs[].refId. Do not use unsupported fields.\n%s", narrativeRankerInstructionsVersion, packet)
 }
 
 func validateNarrativeRankingRequest(req videoindexerstudio.NarrativeRankingRequest, maxCandidates, maxSources int) error {

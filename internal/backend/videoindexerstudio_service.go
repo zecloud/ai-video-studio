@@ -60,6 +60,7 @@ type VideoIndexerStudioJob struct {
 	AssetIDs            []string                                `json:"assetIds,omitempty"`
 	AssetName           string                                  `json:"assetName"`
 	Composition         bool                                    `json:"composition,omitempty"`
+	NarrativeIntent     string                                  `json:"narrativeIntent,omitempty"`
 	DependencyJobIDs    []string                                `json:"dependencyJobIds,omitempty"`
 	RemoteJobID         string                                  `json:"remoteJobId,omitempty"`
 	RemoteStatus        string                                  `json:"remoteStatus,omitempty"`
@@ -199,9 +200,19 @@ func (s *VideoIndexerStudioService) SubmitForIndexing(ctx context.Context, asset
 
 // GenerateMultiVideoEdit creates one persistent composition that waits for or reuses source analyses.
 func (s *VideoIndexerStudioService) GenerateMultiVideoEdit(ctx context.Context, assetIDs []string) (*VideoIndexerStudioJob, error) {
+	return s.GenerateMultiVideoEditWithIntent(ctx, assetIDs, "")
+}
+
+// GenerateMultiVideoEditWithIntent creates one persistent composition with an
+// optional editorial preference for grounded Azure narrative ranking.
+func (s *VideoIndexerStudioService) GenerateMultiVideoEditWithIntent(ctx context.Context, assetIDs []string, narrativeIntent string) (*VideoIndexerStudioJob, error) {
 	assetIDs = uniqueNonEmptyStrings(assetIDs)
 	if len(assetIDs) < 2 {
 		return nil, errors.New("select at least two assets for a multi-video edit")
+	}
+	narrativeIntent, err := videoindexerstudio.NormalizeNarrativeIntent(narrativeIntent)
+	if err != nil {
+		return nil, err
 	}
 	assets := make([]library.ProjectAsset, 0, len(assetIDs))
 	for _, assetID := range assetIDs {
@@ -232,7 +243,8 @@ func (s *VideoIndexerStudioService) GenerateMultiVideoEdit(ctx context.Context, 
 	job := VideoIndexerStudioJob{
 		ID: s.nextJobID(now), AssetID: assetIDs[0], AssetIDs: append([]string(nil), assetIDs...),
 		AssetName: fmt.Sprintf("%d selected videos", len(assetIDs)), Composition: true, DependencyJobIDs: dependencies,
-		Status: videoIndexerJobStatusPending, Stage: "waiting_for_analyses", CreatedAt: now, UpdatedAt: now,
+		NarrativeIntent: narrativeIntent,
+		Status:          videoIndexerJobStatusPending, Stage: "waiting_for_analyses", CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.saveJob(ctx, job); err != nil {
 		return nil, err
@@ -424,6 +436,7 @@ func (s *VideoIndexerStudioService) evaluateComposition(ctx context.Context, com
 	if err != nil {
 		return failComposition(composition, s.nowTime(), err.Error())
 	}
+	compositionPlan.NarrativeIntent = composition.NarrativeIntent
 	compositionPlan.RankingMode = "deterministic_grounded_fallback_v1"
 	if client, clientErr := s.clientFor(ctx); clientErr == nil {
 		if ranker, ok := client.(narrativeRankingClient); ok {

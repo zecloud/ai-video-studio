@@ -33,6 +33,9 @@ func (r NarrativeRankingRequest) Validate() error {
 	if r.SchemaVersion != NarrativeRankingSchemaVersion || strings.TrimSpace(r.CompositionID) == "" || len(r.Candidates) == 0 {
 		return fmt.Errorf("%w: invalid narrative ranking request", ErrInvalidRequest)
 	}
+	if normalized, err := NormalizeNarrativeIntent(r.NarrativeIntent); err != nil || normalized != r.NarrativeIntent {
+		return fmt.Errorf("%w: invalid narrative intent", ErrInvalidRequest)
+	}
 	knownEvidence := make(map[string]struct{}, len(r.Evidence))
 	for _, evidence := range r.Evidence {
 		if strings.TrimSpace(evidence.ID) == "" || strings.TrimSpace(evidence.SourceAssetID) == "" || evidence.StartMs < 0 || evidence.EndMs < evidence.StartMs {

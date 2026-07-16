@@ -17,12 +17,12 @@ func (f narrativePlannerFunc) Plan(ctx context.Context, prompt string) (EditPlan
 }
 
 func narrativeRequest() videoindexerstudio.NarrativeRankingRequest {
-	return videoindexerstudio.NarrativeRankingRequest{SchemaVersion: 1, CompositionID: "composition-1", Candidates: []videoindexerstudio.NarrativeRankingCandidate{{ID: "clip-a", SourceAssetID: "asset-a", StartMs: 0, EndMs: 100, EvidenceIDs: []string{"asset-a:scene:scene-a"}}, {ID: "clip-b", SourceAssetID: "asset-b", StartMs: 0, EndMs: 100, EvidenceIDs: []string{"asset-b:scene:scene-b"}}}, Evidence: []videoindexerstudio.NarrativeEvidence{{ID: "asset-a:scene:scene-a", SourceAssetID: "asset-a", Kind: "scene", StartMs: 0, EndMs: 100}, {ID: "asset-b:scene:scene-b", SourceAssetID: "asset-b", Kind: "scene", StartMs: 0, EndMs: 100}}}
+	return videoindexerstudio.NarrativeRankingRequest{SchemaVersion: 1, CompositionID: "composition-1", NarrativeIntent: "action-forward", Candidates: []videoindexerstudio.NarrativeRankingCandidate{{ID: "clip-a", SourceAssetID: "asset-a", StartMs: 0, EndMs: 100, EvidenceIDs: []string{"asset-a:scene:scene-a"}}, {ID: "clip-b", SourceAssetID: "asset-b", StartMs: 0, EndMs: 100, EvidenceIDs: []string{"asset-b:scene:scene-b"}}}, Evidence: []videoindexerstudio.NarrativeEvidence{{ID: "asset-a:scene:scene-a", SourceAssetID: "asset-a", Kind: "scene", StartMs: 0, EndMs: 100}, {ID: "asset-b:scene:scene-b", SourceAssetID: "asset-b", Kind: "scene", StartMs: 0, EndMs: 100}}}
 }
 
 func TestNarrativeRankerAcceptsOnlyCompleteGroundedOrder(t *testing.T) {
 	ranker := narrativeRanker{max: 2, timeout: time.Second, planner: narrativePlannerFunc(func(_ context.Context, prompt string) (EditPlan, error) {
-		if !strings.Contains(prompt, "clip-a") || !strings.Contains(prompt, "Order every candidate exactly once") {
+		if !strings.Contains(prompt, "clip-a") || !strings.Contains(prompt, `"narrativeIntent":"action-forward"`) || !strings.Contains(prompt, "editorial ordering preference only") || !strings.Contains(prompt, "Order every candidate exactly once") {
 			t.Fatalf("prompt omitted strict contract: %s", prompt)
 		}
 		return EditPlan{Suggestions: []EditSuggestion{{ID: "clip-b", SourceRefs: []SourceRef{{RefID: "asset-b:scene:scene-b"}}}, {ID: "clip-a", SourceRefs: []SourceRef{{RefID: "asset-a:scene:scene-a"}}}}}, nil
