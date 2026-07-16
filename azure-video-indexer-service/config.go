@@ -66,7 +66,7 @@ func LoadConfig() (Config, error) {
 		FFmpegPath:                         getEnvDefault("FFMPEG_PATH", "ffmpeg"),
 		RenderWorkspaceRoot:                getEnvDefault("RENDER_WORKSPACE_ROOT", os.TempDir()),
 		RenderTimeout:                      getEnvDuration("RENDER_TIMEOUT", 2*time.Hour),
-		NarrativeRankingTimeout:            getEnvDuration("NARRATIVE_RANKING_TIMEOUT", 20*time.Second),
+		NarrativeRankingTimeout:            getEnvDuration("NARRATIVE_RANKING_TIMEOUT", time.Minute),
 		NarrativeIntentClassifierTimeout:   getEnvDuration("NARRATIVE_INTENT_CLASSIFIER_TIMEOUT", 8*time.Second),
 		NarrativeSegmentPlannerTimeout:     getEnvDuration("NARRATIVE_SEGMENT_PLANNER_TIMEOUT", 12*time.Second),
 		NarrativeSegmentPlannerMaxCatalog:  getEnvInt("NARRATIVE_SEGMENT_PLANNER_MAX_CATALOG", 48),
@@ -112,7 +112,7 @@ func (c Config) Normalize() Config {
 		c.RenderTimeout = 2 * time.Hour
 	}
 	if c.NarrativeRankingTimeout <= 0 {
-		c.NarrativeRankingTimeout = 20 * time.Second
+		c.NarrativeRankingTimeout = time.Minute
 	}
 	if c.NarrativeRankingTimeout > time.Minute {
 		c.NarrativeRankingTimeout = time.Minute

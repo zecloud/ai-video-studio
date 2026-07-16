@@ -12,7 +12,7 @@ import (
 
 const (
 	narrativeMaxCandidates = 48
-	narrativeMaxEvidence   = 54
+	narrativeMaxEvidence   = 160
 	narrativeTextLimit     = 240
 )
 
@@ -107,38 +107,36 @@ func buildNarrativeRankingRequest(composition videoindexerstudio.CompositionEdit
 }
 
 func selectNarrativeEvidence(candidates []videoindexerstudio.NarrativeRankingCandidate, evidence []videoindexerstudio.NarrativeEvidence) ([]videoindexerstudio.NarrativeEvidence, error) {
-	selected := make(map[string]struct{}, len(candidates)*3)
-	for _, candidate := range candidates {
+	selected := make(map[string]struct{}, narrativeMaxEvidence)
+	matchingEvidence := make([][]videoindexerstudio.NarrativeEvidence, len(candidates))
+	for candidateIndex, candidate := range candidates {
 		for _, item := range evidence {
 			if item.SourceAssetID == candidate.SourceAssetID && overlaps(candidate.StartMs, candidate.EndMs, item.StartMs, item.EndMs) {
-				selected[item.ID] = struct{}{}
-				break
+				matchingEvidence[candidateIndex] = append(matchingEvidence[candidateIndex], item)
 			}
 		}
-		if len(selected) > narrativeMaxEvidence {
-			return nil, errors.New("narrative evidence budget cannot cover every candidate")
+		if len(matchingEvidence[candidateIndex]) == 0 {
+			continue
 		}
+		selected[matchingEvidence[candidateIndex][0].ID] = struct{}{}
 	}
-	const perCandidateLimit = 3
-	for _, candidate := range candidates {
-		selectedForCandidate := 0
-		for _, item := range evidence {
-			if item.SourceAssetID == candidate.SourceAssetID && overlaps(candidate.StartMs, candidate.EndMs, item.StartMs, item.EndMs) {
-				if _, exists := selected[item.ID]; exists {
-					selectedForCandidate++
-				}
+	if len(selected) > narrativeMaxEvidence {
+		return nil, errors.New("narrative evidence budget cannot cover every candidate")
+	}
+	for evidenceIndex := 1; len(selected) < narrativeMaxEvidence; evidenceIndex++ {
+		added := false
+		for candidateIndex := range candidates {
+			if evidenceIndex >= len(matchingEvidence[candidateIndex]) {
+				continue
 			}
-		}
-		for _, item := range evidence {
-			if len(selected) == narrativeMaxEvidence || selectedForCandidate == perCandidateLimit {
+			selected[matchingEvidence[candidateIndex][evidenceIndex].ID] = struct{}{}
+			added = true
+			if len(selected) == narrativeMaxEvidence {
 				break
 			}
-			if item.SourceAssetID == candidate.SourceAssetID && overlaps(candidate.StartMs, candidate.EndMs, item.StartMs, item.EndMs) {
-				if _, exists := selected[item.ID]; !exists {
-					selected[item.ID] = struct{}{}
-					selectedForCandidate++
-				}
-			}
+		}
+		if !added {
+			break
 		}
 	}
 	limited := make([]videoindexerstudio.NarrativeEvidence, 0, len(selected))

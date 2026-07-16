@@ -297,12 +297,12 @@ func TestCompositionPersistsFoundryClassificationWhenRankingFallsBack(t *testing
 	}
 }
 
-func TestSelectNarrativeEvidenceCapsPerCandidateDeterministically(t *testing.T) {
-	candidates := []videoindexerstudio.NarrativeRankingCandidate{{ID: "candidate-a", SourceAssetID: "asset-a", StartMs: 0, EndMs: 100}, {ID: "candidate-b", SourceAssetID: "asset-b", StartMs: 0, EndMs: 100}}
-	evidence := make([]videoindexerstudio.NarrativeEvidence, 0, 12)
+func TestSelectNarrativeEvidenceDistributesBudgetDeterministically(t *testing.T) {
+	candidates := []videoindexerstudio.NarrativeRankingCandidate{{ID: "candidate-a", SourceAssetID: "asset-a", StartMs: 0, EndMs: 10_000}, {ID: "candidate-b", SourceAssetID: "asset-b", StartMs: 0, EndMs: 10_000}}
+	evidence := make([]videoindexerstudio.NarrativeEvidence, 0, narrativeMaxEvidence*2)
 	for _, assetID := range []string{"asset-a", "asset-b"} {
-		for i := 0; i < 6; i++ {
-			evidence = append(evidence, videoindexerstudio.NarrativeEvidence{ID: fmt.Sprintf("%s:scene:%d", assetID, i), SourceAssetID: assetID, Kind: "scene", StartMs: int64(i * 10), EndMs: int64(i*10 + 5)})
+		for i := 0; i < narrativeMaxEvidence; i++ {
+			evidence = append(evidence, videoindexerstudio.NarrativeEvidence{ID: fmt.Sprintf("%s:scene:%03d", assetID, i), SourceAssetID: assetID, Kind: "scene", StartMs: int64(i * 10), EndMs: int64(i*10 + 5)})
 		}
 	}
 	first, err := selectNarrativeEvidence(candidates, evidence)
@@ -310,7 +310,7 @@ func TestSelectNarrativeEvidenceCapsPerCandidateDeterministically(t *testing.T) 
 		t.Fatalf("select evidence: %v", err)
 	}
 	second, err := selectNarrativeEvidence(candidates, evidence)
-	if err != nil || len(first) != 6 || len(second) != len(first) {
+	if err != nil || len(first) != narrativeMaxEvidence || len(second) != len(first) {
 		t.Fatalf("bounded selection = %d, %d, %v", len(first), len(second), err)
 	}
 	counts := map[string]int{}
@@ -320,7 +320,7 @@ func TestSelectNarrativeEvidenceCapsPerCandidateDeterministically(t *testing.T) 
 			t.Fatalf("selection is not deterministic: %#v != %#v", first, second)
 		}
 	}
-	if counts["asset-a"] != 3 || counts["asset-b"] != 3 {
-		t.Fatalf("per-candidate evidence cap not enforced: %#v", counts)
+	if counts["asset-a"] != narrativeMaxEvidence/2 || counts["asset-b"] != narrativeMaxEvidence/2 {
+		t.Fatalf("budget is not fairly distributed: %#v", counts)
 	}
 }

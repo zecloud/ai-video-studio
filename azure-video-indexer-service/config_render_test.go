@@ -46,3 +46,12 @@ func TestConfigRequiresRoleScopedTaskHubs(t *testing.T) {
 		})
 	}
 }
+
+func TestNarrativeRankingTimeoutDefaultsAndCapsAtOneMinute(t *testing.T) {
+	if got := (Config{}).Normalize().NarrativeRankingTimeout; got != time.Minute {
+		t.Fatalf("default ranking timeout = %v", got)
+	}
+	if got := (Config{NarrativeRankingTimeout: 2 * time.Minute}).Normalize().NarrativeRankingTimeout; got != time.Minute {
+		t.Fatalf("capped ranking timeout = %v", got)
+	}
+}

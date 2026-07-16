@@ -41,7 +41,7 @@ func (r narrativeRanker) Rank(ctx context.Context, req videoindexerstudio.Narrat
 		return videoindexerstudio.NarrativeRankingResponse{}, narrativeFailureError(narrativeFailureInvalidReq, err)
 	}
 	if r.timeout <= 0 {
-		r.timeout = 25 * time.Second
+		r.timeout = time.Minute
 	}
 	raw, err := json.Marshal(req)
 	if err != nil {
