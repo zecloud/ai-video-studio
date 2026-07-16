@@ -47,11 +47,25 @@ func TestConfigRequiresRoleScopedTaskHubs(t *testing.T) {
 	}
 }
 
-func TestNarrativeRankingTimeoutDefaultsAndCapsAtOneMinute(t *testing.T) {
-	if got := (Config{}).Normalize().NarrativeRankingTimeout; got != time.Minute {
-		t.Fatalf("default ranking timeout = %v", got)
-	}
-	if got := (Config{NarrativeRankingTimeout: 2 * time.Minute}).Normalize().NarrativeRankingTimeout; got != time.Minute {
-		t.Fatalf("capped ranking timeout = %v", got)
+func TestNarrativeRankingTimeoutDefaultsAndCapsAtTwoMinutesMaximum(t *testing.T) {
+	for name, timeout := range map[string]time.Duration{
+		"default":     0,
+		"nonpositive": -time.Second,
+		"configured":  100 * time.Second,
+		"capped":      3 * time.Minute,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := (Config{NarrativeRankingTimeout: timeout}).Normalize().NarrativeRankingTimeout
+			want := timeout
+			if want <= 0 {
+				want = narrativeRankingDefaultTimeout
+			}
+			if want > narrativeRankingMaxTimeout {
+				want = narrativeRankingMaxTimeout
+			}
+			if got != want {
+				t.Fatalf("ranking timeout = %v, want %v", got, want)
+			}
+		})
 	}
 }

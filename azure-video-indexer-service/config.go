@@ -10,6 +10,11 @@ import (
 	"time"
 )
 
+const (
+	narrativeRankingDefaultTimeout = 90 * time.Second
+	narrativeRankingMaxTimeout     = 120 * time.Second
+)
+
 type Config struct {
 	ServiceRole                        string
 	ListenAddr                         string
@@ -66,7 +71,7 @@ func LoadConfig() (Config, error) {
 		FFmpegPath:                         getEnvDefault("FFMPEG_PATH", "ffmpeg"),
 		RenderWorkspaceRoot:                getEnvDefault("RENDER_WORKSPACE_ROOT", os.TempDir()),
 		RenderTimeout:                      getEnvDuration("RENDER_TIMEOUT", 2*time.Hour),
-		NarrativeRankingTimeout:            getEnvDuration("NARRATIVE_RANKING_TIMEOUT", time.Minute),
+		NarrativeRankingTimeout:            getEnvDuration("NARRATIVE_RANKING_TIMEOUT", narrativeRankingDefaultTimeout),
 		NarrativeIntentClassifierTimeout:   getEnvDuration("NARRATIVE_INTENT_CLASSIFIER_TIMEOUT", 8*time.Second),
 		NarrativeSegmentPlannerTimeout:     getEnvDuration("NARRATIVE_SEGMENT_PLANNER_TIMEOUT", 12*time.Second),
 		NarrativeSegmentPlannerMaxCatalog:  getEnvInt("NARRATIVE_SEGMENT_PLANNER_MAX_CATALOG", 48),
@@ -112,10 +117,10 @@ func (c Config) Normalize() Config {
 		c.RenderTimeout = 2 * time.Hour
 	}
 	if c.NarrativeRankingTimeout <= 0 {
-		c.NarrativeRankingTimeout = time.Minute
+		c.NarrativeRankingTimeout = narrativeRankingDefaultTimeout
 	}
-	if c.NarrativeRankingTimeout > time.Minute {
-		c.NarrativeRankingTimeout = time.Minute
+	if c.NarrativeRankingTimeout > narrativeRankingMaxTimeout {
+		c.NarrativeRankingTimeout = narrativeRankingMaxTimeout
 	}
 	if c.NarrativeIntentClassifierTimeout <= 0 {
 		c.NarrativeIntentClassifierTimeout = 8 * time.Second

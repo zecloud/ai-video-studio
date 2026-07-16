@@ -197,3 +197,31 @@ func TestNarrativeRankerDoesNotRepairOtherValidationFailures(t *testing.T) {
 		t.Fatalf("non-repairable validation failure = %v, attempts = %d", err, attempts)
 	}
 }
+
+func TestNarrativeRankerCapsDirectTimeoutAndSharesDeadlineWithRepair(t *testing.T) {
+	attempts := 0
+	deadline := time.Time{}
+	ranker := narrativeRanker{timeout: 3 * time.Minute, planner: narrativePlannerFunc(func(ctx context.Context, _ string) (EditPlan, error) {
+		attempts++
+		currentDeadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("ranking call must receive a deadline")
+		}
+		if attempts == 1 {
+			deadline = currentDeadline
+			return EditPlan{Suggestions: []EditSuggestion{{ID: "clip-a", SourceRefs: []SourceRef{{RefID: "asset-a:scene:scene-a"}}}}}, nil
+		}
+		if !currentDeadline.Equal(deadline) {
+			t.Fatal("repair must share the original ranking deadline")
+		}
+		return EditPlan{Suggestions: []EditSuggestion{{ID: "clip-a", SourceRefs: []SourceRef{{RefID: "asset-a:scene:scene-a"}}}, {ID: "clip-b", SourceRefs: []SourceRef{{RefID: "asset-b:scene:scene-b"}}}}}, nil
+	})}
+	start := time.Now()
+	if _, err := ranker.Rank(context.Background(), narrativeRequest()); err != nil || attempts != 2 {
+		t.Fatalf("ranking repair = %v, attempts = %d", err, attempts)
+	}
+	budget := deadline.Sub(start)
+	if budget > narrativeRankingMaxTimeout+time.Second || budget < narrativeRankingMaxTimeout-time.Second {
+		t.Fatalf("ranking deadline budget = %v, want capped %v", budget, narrativeRankingMaxTimeout)
+	}
+}
