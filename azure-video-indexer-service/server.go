@@ -85,7 +85,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) handleNarrativeSegmentPlanning(w http.ResponseWriter, r *http.Request) {
 	if s.narrativeSegmentPlanner == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "narrative segment planner is not configured", "narrative_segment_planner_unavailable", true)
+		writeAPIError(w, http.StatusServiceUnavailable, "narrative segment planner is not configured", "narrative_segment_planning_unavailable", true)
 		return
 	}
 	var req videoindexerstudio.NarrativeSegmentPlanningRequest
@@ -114,7 +114,7 @@ func (s *Server) handleNarrativeSegmentPlanning(w http.ResponseWriter, r *http.R
 
 func (s *Server) handleNarrativeIntentClassification(w http.ResponseWriter, r *http.Request) {
 	if s.narrativeIntentClassifier == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "narrative intent classifier is not configured", "narrative_intent_classifier_unavailable", true)
+		writeAPIError(w, http.StatusServiceUnavailable, "narrative intent classifier is not configured", "narrative_intent_classification_unavailable", true)
 		return
 	}
 	var req videoindexerstudio.NarrativeIntentClassificationRequest

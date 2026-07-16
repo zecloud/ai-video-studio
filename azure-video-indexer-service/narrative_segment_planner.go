@@ -32,6 +32,13 @@ type narrativeSegmentPlanner struct {
 	obs                     *Observability
 }
 
+// narrativeSegmentPlannerPacket supplies the service-enforced selection bound to Foundry.
+// The request itself remains the stable desktop-to-API contract.
+type narrativeSegmentPlannerPacket struct {
+	MaxSegments int                                                `json:"maxSegments"`
+	Request     videoindexerstudio.NarrativeSegmentPlanningRequest `json:"request"`
+}
+
 func (p narrativeSegmentPlanner) Plan(ctx context.Context, request videoindexerstudio.NarrativeSegmentPlanningRequest) (videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
 	if p.runner == nil {
 		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, narrativeFailureError(narrativeFailureUnavailable, errors.New("planner not configured"))
@@ -42,7 +49,7 @@ func (p narrativeSegmentPlanner) Plan(ctx context.Context, request videoindexers
 	if len(request.Catalog) > p.maxCatalog {
 		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, narrativeFailureError(narrativeFailureLimit, errors.New("catalog limit exceeded"))
 	}
-	raw, err := json.Marshal(request)
+	raw, err := json.Marshal(narrativeSegmentPlannerPacket{MaxSegments: p.maxSegments, Request: request})
 	if err != nil {
 		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, narrativeFailureError(narrativeFailureInvalidReq, err)
 	}
@@ -129,7 +136,7 @@ func newNarrativeSegmentPlanner(cfg editPlannerConfig, timeout time.Duration, ma
 }
 func narrativeSegmentPlannerInstructions() string {
 	return `narrative-segment-planner instructions v2
-Return schemaVersion 1 and one to the supplied maximum number of segments. Select only catalog segmentId values, each once. Each segment must cite one or more evidenceIds listed on that exact catalog item. Omit startMs and endMs unless a shorter valid trim is necessary; a supplied trim must use 100ms boundaries, remain entirely inside that item's allowed range, and preserve at least one second. Roles are exactly hook, context, development, payoff, outro. Never invent or alter source IDs, candidate IDs, evidence IDs, timecodes, ranges, descriptors, or fields. Return only the structured response.`
+The input packet contains maxSegments and request. Return schemaVersion 1 and one to maxSegments segments. Select only request.catalog segmentId values, each once. Each segment must cite one or more evidenceIds listed on that exact catalog item. Omit startMs and endMs unless a shorter valid trim is necessary; a supplied trim must use 100ms boundaries, remain entirely inside that item's allowed range, and preserve at least one second. Roles are exactly hook, context, development, payoff, outro. Never invent or alter source IDs, candidate IDs, evidence IDs, timecodes, ranges, descriptors, or fields. Return only the structured response.`
 }
 
 func narrativePlannerProviderFailureReason(err error) string {

@@ -21,6 +21,15 @@ type classifierAndRankingClient struct {
 	ranker     rankingClientFunc
 }
 
+type plannerAwareNarrativeClient struct {
+	classifierAndRankingClient
+	planner narrativeSegmentPlanningClientFunc
+}
+
+func (c plannerAwareNarrativeClient) PlanNarrativeSegments(ctx context.Context, request videoindexerstudio.NarrativeSegmentPlanningRequest) (*videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
+	return c.planner(ctx, request)
+}
+
 func (c classifierAndRankingClient) CreateJob(context.Context, videoindexerstudio.CreateJobRequest) (*videoindexerstudio.JobResponse, error) {
 	return nil, errors.New("not implemented")
 }
@@ -269,6 +278,7 @@ func TestCompositionPersistsFoundryClassificationWhenRankingFallsBack(t *testing
 			if req.NarrativeIntent != "recapitulatif calme" {
 				t.Fatalf("classifier intent = %q", req.NarrativeIntent)
 			}
+
 			return &videoindexerstudio.NarrativeIntentClassificationResponse{SchemaVersion: videoindexerstudio.NarrativeRankingSchemaVersion, Profile: videoindexerstudio.NarrativeIntentProfileCalm}, nil
 		},
 		ranker: func(context.Context, videoindexerstudio.NarrativeRankingRequest) (*videoindexerstudio.NarrativeRankingResponse, error) {
@@ -294,6 +304,42 @@ func TestCompositionPersistsFoundryClassificationWhenRankingFallsBack(t *testing
 		if clip.SourceAssetID != "asset-a" && clip.SourceAssetID != "asset-b" || clip.StartMs < 0 || clip.EndMs <= clip.StartMs {
 			t.Fatalf("fallback changed grounded clip: %#v", clip)
 		}
+	}
+}
+
+func TestCompositionWithoutIntentDoesNotInvokeFoundrySegmentPlanner(t *testing.T) {
+	assets := []library.ProjectAsset{{ID: "asset-a", Name: "a.mp4", CloudAssetID: "drive-a"}, {ID: "asset-b", Name: "b.mp4", CloudAssetID: "drive-b"}}
+	store := &memoryVideoIndexerJobStore{jobs: narrativeDependencies()}
+	plannerCalls := 0
+	client := plannerAwareNarrativeClient{
+		classifierAndRankingClient: classifierAndRankingClient{
+			classifier: func(context.Context, videoindexerstudio.NarrativeIntentClassificationRequest) (*videoindexerstudio.NarrativeIntentClassificationResponse, error) {
+				t.Fatal("classifier must not run without narrative intent")
+				return nil, nil
+			},
+			ranker: func(_ context.Context, request videoindexerstudio.NarrativeRankingRequest) (*videoindexerstudio.NarrativeRankingResponse, error) {
+				ordered := make([]videoindexerstudio.NarrativeRankedClip, 0, len(request.Candidates))
+				for _, candidate := range request.Candidates {
+					ordered = append(ordered, videoindexerstudio.NarrativeRankedClip{CandidateID: candidate.ID, EvidenceIDs: []string{candidate.EvidenceIDs[0]}})
+				}
+				return &videoindexerstudio.NarrativeRankingResponse{SchemaVersion: 1, OrderedClips: ordered}, nil
+			},
+		},
+		planner: func(context.Context, videoindexerstudio.NarrativeSegmentPlanningRequest) (*videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
+			plannerCalls++
+			return nil, errors.New("planner must not run without narrative intent")
+		},
+	}
+	svc := NewVideoIndexerStudioService(&fakeLibraryStore{assets: assets}, nil, &fakeEditingSaver{}, client, store)
+	composition, err := svc.GenerateMultiVideoEdit(context.Background(), []string{"asset-a", "asset-b"})
+	if err != nil {
+		t.Fatalf("GenerateMultiVideoEdit: %v", err)
+	}
+	if plannerCalls != 0 {
+		t.Fatalf("planner called %d times without narrative intent", plannerCalls)
+	}
+	if composition.CompositionPlan == nil || composition.CompositionPlan.PlanningMode != videoindexerstudio.NarrativeSegmentPlanningModeDeterministic || len(composition.CompositionPlan.Clips) != 2 {
+		t.Fatalf("legacy composition did not retain deterministic selection: %#v", composition.CompositionPlan)
 	}
 }
 

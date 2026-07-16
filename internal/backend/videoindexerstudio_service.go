@@ -455,12 +455,14 @@ func (s *VideoIndexerStudioService) evaluateComposition(ctx context.Context, com
 	compositionPlan.EditorialProfile = narrativeIntentProfileForPacing(resolution.profile)
 	compositionPlan.PlanningMode = videoindexerstudio.NarrativeSegmentPlanningModeDeterministic
 	compositionPlan.PlanningFallbackReason = videoindexerstudio.NarrativeSegmentPlanningFallbackUnavailable
-	if client, clientErr := s.clientFor(ctx); clientErr == nil {
-		if planner, ok := client.(narrativeSegmentPlanningClient); ok {
-			if plannedPlan, plannedComposition, plannedDrafts, planErr := planMultiVideoCompositionSegments(ctx, planner, plan, compositionPlan, dependencies); planErr == nil {
-				plan, compositionPlan, drafts = plannedPlan, plannedComposition, plannedDrafts
-			} else {
-				compositionPlan.PlanningFallbackReason = narrativeSegmentPlanningFallbackReason(planErr)
+	if composition.NarrativeIntent != "" {
+		if client, clientErr := s.clientFor(ctx); clientErr == nil {
+			if planner, ok := client.(narrativeSegmentPlanningClient); ok {
+				if plannedPlan, plannedComposition, plannedDrafts, planErr := planMultiVideoCompositionSegments(ctx, planner, plan, compositionPlan, dependencies); planErr == nil {
+					plan, compositionPlan, drafts = plannedPlan, plannedComposition, plannedDrafts
+				} else {
+					compositionPlan.PlanningFallbackReason = narrativeSegmentPlanningFallbackReason(planErr)
+				}
 			}
 		}
 	}

@@ -559,6 +559,7 @@ export enum NarrativeSegmentPlanningFallbackReason {
     NarrativeSegmentPlanningFallbackTimeout = "planner_timeout",
     NarrativeSegmentPlanningFallbackInvalidResponse = "planner_invalid_response",
     NarrativeSegmentPlanningFallbackRequestFailed = "planner_request_failed",
+    NarrativeSegmentPlanningFallbackCatalogInvalid = "planner_catalog_invalid",
 };
 
 export enum NarrativeSegmentPlanningMode {

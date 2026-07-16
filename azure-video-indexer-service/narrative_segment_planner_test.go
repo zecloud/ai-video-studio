@@ -38,12 +38,14 @@ func TestNarrativeSegmentPlannerRejectsLimitTimeoutAndInvalidResponse(t *testing
 	if _, err := planner.Plan(context.Background(), request); err != nil {
 		t.Fatalf("valid plan: %v", err)
 	}
+
 	planner.runner = narrativeSegmentPlannerRunnerFunc(func(context.Context, string) (videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
 		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, nil
 	})
 	if _, err := planner.Plan(context.Background(), request); err == nil || narrativeFailureFor(err) != narrativeFailureInvalid {
 		t.Fatalf("expected response rejection, got %v", err)
 	}
+
 	planner.timeout = time.Millisecond
 	planner.runner = narrativeSegmentPlannerRunnerFunc(func(ctx context.Context, _ string) (videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
 		<-ctx.Done()
@@ -51,6 +53,26 @@ func TestNarrativeSegmentPlannerRejectsLimitTimeoutAndInvalidResponse(t *testing
 	})
 	if _, err := planner.Plan(context.Background(), request); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected timeout, got %v", err)
+	}
+}
+
+func TestNarrativeSegmentPlannerSuppliesActiveSegmentLimitInPacket(t *testing.T) {
+	request := segmentPlanningRequest()
+	planner := narrativeSegmentPlanner{timeout: time.Second, maxCatalog: 1, maxSegments: 7, runner: narrativeSegmentPlannerRunnerFunc(func(_ context.Context, raw string) (videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
+		var packet narrativeSegmentPlannerPacket
+		if err := json.Unmarshal([]byte(raw), &packet); err != nil {
+			t.Fatalf("decode planner packet: %v", err)
+		}
+		if packet.MaxSegments != 7 {
+			t.Fatalf("packet maxSegments = %d, want 7", packet.MaxSegments)
+		}
+		if packet.Request.CompositionID != request.CompositionID || len(packet.Request.Catalog) != len(request.Catalog) || packet.Request.Catalog[0].SegmentID != request.Catalog[0].SegmentID {
+			t.Fatalf("packet request = %#v, want %#v", packet.Request, request)
+		}
+		return videoindexerstudio.NarrativeSegmentPlanningResponse{SchemaVersion: 1, Segments: []videoindexerstudio.NarrativeSegmentPlanItem{{SegmentID: "segment-1", Role: videoindexerstudio.NarrativeSegmentRoleHook, EvidenceIDs: []string{"evidence-1"}}}}, nil
+	})}
+	if _, err := planner.Plan(context.Background(), request); err != nil {
+		t.Fatalf("plan with packet: %v", err)
 	}
 }
 
@@ -69,6 +91,11 @@ func TestNarrativeSegmentPlanningHandlerStrictAndPrivate(t *testing.T) {
 	}
 	if response := request(body); response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unavailable = %d", response.Code)
+	} else {
+		var apiErr videoindexerstudio.APIErrorResponse
+		if err := json.Unmarshal(response.Body.Bytes(), &apiErr); err != nil || apiErr.Code != "narrative_segment_planning_unavailable" {
+			t.Fatalf("unavailable response = %#v, %v", apiErr, err)
+		}
 	}
 	secret := "private editorial preference"
 	server.SetNarrativeSegmentPlanner(narrativeSegmentPlannerFunc(func(context.Context, videoindexerstudio.NarrativeSegmentPlanningRequest) (videoindexerstudio.NarrativeSegmentPlanningResponse, error) {

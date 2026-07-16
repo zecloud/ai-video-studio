@@ -77,6 +77,11 @@ func TestNarrativeIntentClassificationHandlerStrictErrorsAreSafe(t *testing.T) {
 	response := narrativeIntentClassificationRequest(t, server, `{}`)
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unconfigured status = %d", response.Code)
+	} else {
+		var apiErr videoindexerstudio.APIErrorResponse
+		if err := json.Unmarshal(response.Body.Bytes(), &apiErr); err != nil || apiErr.Code != "narrative_intent_classification_unavailable" {
+			t.Fatalf("unconfigured response = %#v, %v", apiErr, err)
+		}
 	}
 
 	server.SetNarrativeIntentClassifier(narrativeIntentClassifierFunc(func(_ context.Context, req videoindexerstudio.NarrativeIntentClassificationRequest) (videoindexerstudio.NarrativeIntentClassificationResponse, error) {
