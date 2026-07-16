@@ -3,10 +3,13 @@ package backend
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/zecloud/ai-video-studio/internal/videoindexerstudio"
 )
+
+var errNarrativeSegmentCatalogInvalid = errors.New("narrative segment catalog is invalid")
 
 const (
 	narrativePlanningGridMS       int64 = 100
@@ -61,7 +64,10 @@ func buildNarrativeSegmentCatalog(composition videoindexerstudio.CompositionEdit
 		catalog = append(catalog, videoindexerstudio.NarrativeSegmentCatalogItem{SegmentID: candidate.ID, CandidateID: candidate.ID, SourceAssetID: candidate.SourceAssetID, AllowedStartMs: candidate.StartMs, AllowedEndMs: candidate.EndMs, EvidenceIDs: append([]string(nil), candidate.EvidenceIDs...), Descriptor: narrativeSegmentDescriptor(candidate.EvidenceIDs, evidenceByID)})
 	}
 	request := videoindexerstudio.NarrativeSegmentPlanningRequest{SchemaVersion: videoindexerstudio.NarrativeSegmentPlanningSchemaVersion, CompositionID: composition.CompositionID, NarrativeIntent: composition.NarrativeIntent, Profile: composition.EditorialProfile, Catalog: catalog}
-	return request, request.Validate()
+	if err := request.Validate(); err != nil {
+		return videoindexerstudio.NarrativeSegmentPlanningRequest{}, fmt.Errorf("%w: %v", errNarrativeSegmentCatalogInvalid, err)
+	}
+	return request, nil
 }
 
 func narrativeSegmentDescriptor(evidenceIDs []string, evidenceByID map[string]videoindexerstudio.NarrativeEvidence) string {
@@ -72,12 +78,24 @@ func narrativeSegmentDescriptor(evidenceIDs []string, evidenceByID map[string]vi
 			continue
 		}
 		part := evidence.Kind
-		if text := strings.TrimSpace(evidence.Text); text != "" {
+		if text := canonicalNarrativeSegmentDescriptor(evidence.Text); text != "" {
 			part += ": " + text
 		}
 		parts = append(parts, part)
 	}
-	return truncateNarrativeText(strings.Join(parts, "; "))
+	return canonicalNarrativeSegmentDescriptor(strings.Join(parts, "; "))
+}
+
+func canonicalNarrativeSegmentDescriptor(value string) string {
+	normalized, err := videoindexerstudio.NormalizeNarrativeIntent(value)
+	if err == nil {
+		return normalized
+	}
+	normalized, err = videoindexerstudio.NormalizeNarrativeIntent(truncateNarrativeText(value))
+	if err != nil {
+		return ""
+	}
+	return normalized
 }
 
 func planMultiVideoCompositionSegments(ctx context.Context, planner narrativeSegmentPlanningClient, plan videoindexerstudio.EditPlan, composition videoindexerstudio.CompositionEditPlan, dependencies []VideoIndexerStudioJob) (videoindexerstudio.EditPlan, videoindexerstudio.CompositionEditPlan, []videoindexerstudio.TimelineDraft, error) {
@@ -204,6 +222,9 @@ func rebuildCompositionFromClips(plan videoindexerstudio.EditPlan, composition v
 	return plan, composition, []videoindexerstudio.TimelineDraft{draft}, nil
 }
 func narrativeSegmentPlanningFallbackReason(err error) videoindexerstudio.NarrativeSegmentPlanningFallbackReason {
+	if errors.Is(err, errNarrativeSegmentCatalogInvalid) {
+		return videoindexerstudio.NarrativeSegmentPlanningFallbackCatalogInvalid
+	}
 	if code := narrativeAPIErrorCode(err); code != "" {
 		switch code {
 		case "narrative_segment_planning_unavailable":

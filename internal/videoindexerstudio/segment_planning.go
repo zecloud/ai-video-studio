@@ -36,6 +36,7 @@ const (
 	NarrativeSegmentPlanningFallbackTimeout         NarrativeSegmentPlanningFallbackReason = "planner_timeout"
 	NarrativeSegmentPlanningFallbackInvalidResponse NarrativeSegmentPlanningFallbackReason = "planner_invalid_response"
 	NarrativeSegmentPlanningFallbackRequestFailed   NarrativeSegmentPlanningFallbackReason = "planner_request_failed"
+	NarrativeSegmentPlanningFallbackCatalogInvalid  NarrativeSegmentPlanningFallbackReason = "planner_catalog_invalid"
 )
 
 type NarrativeSegmentCatalogItem struct {

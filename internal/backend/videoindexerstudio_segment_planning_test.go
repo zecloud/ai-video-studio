@@ -1,7 +1,11 @@
 package backend
 
 import (
+	"context"
+	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/zecloud/ai-video-studio/internal/videoindexerstudio"
 )
@@ -83,5 +87,52 @@ func TestNarrativeSegmentPlanRejectsDuplicateSegmentAndInvalidRole(t *testing.T)
 	invalidRole := &videoindexerstudio.NarrativeSegmentPlanningResponse{SchemaVersion: videoindexerstudio.NarrativeSegmentPlanningSchemaVersion, Segments: []videoindexerstudio.NarrativeSegmentPlanItem{{SegmentID: first.SegmentID, Role: "invented", EvidenceIDs: []string{first.EvidenceIDs[0]}}}}
 	if _, _, _, err := applyNarrativeSegmentPlan(plan, composition, request, invalidRole); err == nil {
 		t.Fatal("expected invalid role rejection")
+	}
+}
+
+type narrativeSegmentPlanningClientFunc func(context.Context, videoindexerstudio.NarrativeSegmentPlanningRequest) (*videoindexerstudio.NarrativeSegmentPlanningResponse, error)
+
+func (f narrativeSegmentPlanningClientFunc) PlanNarrativeSegments(ctx context.Context, request videoindexerstudio.NarrativeSegmentPlanningRequest) (*videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
+	return f(ctx, request)
+}
+
+func TestNarrativeSegmentCatalogCanonicalizesOCRAndTranscriptDescriptorsBeforePlanning(t *testing.T) {
+	dependencies := narrativeDependencies()
+	dependencies[0].VideoIndexResult.Insights.Transcript = []videoindexerstudio.VideoIndexTranscript{{ID: "transcript-crlf", Text: "hello\r\n\tworld\u00a0again", StartMs: 0, EndMs: 2_000}}
+	dependencies[0].VideoIndexResult.Insights.OCR = []videoindexerstudio.VideoIndexOCR{{ID: "ocr-long", Text: strings.Repeat("OCR\t", narrativeTextLimit), StartMs: 0, EndMs: 2_000}}
+	plan, composition, _, err := buildMultiVideoComposition("composition-1", []string{"asset-a", "asset-b"}, dependencies)
+	if err != nil {
+		t.Fatalf("build composition: %v", err)
+	}
+	composition.EditorialProfile = videoindexerstudio.NarrativeIntentProfileSocialShortForm
+	request, err := buildNarrativeSegmentCatalog(composition, dependencies)
+	if err != nil || len(request.Catalog) != len(composition.Clips) {
+		t.Fatalf("catalog = %#v, %v", request, err)
+	}
+	for _, item := range request.Catalog {
+		if item.Descriptor != "" {
+			normalized, normalizeErr := videoindexerstudio.NormalizeNarrativeIntent(item.Descriptor)
+			if normalizeErr != nil || normalized != item.Descriptor || utf8.RuneCountInString(item.Descriptor) > narrativeTextLimit {
+				t.Fatalf("descriptor is not canonical: %q, %v", item.Descriptor, normalizeErr)
+			}
+		}
+	}
+	called := false
+	response := &videoindexerstudio.NarrativeSegmentPlanningResponse{SchemaVersion: videoindexerstudio.NarrativeSegmentPlanningSchemaVersion, Segments: []videoindexerstudio.NarrativeSegmentPlanItem{{SegmentID: request.Catalog[0].SegmentID, Role: videoindexerstudio.NarrativeSegmentRoleHook, EvidenceIDs: []string{request.Catalog[0].EvidenceIDs[0]}}}}
+	_, _, _, err = planMultiVideoCompositionSegments(context.Background(), narrativeSegmentPlanningClientFunc(func(_ context.Context, got videoindexerstudio.NarrativeSegmentPlanningRequest) (*videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
+		called = true
+		if validateErr := got.Validate(); validateErr != nil {
+			t.Fatalf("planner received invalid catalog: %v", validateErr)
+		}
+		return response, nil
+	}), plan, composition, dependencies)
+	if err != nil || !called {
+		t.Fatalf("planner was not reached after catalog canonicalization: called=%t err=%v", called, err)
+	}
+}
+
+func TestNarrativeSegmentPlanningFallbackReportsLocalCatalogFailure(t *testing.T) {
+	if got := narrativeSegmentPlanningFallbackReason(fmt.Errorf("wrapped: %w", errNarrativeSegmentCatalogInvalid)); got != videoindexerstudio.NarrativeSegmentPlanningFallbackCatalogInvalid {
+		t.Fatalf("catalog fallback = %q", got)
 	}
 }

@@ -44,11 +44,18 @@ func (c narrativeIntentClassifier) Classify(ctx context.Context, request videoin
 	start := time.Now()
 	var result videoindexerstudio.NarrativeIntentClassificationResponse
 	var err error
+	validationReason := ""
 	attempts := 0
 	for attempts = 1; attempts <= narrativeClassifierAttempts; attempts++ {
 		result, err = c.runner.RunClassification(attemptCtx, request.NarrativeIntent)
 		if err == nil {
+			if result.SchemaVersion == 0 {
+				// The endpoint fixes this contract version; the framework may omit a constant field.
+				result.SchemaVersion = videoindexerstudio.NarrativeRankingSchemaVersion
+				validationReason = "missing_schema_version_normalized"
+			}
 			if validationErr := result.Validate(); validationErr != nil {
+				validationReason = "invalid_profile_or_contract"
 				err = narrativeFailureError(narrativeFailureInvalid, validationErr)
 			}
 		} else {
@@ -73,6 +80,7 @@ func (c narrativeIntentClassifier) Classify(ctx context.Context, request videoin
 			attribute.String("prompt_version", narrativeIntentClassifierPromptVersion),
 			attribute.Int("attempt_count", attempts),
 			attribute.String("failure_kind", string(narrativeFailureFor(err))),
+			attribute.String("validation_reason", validationReason),
 			attribute.Int("narrative_intent_length", len([]rune(request.NarrativeIntent))),
 		}, err)
 	}
@@ -120,5 +128,5 @@ func narrativeIntentClassifierInstructions() string {
 	return `narrative-intent-classifier instructions v2
 Classify a user-authored editorial preference in any language into exactly one closed profile: standard, energetic, chronological, calm, cinematic, social_short_form, tutorial, highlight_reel, recap, storytelling, travel, interview, or product_showcase.
 Energetic means fast action. Social_short_form means social or TikTok-style pacing, including multilingual requests such as "robots dansants en mode video TikTok". Chronological means continuity or time order. Calm and recap mean reflective coverage. Cinematic emphasizes measured visual moments. Tutorial prioritizes explanatory continuity. Highlight_reel prioritizes concise best moments. Storytelling prioritizes narrative development. Travel, interview, and product_showcase select their corresponding editorial approach. Use standard when unclear.
-Return only the structured response. Do not return clip IDs, source IDs, evidence, timestamps, ranges, ordering, explanations, or user text.`
+Return only the structured response with schemaVersion 1 and one valid profile. Do not return clip IDs, source IDs, evidence, timestamps, ranges, ordering, explanations, or user text.`
 }

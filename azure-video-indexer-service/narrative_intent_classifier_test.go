@@ -142,3 +142,19 @@ func TestNarrativeIntentClassifierRetriesOnlyTransientFailure(t *testing.T) {
 		t.Fatalf("classification = %v, attempts = %d", err, attempts)
 	}
 }
+
+func TestNarrativeIntentClassifierNormalizesOnlyOmittedSchemaVersion(t *testing.T) {
+	classifier := narrativeIntentClassifier{timeout: time.Second, runner: narrativeIntentClassifierRunnerFunc(func(context.Context, string) (videoindexerstudio.NarrativeIntentClassificationResponse, error) {
+		return videoindexerstudio.NarrativeIntentClassificationResponse{Profile: videoindexerstudio.NarrativeIntentProfileSocialShortForm}, nil
+	})}
+	response, err := classifier.Classify(context.Background(), videoindexerstudio.NarrativeIntentClassificationRequest{SchemaVersion: 1, NarrativeIntent: "dynamic tiktok video"})
+	if err != nil || response.SchemaVersion != 1 || response.Profile != videoindexerstudio.NarrativeIntentProfileSocialShortForm {
+		t.Fatalf("omitted schema version = %#v, %v", response, err)
+	}
+	classifier.runner = narrativeIntentClassifierRunnerFunc(func(context.Context, string) (videoindexerstudio.NarrativeIntentClassificationResponse, error) {
+		return videoindexerstudio.NarrativeIntentClassificationResponse{SchemaVersion: 2, Profile: videoindexerstudio.NarrativeIntentProfileSocialShortForm}, nil
+	})
+	if _, err := classifier.Classify(context.Background(), videoindexerstudio.NarrativeIntentClassificationRequest{SchemaVersion: 1, NarrativeIntent: "dynamic tiktok video"}); narrativeFailureFor(err) != narrativeFailureInvalid {
+		t.Fatalf("nonzero incompatible schema must remain invalid: %v", err)
+	}
+}
