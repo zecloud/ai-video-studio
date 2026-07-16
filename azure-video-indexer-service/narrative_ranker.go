@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	narrativeRankerInstructionsVersion = "v2"
+	narrativeRankerInstructionsVersion = "v3"
 	narrativeRankerAttempts            = 2
 )
 
@@ -51,53 +51,123 @@ func (r narrativeRanker) Rank(ctx context.Context, req videoindexerstudio.Narrat
 	defer cancel()
 	start := time.Now()
 	attempts := 0
-	var plan EditPlan
-	for attempts = 1; attempts <= narrativeRankerAttempts; attempts++ {
-		plan, err = r.planner.Plan(rankCtx, narrativeRankingPrompt(string(raw)))
-		if err != nil {
-			err = classifyNarrativeProviderError(err)
+	initialValidationReason := ""
+	repairValidationReason := ""
+	repairAttempted := false
+
+	plan, err := r.runRankingPlan(rankCtx, narrativeRankingPrompt(string(raw)), &attempts)
+	response := narrativeRankingResponseFromPlan(plan)
+	if err == nil {
+		if validationErr := validateNarrativeRankingResponse(req, response); validationErr != nil {
+			initialValidationReason = narrativeRankingValidationReason(validationErr)
+			err = narrativeFailureError(narrativeFailureInvalid, validationErr)
 		}
-		if err == nil || !isRetryableNarrativeFailure(err) || rankCtx.Err() != nil || attempts == narrativeRankerAttempts {
-			break
+	}
+	if err != nil && initialValidationReason == "missing_candidate_count" && attempts < narrativeRankerAttempts && rankCtx.Err() == nil {
+		repairAttempted = true
+		repairPrompt, promptErr := narrativeRankingRepairPrompt(req, initialValidationReason)
+		if promptErr != nil {
+			err = narrativeFailureError(narrativeFailureInvalidReq, promptErr)
+		} else {
+			plan, err = r.runRankingPlan(rankCtx, repairPrompt, &attempts)
+			response = narrativeRankingResponseFromPlan(plan)
 		}
-		if r.obs != nil {
-			r.obs.RecordRetry(ctx, "narrative.rank", 0, attribute.String("failure_kind", string(narrativeFailureFor(err))))
-		}
-		select {
-		case <-rankCtx.Done():
-		case <-time.After(100 * time.Millisecond):
+		if err == nil {
+			if validationErr := validateNarrativeRankingResponse(req, response); validationErr != nil {
+				repairValidationReason = narrativeRankingValidationReason(validationErr)
+				err = narrativeFailureError(narrativeFailureInvalid, validationErr)
+			}
 		}
 	}
 	if rankCtx.Err() != nil && err != nil {
 		err = narrativeFailureError(narrativeFailureTimeout, rankCtx.Err())
 	}
-	response := videoindexerstudio.NarrativeRankingResponse{}
-	validationReason := ""
-	if err == nil {
-		response = videoindexerstudio.NarrativeRankingResponse{SchemaVersion: videoindexerstudio.NarrativeRankingSchemaVersion, OrderedClips: make([]videoindexerstudio.NarrativeRankedClip, 0, len(plan.Suggestions))}
-		for _, suggestion := range plan.Suggestions {
-			ids := make([]string, 0, len(suggestion.SourceRefs))
-			for _, ref := range suggestion.SourceRefs {
-				ids = append(ids, ref.RefID)
-			}
-			response.OrderedClips = append(response.OrderedClips, videoindexerstudio.NarrativeRankedClip{CandidateID: suggestion.ID, EvidenceIDs: ids})
-		}
-		if validationErr := validateNarrativeRankingResponse(req, response); validationErr != nil {
-			validationReason = narrativeRankingValidationReason(validationErr)
-			err = narrativeFailureError(narrativeFailureInvalid, validationErr)
-		}
+	validationReason := initialValidationReason
+	if repairValidationReason != "" {
+		validationReason = repairValidationReason
 	}
 	if r.obs != nil {
-		r.obs.FinishSpan(ctx, nil, "narrative.rank", start, []attribute.KeyValue{attribute.String("prompt_version", narrativeRankerInstructionsVersion), attribute.Int("candidate_count", len(req.Candidates)), attribute.Int("evidence_count", len(req.Evidence)), attribute.Int("packet_bytes", len(raw)), attribute.Int("attempt_count", attempts), attribute.String("failure_kind", string(narrativeFailureFor(err))), attribute.String("validation_reason", validationReason), attribute.Bool("narrative_intent_present", req.NarrativeIntent != ""), attribute.Int("narrative_intent_length", len([]rune(req.NarrativeIntent)))}, err)
+		r.obs.FinishSpan(ctx, nil, "narrative.rank", start, []attribute.KeyValue{
+			attribute.String("prompt_version", narrativeRankerInstructionsVersion),
+			attribute.Int("candidate_count", len(req.Candidates)),
+			attribute.Int("evidence_count", len(req.Evidence)),
+			attribute.Int("packet_bytes", len(raw)),
+			attribute.Int("attempt_count", attempts),
+			attribute.String("failure_kind", string(narrativeFailureFor(err))),
+			attribute.String("validation_reason", validationReason),
+			attribute.String("initial_validation_reason", initialValidationReason),
+			attribute.Bool("repair_attempted", repairAttempted),
+			attribute.String("repair_validation_reason", repairValidationReason),
+			attribute.Bool("narrative_intent_present", req.NarrativeIntent != ""),
+			attribute.Int("narrative_intent_length", len([]rune(req.NarrativeIntent))),
+		}, err)
 	}
 	if err != nil {
 		return videoindexerstudio.NarrativeRankingResponse{}, err
 	}
 	return response, nil
 }
-func narrativeRankingPrompt(packet string) string {
-	return fmt.Sprintf("narrative-ranker instructions %s\nThe optional narrativeIntent is an editorial ordering preference only. Local candidate selection is already complete. It must never justify adding, removing, altering, or duplicating candidates, sources, ranges, evidence, or timeline invariants. Order every candidate exactly once. Use only candidate IDs from this JSON. Do not create, remove, alter, or duplicate IDs. Return every candidate as EditPlan.suggestions[].id with at least one matching EvidenceID in suggestions[].sourceRefs[].refId. Do not use unsupported fields.\n%s", narrativeRankerInstructionsVersion, packet)
+
+func (r narrativeRanker) runRankingPlan(ctx context.Context, prompt string, attempts *int) (EditPlan, error) {
+	var plan EditPlan
+	var err error
+	for *attempts < narrativeRankerAttempts {
+		(*attempts)++
+		plan, err = r.planner.Plan(ctx, prompt)
+		if err != nil {
+			err = classifyNarrativeProviderError(err)
+		}
+		if err == nil || !isRetryableNarrativeFailure(err) || ctx.Err() != nil || *attempts == narrativeRankerAttempts {
+			break
+		}
+		if r.obs != nil {
+			r.obs.RecordRetry(ctx, "narrative.rank", 0, attribute.String("failure_kind", string(narrativeFailureFor(err))))
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return plan, err
 }
+
+func narrativeRankingResponseFromPlan(plan EditPlan) videoindexerstudio.NarrativeRankingResponse {
+	response := videoindexerstudio.NarrativeRankingResponse{SchemaVersion: videoindexerstudio.NarrativeRankingSchemaVersion, OrderedClips: make([]videoindexerstudio.NarrativeRankedClip, 0, len(plan.Suggestions))}
+	for _, suggestion := range plan.Suggestions {
+		ids := make([]string, 0, len(suggestion.SourceRefs))
+		for _, ref := range suggestion.SourceRefs {
+			ids = append(ids, ref.RefID)
+		}
+		response.OrderedClips = append(response.OrderedClips, videoindexerstudio.NarrativeRankedClip{CandidateID: suggestion.ID, EvidenceIDs: ids})
+	}
+	return response
+}
+
+func narrativeRankingPrompt(packet string) string {
+	return fmt.Sprintf("narrative-ranker instructions %s\nThe optional narrativeIntent is an editorial ordering preference only. Local candidate selection is already complete. It must never justify adding, removing, altering, or duplicating candidates, sources, ranges, evidence, or timeline invariants. Order every candidate exactly once. Use only candidate IDs from this JSON. Do not create, remove, alter, or duplicate IDs. Return every candidate as EditPlan.suggestions[].id with at least one matching EvidenceID in suggestions[].sourceRefs[].refId. Populate the generic EditPlan structured schema exactly; use empty or zero values only where its required non-ranking fields are irrelevant.\n%s", narrativeRankerInstructionsVersion, packet)
+}
+
+type narrativeRankingRepairPacket struct {
+	InvalidReason string                            `json:"invalidReason"`
+	Candidates    []narrativeRankingRepairCandidate `json:"candidates"`
+}
+type narrativeRankingRepairCandidate struct {
+	CandidateID string   `json:"candidateId"`
+	EvidenceIDs []string `json:"evidenceIds"`
+}
+
+func narrativeRankingRepairPrompt(req videoindexerstudio.NarrativeRankingRequest, invalidReason string) (string, error) {
+	packet := narrativeRankingRepairPacket{InvalidReason: invalidReason, Candidates: make([]narrativeRankingRepairCandidate, 0, len(req.Candidates))}
+	for _, candidate := range req.Candidates {
+		packet.Candidates = append(packet.Candidates, narrativeRankingRepairCandidate{CandidateID: candidate.ID, EvidenceIDs: candidate.EvidenceIDs})
+	}
+	raw, err := json.Marshal(packet)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("narrative-ranker repair instructions %s\nThe prior response was rejected for %s. Return a corrected generic EditPlan structured response. EditPlan.suggestions must contain exactly every candidateId below once, in the intended order. Each suggestion must include at least one sourceRefs[].refId listed for that same candidate. Do not add, omit, duplicate, rename, or modify candidates or evidence. Populate the generic EditPlan structured schema exactly; use empty or zero values only where its required non-ranking fields are irrelevant.\n%s", narrativeRankerInstructionsVersion, invalidReason, raw), nil
+}
+
 func validateNarrativeRankingRequest(req videoindexerstudio.NarrativeRankingRequest, maxCandidates, maxSources int) error {
 	if err := req.Validate(); err != nil {
 		return err
@@ -123,7 +193,6 @@ type narrativeRankingValidationError struct{ reason string }
 func (e narrativeRankingValidationError) Error() string {
 	return "narrative ranking response validation failed"
 }
-
 func narrativeRankingValidationReason(err error) string {
 	var validationErr narrativeRankingValidationError
 	if errors.As(err, &validationErr) {
@@ -131,7 +200,6 @@ func narrativeRankingValidationReason(err error) string {
 	}
 	return ""
 }
-
 func narrativeRankingValidationFailure(reason string) error {
 	return narrativeRankingValidationError{reason: reason}
 }

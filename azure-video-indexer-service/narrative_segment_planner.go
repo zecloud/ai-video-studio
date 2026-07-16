@@ -55,6 +55,7 @@ func (p narrativeSegmentPlanner) Plan(ctx context.Context, request videoindexers
 	for attempts = 1; attempts <= narrativeSegmentPlannerAttempts; attempts++ {
 		response, err = p.runner.RunSegmentPlan(planCtx, string(raw))
 		if err == nil {
+			validationReason = ""
 			if response.SchemaVersion == 0 {
 				// The endpoint fixes this contract version; the framework may omit a constant field.
 				response.SchemaVersion = videoindexerstudio.NarrativeSegmentPlanningSchemaVersion
@@ -67,6 +68,7 @@ func (p narrativeSegmentPlanner) Plan(ctx context.Context, request videoindexers
 				err = narrativeFailureError(narrativeFailureLimit, errors.New("segment limit exceeded"))
 			}
 		} else {
+			validationReason = narrativePlannerProviderFailureReason(err)
 			err = classifyNarrativeProviderError(err)
 		}
 		if err == nil || !isRetryableNarrativeFailure(err) || planCtx.Err() != nil || attempts == narrativeSegmentPlannerAttempts {
@@ -84,7 +86,7 @@ func (p narrativeSegmentPlanner) Plan(ctx context.Context, request videoindexers
 		err = narrativeFailureError(narrativeFailureTimeout, planCtx.Err())
 	}
 	if p.obs != nil {
-		p.obs.FinishSpan(ctx, nil, "narrative.segment.plan", start, []attribute.KeyValue{attribute.String("prompt_version", narrativeSegmentPlannerInstructionsVersion), attribute.String("narrative_profile", string(request.Profile)), attribute.Int("catalog_count", len(request.Catalog)), attribute.Int("attempt_count", attempts), attribute.String("failure_kind", string(narrativeFailureFor(err))), attribute.String("validation_reason", validationReason), attribute.Bool("narrative_intent_present", request.NarrativeIntent != "")}, err)
+		p.obs.FinishSpan(ctx, nil, "narrative.segment.plan", start, []attribute.KeyValue{attribute.String("prompt_version", narrativeSegmentPlannerInstructionsVersion), attribute.String("narrative_profile", string(request.Profile)), attribute.Int("catalog_count", len(request.Catalog)), attribute.Int("attempt_count", attempts), attribute.String("failure_kind", string(narrativeFailureFor(err))), attribute.String("validation_reason", validationReason), attribute.String("runner_failure_reason", narrativePlannerRunnerFailureReason(validationReason)), attribute.Bool("narrative_intent_present", request.NarrativeIntent != "")}, err)
 	}
 	if err != nil {
 		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, err
@@ -128,4 +130,25 @@ func newNarrativeSegmentPlanner(cfg editPlannerConfig, timeout time.Duration, ma
 func narrativeSegmentPlannerInstructions() string {
 	return `narrative-segment-planner instructions v2
 Return schemaVersion 1 and one to the supplied maximum number of segments. Select only catalog segmentId values, each once. Each segment must cite one or more evidenceIds listed on that exact catalog item. Omit startMs and endMs unless a shorter valid trim is necessary; a supplied trim must use 100ms boundaries, remain entirely inside that item's allowed range, and preserve at least one second. Roles are exactly hook, context, development, payoff, outro. Never invent or alter source IDs, candidate IDs, evidence IDs, timecodes, ranges, descriptors, or fields. Return only the structured response.`
+}
+
+func narrativePlannerProviderFailureReason(err error) string {
+	lower := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(lower, "structured output"), strings.Contains(lower, "unmarshal"), strings.Contains(lower, "decode"), strings.Contains(lower, "json"):
+		return "structured_output_decode_failure"
+	case strings.Contains(lower, "invalid"), strings.Contains(lower, "schema"):
+		return "provider_response_rejected"
+	default:
+		return "provider_transport"
+	}
+}
+
+func narrativePlannerRunnerFailureReason(validationReason string) string {
+	switch validationReason {
+	case "structured_output_decode_failure", "provider_response_rejected", "provider_transport":
+		return validationReason
+	default:
+		return ""
+	}
 }

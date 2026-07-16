@@ -128,3 +128,20 @@ func TestNarrativeSegmentPlannerNormalizesOnlyOmittedSchemaVersion(t *testing.T)
 		t.Fatalf("nonzero incompatible schema must remain invalid: %v", err)
 	}
 }
+
+func TestNarrativePlannerProviderFailureReasonsAreSafe(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		err    error
+		reason string
+	}{
+		"structured decode": {errors.New("structured output decode failed: private content"), "structured_output_decode_failure"},
+		"provider rejected": {errors.New("provider schema invalid: private content"), "provider_response_rejected"},
+		"transport":         {errors.New("connection reset by peer: private content"), "provider_transport"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := narrativePlannerProviderFailureReason(testCase.err); got != testCase.reason {
+				t.Fatalf("failure reason = %q, want %q", got, testCase.reason)
+			}
+		})
+	}
+}

@@ -129,3 +129,71 @@ func TestNarrativeRankerReportsInvalidProviderPlanAfterValidation(t *testing.T) 
 		t.Fatalf("post-provider validation failure = %v", err)
 	}
 }
+
+func TestNarrativeRankerRepairsOnlyIncompleteOrder(t *testing.T) {
+	attempts := 0
+	ranker := narrativeRanker{timeout: time.Second, planner: narrativePlannerFunc(func(_ context.Context, prompt string) (EditPlan, error) {
+		attempts++
+		if attempts == 1 {
+			if strings.Contains(prompt, "repair instructions") {
+				t.Fatal("initial prompt must not be a repair")
+			}
+			return EditPlan{Suggestions: []EditSuggestion{{ID: "clip-a", SourceRefs: []SourceRef{{RefID: "asset-a:scene:scene-a"}}}}}, nil
+		}
+		if !strings.Contains(prompt, "repair instructions") || !strings.Contains(prompt, "missing_candidate_count") || strings.Contains(prompt, "action-forward") || !strings.Contains(prompt, `"candidateId":"clip-a"`) || !strings.Contains(prompt, `"candidateId":"clip-b"`) {
+			t.Fatalf("repair prompt must include only safe required identifiers: %s", prompt)
+		}
+		return EditPlan{Suggestions: []EditSuggestion{{ID: "clip-b", SourceRefs: []SourceRef{{RefID: "asset-b:scene:scene-b"}}}, {ID: "clip-a", SourceRefs: []SourceRef{{RefID: "asset-a:scene:scene-a"}}}}}, nil
+	})}
+	response, err := ranker.Rank(context.Background(), narrativeRequest())
+	if err != nil || attempts != 2 || response.OrderedClips[0].CandidateID != "clip-b" {
+		t.Fatalf("repaired response = %#v, %v, attempts = %d", response, err, attempts)
+	}
+}
+
+func TestNarrativeRankerRejectsInvalidRepairAndDoesNotRepairOtherFailures(t *testing.T) {
+	t.Run("invalid repair", func(t *testing.T) {
+		attempts := 0
+		ranker := narrativeRanker{timeout: time.Second, planner: narrativePlannerFunc(func(context.Context, string) (EditPlan, error) {
+			attempts++
+			return EditPlan{Suggestions: []EditSuggestion{{ID: "clip-a", SourceRefs: []SourceRef{{RefID: "asset-a:scene:scene-a"}}}}}, nil
+		})}
+		if _, err := ranker.Rank(context.Background(), narrativeRequest()); narrativeFailureFor(err) != narrativeFailureInvalid || narrativeRankingValidationReason(errors.Unwrap(err)) != "missing_candidate_count" || attempts != 2 {
+			t.Fatalf("invalid repair = %v, attempts = %d", err, attempts)
+		}
+	})
+	t.Run("provider failure", func(t *testing.T) {
+		attempts := 0
+		ranker := narrativeRanker{timeout: time.Second, planner: narrativePlannerFunc(func(context.Context, string) (EditPlan, error) {
+			attempts++
+			return EditPlan{}, errors.New("invalid structured output")
+		})}
+		if _, err := ranker.Rank(context.Background(), narrativeRequest()); narrativeFailureFor(err) != narrativeFailureInvalid || attempts != 1 {
+			t.Fatalf("provider failure = %v, attempts = %d", err, attempts)
+		}
+	})
+	t.Run("valid response", func(t *testing.T) {
+		attempts := 0
+		ranker := narrativeRanker{timeout: time.Second, planner: narrativePlannerFunc(func(context.Context, string) (EditPlan, error) {
+			attempts++
+			return EditPlan{Suggestions: []EditSuggestion{{ID: "clip-a", SourceRefs: []SourceRef{{RefID: "asset-a:scene:scene-a"}}}, {ID: "clip-b", SourceRefs: []SourceRef{{RefID: "asset-b:scene:scene-b"}}}}}, nil
+		})}
+		if _, err := ranker.Rank(context.Background(), narrativeRequest()); err != nil || attempts != 1 {
+			t.Fatalf("valid response = %v, attempts = %d", err, attempts)
+		}
+	})
+}
+
+func TestNarrativeRankerDoesNotRepairOtherValidationFailures(t *testing.T) {
+	attempts := 0
+	ranker := narrativeRanker{timeout: time.Second, planner: narrativePlannerFunc(func(context.Context, string) (EditPlan, error) {
+		attempts++
+		return EditPlan{Suggestions: []EditSuggestion{
+			{ID: "clip-a", SourceRefs: []SourceRef{{RefID: "asset-a:scene:scene-a"}}},
+			{ID: "clip-a", SourceRefs: []SourceRef{{RefID: "asset-a:scene:scene-a"}}},
+		}}, nil
+	})}
+	if _, err := ranker.Rank(context.Background(), narrativeRequest()); narrativeFailureFor(err) != narrativeFailureInvalid || attempts != 1 {
+		t.Fatalf("non-repairable validation failure = %v, attempts = %d", err, attempts)
+	}
+}
