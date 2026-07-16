@@ -57,7 +57,11 @@ func (r narrativeRanker) Rank(ctx context.Context, req videoindexerstudio.Narrat
 	}
 	response := videoindexerstudio.NarrativeRankingResponse{SchemaVersion: videoindexerstudio.NarrativeRankingSchemaVersion, OrderedClips: make([]videoindexerstudio.NarrativeRankedClip, 0, len(plan.Suggestions))}
 	for _, suggestion := range plan.Suggestions {
-		response.OrderedClips = append(response.OrderedClips, videoindexerstudio.NarrativeRankedClip{CandidateID: suggestion.ID})
+		evidenceIDs := make([]string, 0, len(suggestion.SourceRefs))
+		for _, ref := range suggestion.SourceRefs {
+			evidenceIDs = append(evidenceIDs, ref.RefID)
+		}
+		response.OrderedClips = append(response.OrderedClips, videoindexerstudio.NarrativeRankedClip{CandidateID: suggestion.ID, EvidenceIDs: evidenceIDs})
 	}
 	if err := validateNarrativeRankingResponse(req, response); err != nil {
 		return videoindexerstudio.NarrativeRankingResponse{}, err
@@ -66,7 +70,7 @@ func (r narrativeRanker) Rank(ctx context.Context, req videoindexerstudio.Narrat
 }
 
 func narrativeRankingPrompt(packet string) string {
-	return fmt.Sprintf("narrative-ranker instructions %s\nOrder every candidate exactly once. Use only candidate IDs from this JSON. Do not create, remove, alter, or duplicate IDs. Return the ordered IDs as EditPlan.suggestions[].id and no unsupported fields.\n%s", narrativeRankerInstructionsVersion, packet)
+	return fmt.Sprintf("narrative-ranker instructions %s\nOrder every candidate exactly once. Use only candidate IDs from this JSON. Do not create, remove, alter, or duplicate IDs. Return every candidate as EditPlan.suggestions[].id with at least one matching EvidenceID in suggestions[].sourceRefs[].refId. Do not use unsupported fields.\n%s", narrativeRankerInstructionsVersion, packet)
 }
 
 func validateNarrativeRankingRequest(req videoindexerstudio.NarrativeRankingRequest, maxCandidates, maxSources int) error {
@@ -78,6 +82,9 @@ func validateNarrativeRankingRequest(req videoindexerstudio.NarrativeRankingRequ
 	}
 	sources := map[string]struct{}{}
 	for _, candidate := range req.Candidates {
+		if len(candidate.EvidenceIDs) == 0 {
+			return errors.New("narrative ranking candidates must include grounded evidence")
+		}
 		sources[candidate.SourceAssetID] = struct{}{}
 	}
 	if maxSources > 0 && len(sources) > maxSources {
@@ -102,8 +109,16 @@ func validateNarrativeRankingResponse(req videoindexerstudio.NarrativeRankingReq
 		if _, exists := seen[ranked.CandidateID]; exists {
 			return errors.New("narrative ranking response contains duplicate candidates")
 		}
+		if len(ranked.EvidenceIDs) == 0 {
+			return errors.New("narrative ranking response must cite candidate evidence")
+		}
 		seen[ranked.CandidateID] = struct{}{}
+		rankedEvidence := make(map[string]struct{}, len(ranked.EvidenceIDs))
 		for _, evidenceID := range ranked.EvidenceIDs {
+			if _, duplicate := rankedEvidence[evidenceID]; duplicate {
+				return errors.New("narrative ranking response contains duplicate evidence")
+			}
+			rankedEvidence[evidenceID] = struct{}{}
 			if !candidateHasEvidence(req, ranked.CandidateID, evidenceID) {
 				return errors.New("narrative ranking response references ungrounded evidence")
 			}

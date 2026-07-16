@@ -391,7 +391,8 @@ func narrativeRankingRequestFixture() NarrativeRankingRequest {
 	return NarrativeRankingRequest{
 		SchemaVersion: NarrativeRankingSchemaVersion,
 		CompositionID: "composition-1",
-		Candidates:    []NarrativeRankingCandidate{{ID: "clip-a", SourceAssetID: "asset-a", StartMs: 0, EndMs: 100}},
+		Candidates:    []NarrativeRankingCandidate{{ID: "clip-a", SourceAssetID: "asset-a", StartMs: 0, EndMs: 100, EvidenceIDs: []string{"asset-a:scene:scene-a"}}},
+		Evidence:      []NarrativeEvidence{{ID: "asset-a:scene:scene-a", SourceAssetID: "asset-a", Kind: "scene", StartMs: 0, EndMs: 100}},
 	}
 }
 
@@ -408,7 +409,7 @@ func TestRankNarrative_Success(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil || !reflect.DeepEqual(got, request) {
 			t.Fatalf("unexpected narrative request: %#v, %v", got, err)
 		}
-		_ = json.NewEncoder(w).Encode(NarrativeRankingResponse{SchemaVersion: NarrativeRankingSchemaVersion, OrderedClips: []NarrativeRankedClip{{CandidateID: "clip-a"}}})
+		_ = json.NewEncoder(w).Encode(NarrativeRankingResponse{SchemaVersion: NarrativeRankingSchemaVersion, OrderedClips: []NarrativeRankedClip{{CandidateID: "clip-a", EvidenceIDs: []string{"asset-a:scene:scene-a"}}}})
 	}))
 	defer server.Close()
 

@@ -97,6 +97,9 @@ func buildNarrativeRankingRequest(composition videoindexerstudio.CompositionEdit
 				request.Candidates[i].EvidenceIDs = append(request.Candidates[i].EvidenceIDs, evidence.ID)
 			}
 		}
+		if len(request.Candidates[i].EvidenceIDs) == 0 {
+			return videoindexerstudio.NarrativeRankingRequest{}, fmt.Errorf("narrative candidate %q has no grounded evidence", request.Candidates[i].ID)
+		}
 	}
 	return request, request.Validate()
 }
@@ -148,7 +151,15 @@ func validateNarrativeRankingResponse(request videoindexerstudio.NarrativeRankin
 		if _, duplicate := seen[ranked.CandidateID]; duplicate {
 			return fmt.Errorf("narrative response duplicates candidate")
 		}
+		if len(ranked.EvidenceIDs) == 0 {
+			return fmt.Errorf("narrative response must cite candidate evidence")
+		}
+		rankedEvidence := make(map[string]struct{}, len(ranked.EvidenceIDs))
 		for _, evidenceID := range ranked.EvidenceIDs {
+			if _, duplicate := rankedEvidence[evidenceID]; duplicate {
+				return fmt.Errorf("narrative response contains duplicate evidence")
+			}
+			rankedEvidence[evidenceID] = struct{}{}
 			if _, ok := evidenceByCandidate[ranked.CandidateID][evidenceID]; !ok {
 				return fmt.Errorf("narrative response references ungrounded evidence")
 			}
@@ -160,8 +171,9 @@ func validateNarrativeRankingResponse(request videoindexerstudio.NarrativeRankin
 func overlaps(aStart, aEnd, bStart, bEnd int64) bool { return aStart < bEnd && bStart < aEnd }
 func truncateNarrativeText(value string) string {
 	value = strings.TrimSpace(value)
-	if len(value) <= narrativeTextLimit {
+	runes := []rune(value)
+	if len(runes) <= narrativeTextLimit {
 		return value
 	}
-	return value[:narrativeTextLimit]
+	return string(runes[:narrativeTextLimit])
 }

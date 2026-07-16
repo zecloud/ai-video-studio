@@ -505,8 +505,8 @@ func buildMultiVideoComposition(compositionID string, assetIDs []string, depende
 		}
 		return candidates[i].clip.ID < candidates[j].clip.ID
 	})
-	if len(candidates) > 48 {
-		candidates = candidates[:48]
+	if len(candidates) > narrativeMaxCandidates {
+		candidates = candidates[:narrativeMaxCandidates]
 	}
 	clips := make([]videoindexerstudio.SuggestedClip, 0, len(candidates))
 	compositionClips := make([]videoindexerstudio.CompositionClip, 0, len(candidates))

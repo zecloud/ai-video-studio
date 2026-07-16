@@ -52,7 +52,15 @@ func (r NarrativeRankingRequest) Validate() error {
 			return fmt.Errorf("%w: duplicate narrative candidate", ErrInvalidRequest)
 		}
 		knownCandidates[candidate.ID] = struct{}{}
+		if len(candidate.EvidenceIDs) == 0 {
+			return fmt.Errorf("%w: candidate must reference grounded evidence", ErrInvalidRequest)
+		}
+		candidateEvidence := make(map[string]struct{}, len(candidate.EvidenceIDs))
 		for _, evidenceID := range candidate.EvidenceIDs {
+			if _, duplicate := candidateEvidence[evidenceID]; duplicate {
+				return fmt.Errorf("%w: candidate references duplicate evidence", ErrInvalidRequest)
+			}
+			candidateEvidence[evidenceID] = struct{}{}
 			if _, ok := knownEvidence[evidenceID]; !ok {
 				return fmt.Errorf("%w: candidate references unknown evidence", ErrInvalidRequest)
 			}
