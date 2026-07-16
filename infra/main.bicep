@@ -387,6 +387,14 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
             value: 'api'
           }
           {
+            name: 'FOUNDRY_PROJECT_ENDPOINT'
+            value: foundryProjectEndpoint
+          }
+          {
+            name: 'FOUNDRY_DEPLOYMENT_NAME'
+            value: foundryDeploymentName
+          }
+          {
             name: 'LISTEN_ADDR'
             value: ':8080'
           }
