@@ -49,6 +49,7 @@ func TestNarrativeIntentPropagatesWithoutChangingGroundedClips(t *testing.T) {
 		t.Fatalf("build composition: %v", err)
 	}
 	composition.NarrativeIntent = "action-forward"
+	composition.PacingProfile = videoindexerstudio.NarrativePacingProfileEnergeticShortForm
 	_, ranked, _, err := rankMultiVideoComposition(context.Background(), rankingClientFunc(func(_ context.Context, request videoindexerstudio.NarrativeRankingRequest) (*videoindexerstudio.NarrativeRankingResponse, error) {
 		if request.NarrativeIntent != "action-forward" {
 			t.Fatalf("narrative intent = %q", request.NarrativeIntent)

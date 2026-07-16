@@ -12,6 +12,7 @@ export {
     MediaAudioSignals,
     MediaSignals,
     MediaVideoSignals,
+    NarrativePacingProfile,
     SilenceInterval,
     SourceRef,
     SuggestedClip,

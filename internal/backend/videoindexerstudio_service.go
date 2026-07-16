@@ -432,11 +432,10 @@ func (s *VideoIndexerStudioService) evaluateComposition(ctx context.Context, com
 		}
 		dependencies = append(dependencies, dependency)
 	}
-	plan, compositionPlan, drafts, err := buildMultiVideoComposition(composition.ID, composition.AssetIDs, dependencies)
+	plan, compositionPlan, drafts, err := buildMultiVideoCompositionWithIntent(composition.ID, composition.AssetIDs, dependencies, composition.NarrativeIntent)
 	if err != nil {
 		return failComposition(composition, s.nowTime(), err.Error())
 	}
-	compositionPlan.NarrativeIntent = composition.NarrativeIntent
 	compositionPlan.RankingMode = "deterministic_grounded_fallback_v1"
 	if client, clientErr := s.clientFor(ctx); clientErr == nil {
 		if ranker, ok := client.(narrativeRankingClient); ok {
@@ -468,6 +467,11 @@ func failComposition(job VideoIndexerStudioJob, now time.Time, message string) V
 }
 
 func buildMultiVideoComposition(compositionID string, assetIDs []string, dependencies []VideoIndexerStudioJob) (videoindexerstudio.EditPlan, videoindexerstudio.CompositionEditPlan, []videoindexerstudio.TimelineDraft, error) {
+	return buildMultiVideoCompositionWithIntent(compositionID, assetIDs, dependencies, "")
+}
+
+func buildMultiVideoCompositionWithIntent(compositionID string, assetIDs []string, dependencies []VideoIndexerStudioJob, narrativeIntent string) (videoindexerstudio.EditPlan, videoindexerstudio.CompositionEditPlan, []videoindexerstudio.TimelineDraft, error) {
+	profile := videoindexerstudio.NarrativePacingProfileForIntent(narrativeIntent)
 	if len(assetIDs) < 2 || len(dependencies) != len(assetIDs) {
 		return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, errors.New("composition requires a completed analysis for every selected asset")
 	}
@@ -506,18 +510,8 @@ func buildMultiVideoComposition(compositionID string, assetIDs []string, depende
 		return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, errors.New("selected analyses did not contain usable clips")
 	}
 	sort.Slice(sources, func(i, j int) bool { return sources[i].AssetID < sources[j].AssetID })
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].clip.Score != candidates[j].clip.Score {
-			return candidates[i].clip.Score > candidates[j].clip.Score
-		}
-		if candidates[i].clip.SourceAssetID != candidates[j].clip.SourceAssetID {
-			return candidates[i].clip.SourceAssetID < candidates[j].clip.SourceAssetID
-		}
-		if candidates[i].sourceStartMS != candidates[j].sourceStartMS {
-			return candidates[i].sourceStartMS < candidates[j].sourceStartMS
-		}
-		return candidates[i].clip.ID < candidates[j].clip.ID
-	})
+	candidates, variantCount := applyNarrativePacing(candidates, profile)
+	sortPacedCompositionCandidates(candidates, profile)
 	candidates = selectCompositionCandidates(candidates)
 	if len(candidates) > narrativeMaxCandidates {
 		candidates = candidates[:narrativeMaxCandidates]
@@ -539,7 +533,7 @@ func buildMultiVideoComposition(compositionID string, assetIDs []string, depende
 	sort.Strings(canonicalAssetIDs)
 	suggestion := videoindexerstudio.EditSuggestion{ID: "multi-video-narrative", Title: "Multi-video narrative", Reason: "Orders grounded clips by their validated highlight score.", StartMs: 0, EndMs: duration, Score: averageClipScore(clips), SourceRefs: refs, Clips: clips}
 	plan := videoindexerstudio.EditPlan{SchemaVersion: 1, AssetID: canonicalAssetIDs[0], SourceAssetIDs: canonicalAssetIDs, Title: "Multi-video smart edit", Summary: fmt.Sprintf("A grounded narrative edit using all %d selected videos.", len(assetIDs)), Suggestions: []videoindexerstudio.EditSuggestion{suggestion}, SourceRefs: refs}
-	compositionPlan := videoindexerstudio.CompositionEditPlan{SchemaVersion: videoindexerstudio.CompositionEditPlanSchemaVersion, CompositionID: compositionID, Title: plan.Title, Summary: plan.Summary, RankingMode: "deterministic_grounded_v1", RecommendationVersion: "multi-video-composition-v2", EvidenceFingerprint: compositionEvidenceFingerprint(canonicalAssetIDs, sources, compositionClips), SourceAssetIDs: canonicalAssetIDs, Sources: sources, Clips: compositionClips, SourceRefs: refs}
+	compositionPlan := videoindexerstudio.CompositionEditPlan{SchemaVersion: videoindexerstudio.CompositionEditPlanSchemaVersion, CompositionID: compositionID, NarrativeIntent: narrativeIntent, PacingProfile: profile, VariantCount: variantCount, Title: plan.Title, Summary: plan.Summary, RankingMode: "deterministic_grounded_v1", RecommendationVersion: "multi-video-composition-v2", EvidenceFingerprint: compositionEvidenceFingerprint(canonicalAssetIDs, sources, compositionClips), SourceAssetIDs: canonicalAssetIDs, Sources: sources, Clips: compositionClips, SourceRefs: refs}
 	draft, err := timelineDraftFromSuggestion(compositionID, suggestion)
 	if err != nil {
 		return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, err

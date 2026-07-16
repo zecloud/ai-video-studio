@@ -36,6 +36,12 @@ func (r NarrativeRankingRequest) Validate() error {
 	if normalized, err := NormalizeNarrativeIntent(r.NarrativeIntent); err != nil || normalized != r.NarrativeIntent {
 		return fmt.Errorf("%w: invalid narrative intent", ErrInvalidRequest)
 	}
+	if !r.PacingProfile.Valid() || r.VariantCount < 0 || r.VariantCount > len(r.Candidates) {
+		return fmt.Errorf("%w: invalid narrative pacing metadata", ErrInvalidRequest)
+	}
+	if r.PacingProfile != "" && r.PacingProfile != NarrativePacingProfileStandard && r.PacingProfile != NarrativePacingProfileForIntent(r.NarrativeIntent) {
+		return fmt.Errorf("%w: pacing profile does not match narrative intent", ErrInvalidRequest)
+	}
 	knownEvidence := make(map[string]struct{}, len(r.Evidence))
 	for _, evidence := range r.Evidence {
 		if strings.TrimSpace(evidence.ID) == "" || strings.TrimSpace(evidence.SourceAssetID) == "" || evidence.StartMs < 0 || evidence.EndMs < evidence.StartMs {

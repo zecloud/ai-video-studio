@@ -1068,7 +1068,7 @@ export function renderVideoIndexerStudioPanel(state: VideoIndexerStudioViewState
           <label class="field-group">
             <span>Narrative intent</span>
             <input class="field" data-setting="narrative-intent" value="${escapeHTML(state.narrativeIntent)}" maxlength="240" placeholder="Chronological, action-forward, calm recap" aria-describedby="narrative-intent-help" ${busy ? "disabled" : ""} />
-            <small id="narrative-intent-help">Optional ordering preference. It cannot change clips, sources, ranges, or evidence.</small>
+            <small id="narrative-intent-help">Optional local pacing and ordering preference. It only selects bounded ranges inside validated suggestions; it cannot add clips, change sources, or alter evidence.</small>
           </label>
           <button type="button" class="button" data-action="video-indexer-generate-composition" ${selectedEligibleAssets.length >= 2 && !busy ? "" : "disabled"} ${generatingComposition ? 'aria-busy="true"' : ""}>${generatingComposition ? `Preparing ${action.count} videos...` : `Generate combined edit${selectedEligibleAssets.length >= 2 ? ` (${selectedEligibleAssets.length})` : ""}`}</button>
           <button type="button" class="button" data-action="video-indexer-submit-selected" ${selectedAssetsList.length && !busy ? "" : "disabled"} ${submittingSelected ? 'aria-busy="true"' : ""}>${submittingSelected ? `Submitting ${selectedSubmissionCount}...` : "Submit selected"}</button>

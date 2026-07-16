@@ -274,12 +274,23 @@ const NarrativeRankingSchemaVersion = 1
 
 const NarrativeIntentMaxRunes = 240
 
+type NarrativePacingProfile string
+
+const (
+	NarrativePacingProfileStandard                NarrativePacingProfile = "standard"
+	NarrativePacingProfileEnergeticShortForm      NarrativePacingProfile = "energetic_short_form"
+	NarrativePacingProfileCalmRecap               NarrativePacingProfile = "calm_recap"
+	NarrativePacingProfileChronologicalContinuity NarrativePacingProfile = "chronological_continuity"
+)
+
 // NarrativeRankingRequest contains only immutable clip identities and canonical
 // evidence. The ranker cannot alter source assets or time ranges.
 type NarrativeRankingRequest struct {
 	SchemaVersion   int                         `json:"schemaVersion"`
 	CompositionID   string                      `json:"compositionId"`
 	NarrativeIntent string                      `json:"narrativeIntent,omitempty"`
+	PacingProfile   NarrativePacingProfile      `json:"pacingProfile,omitempty"`
+	VariantCount    int                         `json:"variantCount,omitempty"`
 	Candidates      []NarrativeRankingCandidate `json:"candidates"`
 	Evidence        []NarrativeEvidence         `json:"evidence"`
 }
@@ -319,6 +330,8 @@ type CompositionEditPlan struct {
 	SchemaVersion         int                       `json:"schemaVersion"`
 	CompositionID         string                    `json:"compositionId"`
 	NarrativeIntent       string                    `json:"narrativeIntent,omitempty"`
+	PacingProfile         NarrativePacingProfile    `json:"pacingProfile,omitempty"`
+	VariantCount          int                       `json:"variantCount,omitempty"`
 	Title                 string                    `json:"title"`
 	Summary               string                    `json:"summary"`
 	RankingMode           string                    `json:"rankingMode"`
@@ -341,6 +354,38 @@ func NormalizeNarrativeIntent(value string) (string, error) {
 		return "", fmt.Errorf("%w: narrativeIntent exceeds %d characters", ErrInvalidRequest, NarrativeIntentMaxRunes)
 	}
 	return value, nil
+}
+
+// NarrativePacingProfileForIntent maps a normalized intent to one conservative,
+// local editing profile. Chronological terms take precedence over pace terms.
+func NarrativePacingProfileForIntent(intent string) NarrativePacingProfile {
+	terms := strings.FieldsFunc(strings.ToLower(intent), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+	has := func(values ...string) bool {
+		for _, term := range terms {
+			for _, value := range values {
+				if term == value {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	switch {
+	case has("chronological", "chronologic", "continuity", "continuous"):
+		return NarrativePacingProfileChronologicalContinuity
+	case has("energetic", "energy", "action", "social", "short", "fast"):
+		return NarrativePacingProfileEnergeticShortForm
+	case has("calm", "recap", "reflective", "relaxed"):
+		return NarrativePacingProfileCalmRecap
+	default:
+		return NarrativePacingProfileStandard
+	}
+}
+
+func (p NarrativePacingProfile) Valid() bool {
+	return p == "" || p == NarrativePacingProfileStandard || p == NarrativePacingProfileEnergeticShortForm || p == NarrativePacingProfileCalmRecap || p == NarrativePacingProfileChronologicalContinuity
 }
 
 type CompositionSourceStatus struct {

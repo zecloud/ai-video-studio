@@ -78,6 +78,8 @@ export class CompositionEditPlan {
     "schemaVersion": number;
     "compositionId": string;
     "narrativeIntent"?: string;
+    "pacingProfile"?: NarrativePacingProfile;
+    "variantCount"?: number;
     "title": string;
     "summary": string;
     "rankingMode": string;
@@ -131,22 +133,22 @@ export class CompositionEditPlan {
      * Creates a new CompositionEditPlan instance from a string or object.
      */
     static createFrom($$source: any = {}): CompositionEditPlan {
-        const $$createField8_0 = $$createType2;
-        const $$createField9_0 = $$createType4;
-        const $$createField10_0 = $$createType6;
-        const $$createField11_0 = $$createType1;
+        const $$createField10_0 = $$createType2;
+        const $$createField11_0 = $$createType4;
+        const $$createField12_0 = $$createType6;
+        const $$createField13_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("sourceAssetIds" in $$parsedSource) {
-            $$parsedSource["sourceAssetIds"] = $$createField8_0($$parsedSource["sourceAssetIds"]);
+            $$parsedSource["sourceAssetIds"] = $$createField10_0($$parsedSource["sourceAssetIds"]);
         }
         if ("sources" in $$parsedSource) {
-            $$parsedSource["sources"] = $$createField9_0($$parsedSource["sources"]);
+            $$parsedSource["sources"] = $$createField11_0($$parsedSource["sources"]);
         }
         if ("clips" in $$parsedSource) {
-            $$parsedSource["clips"] = $$createField10_0($$parsedSource["clips"]);
+            $$parsedSource["clips"] = $$createField12_0($$parsedSource["clips"]);
         }
         if ("sourceRefs" in $$parsedSource) {
-            $$parsedSource["sourceRefs"] = $$createField11_0($$parsedSource["sourceRefs"]);
+            $$parsedSource["sourceRefs"] = $$createField13_0($$parsedSource["sourceRefs"]);
         }
         return new CompositionEditPlan($$parsedSource as Partial<CompositionEditPlan>);
     }
@@ -468,6 +470,18 @@ export class MediaVideoSignals {
         return new MediaVideoSignals($$parsedSource as Partial<MediaVideoSignals>);
     }
 }
+
+export enum NarrativePacingProfile {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    NarrativePacingProfileStandard = "standard",
+    NarrativePacingProfileEnergeticShortForm = "energetic_short_form",
+    NarrativePacingProfileCalmRecap = "calm_recap",
+    NarrativePacingProfileChronologicalContinuity = "chronological_continuity",
+};
 
 export class SilenceInterval {
     "start": time$0.Duration;
