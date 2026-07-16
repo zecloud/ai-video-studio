@@ -71,22 +71,27 @@ func (r narrativeRanker) Rank(ctx context.Context, req videoindexerstudio.Narrat
 	if rankCtx.Err() != nil && err != nil {
 		err = narrativeFailureError(narrativeFailureTimeout, rankCtx.Err())
 	}
+	response := videoindexerstudio.NarrativeRankingResponse{}
+	validationReason := ""
+	if err == nil {
+		response = videoindexerstudio.NarrativeRankingResponse{SchemaVersion: videoindexerstudio.NarrativeRankingSchemaVersion, OrderedClips: make([]videoindexerstudio.NarrativeRankedClip, 0, len(plan.Suggestions))}
+		for _, suggestion := range plan.Suggestions {
+			ids := make([]string, 0, len(suggestion.SourceRefs))
+			for _, ref := range suggestion.SourceRefs {
+				ids = append(ids, ref.RefID)
+			}
+			response.OrderedClips = append(response.OrderedClips, videoindexerstudio.NarrativeRankedClip{CandidateID: suggestion.ID, EvidenceIDs: ids})
+		}
+		if validationErr := validateNarrativeRankingResponse(req, response); validationErr != nil {
+			validationReason = narrativeRankingValidationReason(validationErr)
+			err = narrativeFailureError(narrativeFailureInvalid, validationErr)
+		}
+	}
 	if r.obs != nil {
-		r.obs.FinishSpan(ctx, nil, "narrative.rank", start, []attribute.KeyValue{attribute.String("prompt_version", narrativeRankerInstructionsVersion), attribute.Int("candidate_count", len(req.Candidates)), attribute.Int("evidence_count", len(req.Evidence)), attribute.Int("packet_bytes", len(raw)), attribute.Int("attempt_count", attempts), attribute.String("failure_kind", string(narrativeFailureFor(err))), attribute.Bool("narrative_intent_present", req.NarrativeIntent != ""), attribute.Int("narrative_intent_length", len([]rune(req.NarrativeIntent)))}, err)
+		r.obs.FinishSpan(ctx, nil, "narrative.rank", start, []attribute.KeyValue{attribute.String("prompt_version", narrativeRankerInstructionsVersion), attribute.Int("candidate_count", len(req.Candidates)), attribute.Int("evidence_count", len(req.Evidence)), attribute.Int("packet_bytes", len(raw)), attribute.Int("attempt_count", attempts), attribute.String("failure_kind", string(narrativeFailureFor(err))), attribute.String("validation_reason", validationReason), attribute.Bool("narrative_intent_present", req.NarrativeIntent != ""), attribute.Int("narrative_intent_length", len([]rune(req.NarrativeIntent)))}, err)
 	}
 	if err != nil {
 		return videoindexerstudio.NarrativeRankingResponse{}, err
-	}
-	response := videoindexerstudio.NarrativeRankingResponse{SchemaVersion: videoindexerstudio.NarrativeRankingSchemaVersion, OrderedClips: make([]videoindexerstudio.NarrativeRankedClip, 0, len(plan.Suggestions))}
-	for _, suggestion := range plan.Suggestions {
-		ids := make([]string, 0, len(suggestion.SourceRefs))
-		for _, ref := range suggestion.SourceRefs {
-			ids = append(ids, ref.RefID)
-		}
-		response.OrderedClips = append(response.OrderedClips, videoindexerstudio.NarrativeRankedClip{CandidateID: suggestion.ID, EvidenceIDs: ids})
-	}
-	if err := validateNarrativeRankingResponse(req, response); err != nil {
-		return videoindexerstudio.NarrativeRankingResponse{}, narrativeFailureError(narrativeFailureInvalid, err)
 	}
 	return response, nil
 }
@@ -112,9 +117,31 @@ func validateNarrativeRankingRequest(req videoindexerstudio.NarrativeRankingRequ
 	}
 	return nil
 }
+
+type narrativeRankingValidationError struct{ reason string }
+
+func (e narrativeRankingValidationError) Error() string {
+	return "narrative ranking response validation failed"
+}
+
+func narrativeRankingValidationReason(err error) string {
+	var validationErr narrativeRankingValidationError
+	if errors.As(err, &validationErr) {
+		return validationErr.reason
+	}
+	return ""
+}
+
+func narrativeRankingValidationFailure(reason string) error {
+	return narrativeRankingValidationError{reason: reason}
+}
+
 func validateNarrativeRankingResponse(req videoindexerstudio.NarrativeRankingRequest, response videoindexerstudio.NarrativeRankingResponse) error {
-	if response.SchemaVersion != videoindexerstudio.NarrativeRankingSchemaVersion || len(response.OrderedClips) != len(req.Candidates) {
-		return errors.New("narrative ranking response must order every candidate")
+	if response.SchemaVersion != videoindexerstudio.NarrativeRankingSchemaVersion {
+		return narrativeRankingValidationFailure("invalid_schema_version")
+	}
+	if len(response.OrderedClips) != len(req.Candidates) {
+		return narrativeRankingValidationFailure("missing_candidate_count")
 	}
 	known := make(map[string]struct{}, len(req.Candidates))
 	for _, candidate := range req.Candidates {
@@ -123,23 +150,23 @@ func validateNarrativeRankingResponse(req videoindexerstudio.NarrativeRankingReq
 	seen := make(map[string]struct{}, len(response.OrderedClips))
 	for _, ranked := range response.OrderedClips {
 		if _, ok := known[ranked.CandidateID]; !ok {
-			return errors.New("narrative ranking response references an unknown candidate")
+			return narrativeRankingValidationFailure("unknown_candidate")
 		}
 		if _, exists := seen[ranked.CandidateID]; exists {
-			return errors.New("narrative ranking response contains duplicate candidates")
+			return narrativeRankingValidationFailure("duplicate_candidate")
 		}
 		if len(ranked.EvidenceIDs) == 0 {
-			return errors.New("narrative ranking response must cite candidate evidence")
+			return narrativeRankingValidationFailure("missing_evidence")
 		}
 		seen[ranked.CandidateID] = struct{}{}
 		rankedEvidence := make(map[string]struct{}, len(ranked.EvidenceIDs))
 		for _, evidenceID := range ranked.EvidenceIDs {
 			if _, duplicate := rankedEvidence[evidenceID]; duplicate {
-				return errors.New("narrative ranking response contains duplicate evidence")
+				return narrativeRankingValidationFailure("duplicate_evidence")
 			}
 			rankedEvidence[evidenceID] = struct{}{}
 			if !candidateHasEvidence(req, ranked.CandidateID, evidenceID) {
-				return errors.New("narrative ranking response references ungrounded evidence")
+				return narrativeRankingValidationFailure("ungrounded_evidence")
 			}
 		}
 	}

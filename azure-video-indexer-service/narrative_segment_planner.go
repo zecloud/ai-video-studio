@@ -50,11 +50,18 @@ func (p narrativeSegmentPlanner) Plan(ctx context.Context, request videoindexers
 	defer cancel()
 	start := time.Now()
 	var response videoindexerstudio.NarrativeSegmentPlanningResponse
+	validationReason := ""
 	attempts := 0
 	for attempts = 1; attempts <= narrativeSegmentPlannerAttempts; attempts++ {
 		response, err = p.runner.RunSegmentPlan(planCtx, string(raw))
 		if err == nil {
+			if response.SchemaVersion == 0 {
+				// The endpoint fixes this contract version; the framework may omit a constant field.
+				response.SchemaVersion = videoindexerstudio.NarrativeSegmentPlanningSchemaVersion
+				validationReason = "missing_schema_version_normalized"
+			}
 			if validationErr := response.Validate(); validationErr != nil {
+				validationReason = "invalid_response"
 				err = narrativeFailureError(narrativeFailureInvalid, validationErr)
 			} else if len(response.Segments) > p.maxSegments {
 				err = narrativeFailureError(narrativeFailureLimit, errors.New("segment limit exceeded"))
@@ -77,7 +84,7 @@ func (p narrativeSegmentPlanner) Plan(ctx context.Context, request videoindexers
 		err = narrativeFailureError(narrativeFailureTimeout, planCtx.Err())
 	}
 	if p.obs != nil {
-		p.obs.FinishSpan(ctx, nil, "narrative.segment.plan", start, []attribute.KeyValue{attribute.String("prompt_version", narrativeSegmentPlannerInstructionsVersion), attribute.String("narrative_profile", string(request.Profile)), attribute.Int("catalog_count", len(request.Catalog)), attribute.Int("attempt_count", attempts), attribute.String("failure_kind", string(narrativeFailureFor(err))), attribute.Bool("narrative_intent_present", request.NarrativeIntent != "")}, err)
+		p.obs.FinishSpan(ctx, nil, "narrative.segment.plan", start, []attribute.KeyValue{attribute.String("prompt_version", narrativeSegmentPlannerInstructionsVersion), attribute.String("narrative_profile", string(request.Profile)), attribute.Int("catalog_count", len(request.Catalog)), attribute.Int("attempt_count", attempts), attribute.String("failure_kind", string(narrativeFailureFor(err))), attribute.String("validation_reason", validationReason), attribute.Bool("narrative_intent_present", request.NarrativeIntent != "")}, err)
 	}
 	if err != nil {
 		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, err

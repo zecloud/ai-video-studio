@@ -111,3 +111,20 @@ func TestNarrativeSegmentPlannerRetriesTransientButNotInvalidResponse(t *testing
 		t.Fatalf("invalid response = %v, attempts = %d", err, attempts)
 	}
 }
+
+func TestNarrativeSegmentPlannerNormalizesOnlyOmittedSchemaVersion(t *testing.T) {
+	request := segmentPlanningRequest()
+	planner := narrativeSegmentPlanner{timeout: time.Second, maxCatalog: 1, maxSegments: 1, runner: narrativeSegmentPlannerRunnerFunc(func(context.Context, string) (videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
+		return videoindexerstudio.NarrativeSegmentPlanningResponse{Segments: []videoindexerstudio.NarrativeSegmentPlanItem{{SegmentID: "segment-1", Role: videoindexerstudio.NarrativeSegmentRoleHook, EvidenceIDs: []string{"evidence-1"}}}}, nil
+	})}
+	response, err := planner.Plan(context.Background(), request)
+	if err != nil || response.SchemaVersion != videoindexerstudio.NarrativeSegmentPlanningSchemaVersion {
+		t.Fatalf("omitted schema version = %#v, %v", response, err)
+	}
+	planner.runner = narrativeSegmentPlannerRunnerFunc(func(context.Context, string) (videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
+		return videoindexerstudio.NarrativeSegmentPlanningResponse{SchemaVersion: 2, Segments: []videoindexerstudio.NarrativeSegmentPlanItem{{SegmentID: "segment-1", Role: videoindexerstudio.NarrativeSegmentRoleHook, EvidenceIDs: []string{"evidence-1"}}}}, nil
+	})
+	if _, err := planner.Plan(context.Background(), request); narrativeFailureFor(err) != narrativeFailureInvalid {
+		t.Fatalf("nonzero incompatible schema must remain invalid: %v", err)
+	}
+}

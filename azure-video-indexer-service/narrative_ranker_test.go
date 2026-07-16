@@ -94,3 +94,38 @@ func TestNarrativeRankerRetriesTransientAndDoesNotRetryInvalidPlan(t *testing.T)
 		t.Fatalf("invalid response = %v, attempts = %d", err, attempts)
 	}
 }
+
+func TestNarrativeRankingValidationReasonsRemainStrict(t *testing.T) {
+	request := narrativeRequest()
+	valid := videoindexerstudio.NarrativeRankingResponse{SchemaVersion: 1, OrderedClips: []videoindexerstudio.NarrativeRankedClip{{CandidateID: "clip-a", EvidenceIDs: []string{"asset-a:scene:scene-a"}}, {CandidateID: "clip-b", EvidenceIDs: []string{"asset-b:scene:scene-b"}}}}
+	for name, testCase := range map[string]struct {
+		response videoindexerstudio.NarrativeRankingResponse
+		reason   string
+	}{
+		"invalid schema":          {response: videoindexerstudio.NarrativeRankingResponse{SchemaVersion: 2, OrderedClips: valid.OrderedClips}, reason: "invalid_schema_version"},
+		"missing candidate count": {response: videoindexerstudio.NarrativeRankingResponse{SchemaVersion: 1, OrderedClips: valid.OrderedClips[:1]}, reason: "missing_candidate_count"},
+		"unknown candidate":       {response: videoindexerstudio.NarrativeRankingResponse{SchemaVersion: 1, OrderedClips: []videoindexerstudio.NarrativeRankedClip{{CandidateID: "unknown", EvidenceIDs: []string{"asset-a:scene:scene-a"}}, valid.OrderedClips[1]}}, reason: "unknown_candidate"},
+		"duplicate candidate":     {response: videoindexerstudio.NarrativeRankingResponse{SchemaVersion: 1, OrderedClips: []videoindexerstudio.NarrativeRankedClip{valid.OrderedClips[0], valid.OrderedClips[0]}}, reason: "duplicate_candidate"},
+		"missing evidence":        {response: videoindexerstudio.NarrativeRankingResponse{SchemaVersion: 1, OrderedClips: []videoindexerstudio.NarrativeRankedClip{{CandidateID: "clip-a"}, valid.OrderedClips[1]}}, reason: "missing_evidence"},
+		"duplicate evidence":      {response: videoindexerstudio.NarrativeRankingResponse{SchemaVersion: 1, OrderedClips: []videoindexerstudio.NarrativeRankedClip{{CandidateID: "clip-a", EvidenceIDs: []string{"asset-a:scene:scene-a", "asset-a:scene:scene-a"}}, valid.OrderedClips[1]}}, reason: "duplicate_evidence"},
+		"ungrounded evidence":     {response: videoindexerstudio.NarrativeRankingResponse{SchemaVersion: 1, OrderedClips: []videoindexerstudio.NarrativeRankedClip{{CandidateID: "clip-a", EvidenceIDs: []string{"asset-b:scene:scene-b"}}, valid.OrderedClips[1]}}, reason: "ungrounded_evidence"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := narrativeRankingValidationReason(validateNarrativeRankingResponse(request, testCase.response)); got != testCase.reason {
+				t.Fatalf("validation reason = %q, want %q", got, testCase.reason)
+			}
+		})
+	}
+	if err := validateNarrativeRankingResponse(request, valid); err != nil || narrativeRankingValidationReason(err) != "" {
+		t.Fatalf("valid order = %v", err)
+	}
+}
+
+func TestNarrativeRankerReportsInvalidProviderPlanAfterValidation(t *testing.T) {
+	ranker := narrativeRanker{planner: narrativePlannerFunc(func(context.Context, string) (EditPlan, error) {
+		return EditPlan{Suggestions: []EditSuggestion{{ID: "clip-a", SourceRefs: []SourceRef{{RefID: "asset-a:scene:scene-a"}}}}}, nil
+	})}
+	if _, err := ranker.Rank(context.Background(), narrativeRequest()); narrativeFailureFor(err) != narrativeFailureInvalid || narrativeRankingValidationReason(errors.Unwrap(err)) != "missing_candidate_count" {
+		t.Fatalf("post-provider validation failure = %v", err)
+	}
+}
