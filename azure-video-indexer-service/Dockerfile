@@ -20,7 +20,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 FROM alpine:3.21
 
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup && \
-    apk add --no-cache ca-certificates wget
+    apk add --no-cache ca-certificates ffmpeg wget
 
 WORKDIR /app
 COPY --from=build /out/azure-video-indexer-service /app/azure-video-indexer-service

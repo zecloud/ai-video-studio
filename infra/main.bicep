@@ -387,6 +387,14 @@ resource apiApp 'Microsoft.App/containerApps@2024-03-01' = {
             value: 'api'
           }
           {
+            name: 'FOUNDRY_PROJECT_ENDPOINT'
+            value: foundryProjectEndpoint
+          }
+          {
+            name: 'FOUNDRY_DEPLOYMENT_NAME'
+            value: foundryDeploymentName
+          }
+          {
             name: 'LISTEN_ADDR'
             value: ':8080'
           }
@@ -706,6 +714,15 @@ module workerFoundryRole 'foundry-role-assignment.bicep' = {
   params: {
     accountName: foundryAccountName
     principalId: workerIdentity.properties.principalId
+    roleDefinitionId: foundryUserRoleDefinitionId
+  }
+}
+
+module apiFoundryRole 'foundry-role-assignment.bicep' = {
+  name: 'api-foundry-user'
+  params: {
+    accountName: foundryAccountName
+    principalId: apiIdentity.properties.principalId
     roleDefinitionId: foundryUserRoleDefinitionId
   }
 }

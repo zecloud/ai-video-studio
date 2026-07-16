@@ -968,6 +968,37 @@ func TestVideoIndexerCreateEditProjectFromMultiVideoComposition(t *testing.T) {
 	})
 }
 
+func TestBuildMultiVideoCompositionDeduplicatesRepeatedSourceRanges(t *testing.T) {
+	dependencies := []VideoIndexerStudioJob{
+		completedAnalysisJob("analysis-1", "asset-1", 0, 1000, 0.7),
+		completedAnalysisJob("analysis-2", "asset-2", 0, 1000, 0.6),
+	}
+	dependencies[0].EditPlan.Suggestions = []videoindexerstudio.EditSuggestion{
+		{ID: "best", Score: 0.9, Clips: []videoindexerstudio.SuggestedClip{{ID: "exact-best", StartMs: 100, EndMs: 200, Score: 0.9}}},
+		{ID: "duplicate", Score: 0.8, Clips: []videoindexerstudio.SuggestedClip{{ID: "exact-duplicate", StartMs: 100, EndMs: 200, Score: 0.8}}},
+		{ID: "overlap", Score: 0.7, Clips: []videoindexerstudio.SuggestedClip{{ID: "material-overlap", StartMs: 110, EndMs: 190, Score: 0.7}}},
+		{ID: "adjacent", Score: 0.6, Clips: []videoindexerstudio.SuggestedClip{{ID: "adjacent", StartMs: 200, EndMs: 300, Score: 0.6}}},
+	}
+	_, composition, _, err := buildMultiVideoComposition("composition-1", []string{"asset-1", "asset-2"}, dependencies)
+	if err != nil {
+		t.Fatalf("build composition: %v", err)
+	}
+	var assetOne []videoindexerstudio.CompositionClip
+	for _, clip := range composition.Clips {
+		if clip.SourceAssetID == "asset-1" {
+			assetOne = append(assetOne, clip)
+		}
+	}
+	if len(assetOne) != 2 {
+		t.Fatalf("asset-1 clip count = %d, want 2 after duplicate and overlap filtering: %#v", len(assetOne), assetOne)
+	}
+	if assetOne[0].StartMs != 100 || assetOne[0].EndMs != 200 || assetOne[0].Score != 0.9 {
+		t.Fatalf("best overlapping clip was not retained: %#v", assetOne[0])
+	}
+	if assetOne[1].StartMs != 200 || assetOne[1].EndMs != 300 {
+		t.Fatalf("adjacent clip was removed: %#v", assetOne[1])
+	}
+}
 func TestBuildMultiVideoCompositionIsDeterministicAndRejectsIncompleteEvidence(t *testing.T) {
 	dependencies := []VideoIndexerStudioJob{
 		completedAnalysisJob("analysis-1", "asset-1", 0, 1200, 0.8),

@@ -43,7 +43,7 @@ This keeps the app shippable without committing to a specific third-party wrappe
 
 ## Azure render worker packaging
 
-The asynchronous cloud renderer runs in a dedicated private Container App image built from `azure-video-indexer-service/Dockerfile.ffmpeg`. The API and indexing worker image does not install FFmpeg.
+The asynchronous cloud renderer runs in a dedicated private Container App image built from `azure-video-indexer-service/Dockerfile.ffmpeg`. The API and indexing worker image also installs FFmpeg so `VideoIndexerNormalize` can run `ffprobe` and validate media signals before creating edit suggestions.
 
 - The image uses Alpine's distribution `ffmpeg` package and runs the service as a non-root user.
 - The deployment sets `SERVICE_ROLE=ffmpeg-worker`, `FFMPEG_PATH=/usr/bin/ffmpeg`, `RENDER_WORKSPACE_ROOT=/render-work`, and `RENDER_TIMEOUT=2h`.

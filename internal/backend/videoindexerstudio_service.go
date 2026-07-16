@@ -505,6 +505,7 @@ func buildMultiVideoComposition(compositionID string, assetIDs []string, depende
 		}
 		return candidates[i].clip.ID < candidates[j].clip.ID
 	})
+	candidates = selectCompositionCandidates(candidates)
 	if len(candidates) > narrativeMaxCandidates {
 		candidates = candidates[:narrativeMaxCandidates]
 	}
@@ -539,6 +540,45 @@ type compositionCandidate struct {
 	sourceStartMS int64
 }
 
+const compositionMaterialOverlapPercent int64 = 80
+
+func selectCompositionCandidates(candidates []compositionCandidate) []compositionCandidate {
+	selected := make([]compositionCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if compositionCandidateOverlapsSelected(candidate, selected) {
+			continue
+		}
+		selected = append(selected, candidate)
+	}
+	return selected
+}
+
+func compositionCandidateOverlapsSelected(candidate compositionCandidate, selected []compositionCandidate) bool {
+	for _, accepted := range selected {
+		if accepted.clip.SourceAssetID != candidate.clip.SourceAssetID {
+			continue
+		}
+		overlapStart := candidate.clip.StartMs
+		if accepted.clip.StartMs > overlapStart {
+			overlapStart = accepted.clip.StartMs
+		}
+		overlapEnd := candidate.clip.EndMs
+		if accepted.clip.EndMs < overlapEnd {
+			overlapEnd = accepted.clip.EndMs
+		}
+		if overlapEnd <= overlapStart {
+			continue
+		}
+		shorterDuration := candidate.clip.EndMs - candidate.clip.StartMs
+		if acceptedDuration := accepted.clip.EndMs - accepted.clip.StartMs; acceptedDuration < shorterDuration {
+			shorterDuration = acceptedDuration
+		}
+		if (overlapEnd-overlapStart)*100 >= shorterDuration*compositionMaterialOverlapPercent {
+			return true
+		}
+	}
+	return false
+}
 func stableCompositionClipID(compositionID, assetID, suggestionID string, index int, clip videoindexerstudio.SuggestedClip) string {
 	input := strings.Join([]string{strings.TrimSpace(compositionID), strings.TrimSpace(assetID), strings.TrimSpace(suggestionID), strings.TrimSpace(clip.ID), fmt.Sprintf("%d", index), fmt.Sprintf("%d", clip.StartMs), fmt.Sprintf("%d", clip.EndMs)}, "\x1f")
 	sum := sha256.Sum256([]byte(input))

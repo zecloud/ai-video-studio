@@ -88,8 +88,10 @@ func buildNarrativeRankingRequest(composition videoindexerstudio.CompositionEdit
 		}
 		return request.Evidence[i].ID < request.Evidence[j].ID
 	})
-	if len(request.Evidence) > narrativeMaxEvidence {
-		request.Evidence = request.Evidence[:narrativeMaxEvidence]
+	var err error
+	request.Evidence, err = selectNarrativeEvidence(request.Candidates, request.Evidence)
+	if err != nil {
+		return videoindexerstudio.NarrativeRankingRequest{}, err
 	}
 	for i := range request.Candidates {
 		for _, evidence := range request.Evidence {
@@ -102,6 +104,34 @@ func buildNarrativeRankingRequest(composition videoindexerstudio.CompositionEdit
 		}
 	}
 	return request, request.Validate()
+}
+
+func selectNarrativeEvidence(candidates []videoindexerstudio.NarrativeRankingCandidate, evidence []videoindexerstudio.NarrativeEvidence) ([]videoindexerstudio.NarrativeEvidence, error) {
+	selected := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		for _, item := range evidence {
+			if item.SourceAssetID == candidate.SourceAssetID && overlaps(candidate.StartMs, candidate.EndMs, item.StartMs, item.EndMs) {
+				selected[item.ID] = struct{}{}
+				break
+			}
+		}
+		if len(selected) > narrativeMaxEvidence {
+			return nil, errors.New("narrative evidence budget cannot cover every candidate")
+		}
+	}
+	for _, item := range evidence {
+		if len(selected) == narrativeMaxEvidence {
+			break
+		}
+		selected[item.ID] = struct{}{}
+	}
+	limited := make([]videoindexerstudio.NarrativeEvidence, 0, len(selected))
+	for _, item := range evidence {
+		if _, ok := selected[item.ID]; ok {
+			limited = append(limited, item)
+		}
+	}
+	return limited, nil
 }
 
 func narrativeEvidenceForSource(assetID string, result videoindexerstudio.VideoIndexResult) []videoindexerstudio.NarrativeEvidence {

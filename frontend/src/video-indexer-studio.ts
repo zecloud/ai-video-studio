@@ -583,7 +583,7 @@ function canonicalCompositionDraft(job: BackendModels.VideoIndexerStudioJob): VI
       && clip.inMs === proposalClip.startMs
       && clip.outMs === proposalClip.endMs
       && clip.transition?.kind === "cut"
-      && clip.transition?.durationMs === 0;
+      && (clip.transition?.durationMs ?? 0) === 0;
   }) ? draft : null;
 }
 
