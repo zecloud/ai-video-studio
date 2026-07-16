@@ -526,13 +526,31 @@ func deterministicNarrativePacingResolution(intent string, reason videoindexerst
 }
 
 func narrativePacingFallbackReason(err error) videoindexerstudio.NarrativePacingClassifierFallbackReason {
+	if code := narrativeAPIErrorCode(err); code != "" {
+		switch code {
+		case "narrative_intent_classification_unavailable":
+			return videoindexerstudio.NarrativePacingClassifierFallbackUnavailable
+		case "narrative_intent_classification_timeout":
+			return videoindexerstudio.NarrativePacingClassifierFallbackTimeout
+		case "narrative_intent_classification_invalid_response", "narrative_intent_classification_invalid", "narrative_intent_classification_request_limit":
+			return videoindexerstudio.NarrativePacingClassifierFallbackInvalidResponse
+		}
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return videoindexerstudio.NarrativePacingClassifierFallbackTimeout
 	}
-	if err != nil && strings.Contains(err.Error(), "invalid narrative intent classification response") {
-		return videoindexerstudio.NarrativePacingClassifierFallbackInvalidResponse
-	}
 	return videoindexerstudio.NarrativePacingClassifierFallbackRequestFailed
+}
+
+func narrativeAPIErrorCode(err error) string {
+	type apiErrorCarrier interface {
+		APIError() videoindexerstudio.APIErrorResponse
+	}
+	var carrier apiErrorCarrier
+	if errors.As(err, &carrier) {
+		return strings.TrimSpace(carrier.APIError().Code)
+	}
+	return ""
 }
 func buildMultiVideoComposition(compositionID string, assetIDs []string, dependencies []VideoIndexerStudioJob) (videoindexerstudio.EditPlan, videoindexerstudio.CompositionEditPlan, []videoindexerstudio.TimelineDraft, error) {
 	return buildMultiVideoCompositionWithIntent(compositionID, assetIDs, dependencies, "")

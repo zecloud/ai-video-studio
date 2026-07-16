@@ -53,7 +53,7 @@ func TestNarrativeIntentClassifierEnforcesBoundsAndClosedResponse(t *testing.T) 
 	classifier.runner = narrativeIntentClassifierRunnerFunc(func(context.Context, string) (videoindexerstudio.NarrativeIntentClassificationResponse, error) {
 		return videoindexerstudio.NarrativeIntentClassificationResponse{SchemaVersion: 1, Profile: "untrusted"}, nil
 	})
-	if _, err := classifier.Classify(context.Background(), videoindexerstudio.NarrativeIntentClassificationRequest{SchemaVersion: 1, NarrativeIntent: "video dynamique"}); err == nil || !strings.Contains(err.Error(), "invalid classifier response") {
+	if _, err := classifier.Classify(context.Background(), videoindexerstudio.NarrativeIntentClassificationRequest{SchemaVersion: 1, NarrativeIntent: "video dynamique"}); err == nil || narrativeFailureFor(err) != narrativeFailureInvalid {
 		t.Fatalf("expected closed-contract rejection, got %v", err)
 	}
 }
@@ -126,5 +126,19 @@ func TestNarrativeIntentClassifierAcceptsMultilingualSocialShortFormProfile(t *t
 	response, err := classifier.Classify(context.Background(), videoindexerstudio.NarrativeIntentClassificationRequest{SchemaVersion: 1, NarrativeIntent: "robots dansants en mode video TikTok"})
 	if err != nil || response.Profile != videoindexerstudio.NarrativeIntentProfileSocialShortForm {
 		t.Fatalf("classification = %#v, %v", response, err)
+	}
+}
+
+func TestNarrativeIntentClassifierRetriesOnlyTransientFailure(t *testing.T) {
+	attempts := 0
+	classifier := narrativeIntentClassifier{timeout: time.Second, runner: narrativeIntentClassifierRunnerFunc(func(context.Context, string) (videoindexerstudio.NarrativeIntentClassificationResponse, error) {
+		attempts++
+		if attempts == 1 {
+			return videoindexerstudio.NarrativeIntentClassificationResponse{}, errors.New("temporary transport failure")
+		}
+		return videoindexerstudio.NarrativeIntentClassificationResponse{SchemaVersion: 1, Profile: videoindexerstudio.NarrativeIntentProfileEnergetic}, nil
+	})}
+	if _, err := classifier.Classify(context.Background(), videoindexerstudio.NarrativeIntentClassificationRequest{SchemaVersion: 1, NarrativeIntent: "dynamic tiktok video"}); err != nil || attempts != 2 {
+		t.Fatalf("classification = %v, attempts = %d", err, attempts)
 	}
 }

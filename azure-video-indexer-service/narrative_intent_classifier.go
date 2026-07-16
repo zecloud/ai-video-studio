@@ -13,7 +13,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-const narrativeIntentClassifierPromptVersion = "v1"
+const (
+	narrativeIntentClassifierPromptVersion = "v2"
+	narrativeClassifierAttempts            = 2
+)
 
 type NarrativeIntentClassifier interface {
 	Classify(context.Context, videoindexerstudio.NarrativeIntentClassificationRequest) (videoindexerstudio.NarrativeIntentClassificationResponse, error)
@@ -31,30 +34,55 @@ type narrativeIntentClassifier struct {
 
 func (c narrativeIntentClassifier) Classify(ctx context.Context, request videoindexerstudio.NarrativeIntentClassificationRequest) (videoindexerstudio.NarrativeIntentClassificationResponse, error) {
 	if c.runner == nil {
-		return videoindexerstudio.NarrativeIntentClassificationResponse{}, errors.New("narrative intent classifier is not configured")
+		return videoindexerstudio.NarrativeIntentClassificationResponse{}, narrativeFailureError(narrativeFailureUnavailable, errors.New("classifier not configured"))
 	}
 	if err := request.Validate(); err != nil {
-		return videoindexerstudio.NarrativeIntentClassificationResponse{}, err
+		return videoindexerstudio.NarrativeIntentClassificationResponse{}, narrativeFailureError(narrativeFailureInvalidReq, err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	attemptCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	result, err := c.runner.RunClassification(ctx, request.NarrativeIntent)
-	if err != nil {
-		return videoindexerstudio.NarrativeIntentClassificationResponse{}, err
+	start := time.Now()
+	var result videoindexerstudio.NarrativeIntentClassificationResponse
+	var err error
+	attempts := 0
+	for attempts = 1; attempts <= narrativeClassifierAttempts; attempts++ {
+		result, err = c.runner.RunClassification(attemptCtx, request.NarrativeIntent)
+		if err == nil {
+			if validationErr := result.Validate(); validationErr != nil {
+				err = narrativeFailureError(narrativeFailureInvalid, validationErr)
+			}
+		} else {
+			err = classifyNarrativeProviderError(err)
+		}
+		if err == nil || !isRetryableNarrativeFailure(err) || attemptCtx.Err() != nil || attempts == narrativeClassifierAttempts {
+			break
+		}
+		if c.obs != nil {
+			c.obs.RecordRetry(ctx, "narrative.intent.classify", 0, attribute.String("failure_kind", string(narrativeFailureFor(err))))
+		}
+		select {
+		case <-attemptCtx.Done():
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
-	if err := result.Validate(); err != nil {
-		return videoindexerstudio.NarrativeIntentClassificationResponse{}, fmt.Errorf("invalid classifier response: %w", err)
+	if attemptCtx.Err() != nil && err != nil {
+		err = narrativeFailureError(narrativeFailureTimeout, attemptCtx.Err())
 	}
 	if c.obs != nil {
-		classifiedCtx, span := c.obs.StartSpan(ctx, "narrative.intent.classified", attribute.String("narrative_profile", string(result.Profile)), attribute.Int("narrative_intent_length", len([]rune(request.NarrativeIntent))))
-		c.obs.FinishSpan(classifiedCtx, span, "narrative.intent.classified", time.Now(), nil, nil)
+		c.obs.FinishSpan(ctx, nil, "narrative.intent.classify", start, []attribute.KeyValue{
+			attribute.String("prompt_version", narrativeIntentClassifierPromptVersion),
+			attribute.Int("attempt_count", attempts),
+			attribute.String("failure_kind", string(narrativeFailureFor(err))),
+			attribute.Int("narrative_intent_length", len([]rune(request.NarrativeIntent))),
+		}, err)
+	}
+	if err != nil {
+		return videoindexerstudio.NarrativeIntentClassificationResponse{}, err
 	}
 	return result, nil
 }
 
-type foundryNarrativeIntentClassifierRunner struct {
-	agent agentTextRunner
-}
+type foundryNarrativeIntentClassifierRunner struct{ agent agentTextRunner }
 
 func (r foundryNarrativeIntentClassifierRunner) RunClassification(ctx context.Context, intent string) (videoindexerstudio.NarrativeIntentClassificationResponse, error) {
 	if r.agent == nil {
@@ -63,10 +91,7 @@ func (r foundryNarrativeIntentClassifierRunner) RunClassification(ctx context.Co
 	var output videoindexerstudio.NarrativeIntentClassificationResponse
 	prompt := "Classify this normalized editorial preference into exactly one profile. Preference:\n" + intent
 	_, err := r.agent.RunText(ctx, prompt, agent.WithStructuredOutput(&output), agent.Stream(false)).Collect()
-	if err != nil {
-		return videoindexerstudio.NarrativeIntentClassificationResponse{}, err
-	}
-	return output, nil
+	return output, err
 }
 
 func newNarrativeIntentClassifier(plannerConfig editPlannerConfig, timeout time.Duration, obs *Observability) (NarrativeIntentClassifier, error) {

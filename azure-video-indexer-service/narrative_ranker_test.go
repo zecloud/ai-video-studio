@@ -72,3 +72,25 @@ func TestNarrativeRankerRejectsMissingOrUngroundedCitations(t *testing.T) {
 		})
 	}
 }
+
+func TestNarrativeRankerRetriesTransientAndDoesNotRetryInvalidPlan(t *testing.T) {
+	attempts := 0
+	ranker := narrativeRanker{timeout: time.Second, planner: narrativePlannerFunc(func(context.Context, string) (EditPlan, error) {
+		attempts++
+		if attempts == 1 {
+			return EditPlan{}, errors.New("temporary upstream failure")
+		}
+		return EditPlan{Suggestions: []EditSuggestion{{ID: "clip-a", SourceRefs: []SourceRef{{RefID: "asset-a:scene:scene-a"}}}, {ID: "clip-b", SourceRefs: []SourceRef{{RefID: "asset-b:scene:scene-b"}}}}}, nil
+	})}
+	if _, err := ranker.Rank(context.Background(), narrativeRequest()); err != nil || attempts != 2 {
+		t.Fatalf("transient retry = %v, attempts = %d", err, attempts)
+	}
+	attempts = 0
+	ranker.planner = narrativePlannerFunc(func(context.Context, string) (EditPlan, error) {
+		attempts++
+		return EditPlan{Suggestions: []EditSuggestion{{ID: "clip-a", SourceRefs: []SourceRef{{RefID: "asset-a:scene:scene-a"}}}, {ID: "invented", SourceRefs: []SourceRef{{RefID: "asset-b:scene:scene-b"}}}}}, nil
+	})
+	if _, err := ranker.Rank(context.Background(), narrativeRequest()); narrativeFailureFor(err) != narrativeFailureInvalid || attempts != 1 {
+		t.Fatalf("invalid response = %v, attempts = %d", err, attempts)
+	}
+}

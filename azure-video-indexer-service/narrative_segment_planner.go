@@ -14,7 +14,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-const narrativeSegmentPlannerInstructionsVersion = "v1"
+const (
+	narrativeSegmentPlannerInstructionsVersion = "v2"
+	narrativeSegmentPlannerAttempts            = 2
+)
 
 type NarrativeSegmentPlanner interface {
 	Plan(context.Context, videoindexerstudio.NarrativeSegmentPlanningRequest) (videoindexerstudio.NarrativeSegmentPlanningResponse, error)
@@ -31,33 +34,53 @@ type narrativeSegmentPlanner struct {
 
 func (p narrativeSegmentPlanner) Plan(ctx context.Context, request videoindexerstudio.NarrativeSegmentPlanningRequest) (videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
 	if p.runner == nil {
-		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, errors.New("narrative segment planner is not configured")
+		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, narrativeFailureError(narrativeFailureUnavailable, errors.New("planner not configured"))
 	}
 	if err := request.Validate(); err != nil {
-		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, err
+		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, narrativeFailureError(narrativeFailureInvalidReq, err)
 	}
 	if len(request.Catalog) > p.maxCatalog {
-		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, errors.New("narrative segment catalog limit exceeded")
+		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, narrativeFailureError(narrativeFailureLimit, errors.New("catalog limit exceeded"))
 	}
-	ctx, cancel := context.WithTimeout(ctx, p.timeout)
-	defer cancel()
 	raw, err := json.Marshal(request)
 	if err != nil {
-		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, err
+		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, narrativeFailureError(narrativeFailureInvalidReq, err)
 	}
+	planCtx, cancel := context.WithTimeout(ctx, p.timeout)
+	defer cancel()
 	start := time.Now()
-	response, err := p.runner.RunSegmentPlan(ctx, string(raw))
+	var response videoindexerstudio.NarrativeSegmentPlanningResponse
+	attempts := 0
+	for attempts = 1; attempts <= narrativeSegmentPlannerAttempts; attempts++ {
+		response, err = p.runner.RunSegmentPlan(planCtx, string(raw))
+		if err == nil {
+			if validationErr := response.Validate(); validationErr != nil {
+				err = narrativeFailureError(narrativeFailureInvalid, validationErr)
+			} else if len(response.Segments) > p.maxSegments {
+				err = narrativeFailureError(narrativeFailureLimit, errors.New("segment limit exceeded"))
+			}
+		} else {
+			err = classifyNarrativeProviderError(err)
+		}
+		if err == nil || !isRetryableNarrativeFailure(err) || planCtx.Err() != nil || attempts == narrativeSegmentPlannerAttempts {
+			break
+		}
+		if p.obs != nil {
+			p.obs.RecordRetry(ctx, "narrative.segment.plan", 0, attribute.String("failure_kind", string(narrativeFailureFor(err))))
+		}
+		select {
+		case <-planCtx.Done():
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	if planCtx.Err() != nil && err != nil {
+		err = narrativeFailureError(narrativeFailureTimeout, planCtx.Err())
+	}
 	if p.obs != nil {
-		p.obs.FinishSpan(ctx, nil, "narrative.segment.plan", start, []attribute.KeyValue{attribute.String("narrative_profile", string(request.Profile)), attribute.Int("catalog_count", len(request.Catalog)), attribute.Bool("narrative_intent_present", request.NarrativeIntent != "")}, err)
+		p.obs.FinishSpan(ctx, nil, "narrative.segment.plan", start, []attribute.KeyValue{attribute.String("prompt_version", narrativeSegmentPlannerInstructionsVersion), attribute.String("narrative_profile", string(request.Profile)), attribute.Int("catalog_count", len(request.Catalog)), attribute.Int("attempt_count", attempts), attribute.String("failure_kind", string(narrativeFailureFor(err))), attribute.Bool("narrative_intent_present", request.NarrativeIntent != "")}, err)
 	}
 	if err != nil {
 		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, err
-	}
-	if err := response.Validate(); err != nil {
-		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, fmt.Errorf("invalid segment planner response: %w", err)
-	}
-	if len(response.Segments) > p.maxSegments {
-		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, errors.New("narrative segment plan limit exceeded")
 	}
 	return response, nil
 }
@@ -96,6 +119,6 @@ func newNarrativeSegmentPlanner(cfg editPlannerConfig, timeout time.Duration, ma
 	return narrativeSegmentPlanner{runner: foundryNarrativeSegmentPlannerRunner{agent: ag}, timeout: timeout, maxCatalog: maxCatalog, maxSegments: maxSegments, obs: obs}, nil
 }
 func narrativeSegmentPlannerInstructions() string {
-	return `narrative-segment-planner instructions v1
-Use only catalog segmentId values. Each output segment must cite only its catalog evidenceIds. Output each segment at most once. Omit startMs/endMs to retain the catalog range; if supplied, use only 100ms boundaries strictly inside the allowed range. Never invent or alter source IDs, candidate IDs, evidence IDs, timecodes, ranges, or descriptors. Roles are exactly hook, context, development, payoff, outro. Return only the structured response.`
+	return `narrative-segment-planner instructions v2
+Return schemaVersion 1 and one to the supplied maximum number of segments. Select only catalog segmentId values, each once. Each segment must cite one or more evidenceIds listed on that exact catalog item. Omit startMs and endMs unless a shorter valid trim is necessary; a supplied trim must use 100ms boundaries, remain entirely inside that item's allowed range, and preserve at least one second. Roles are exactly hook, context, development, payoff, outro. Never invent or alter source IDs, candidate IDs, evidence IDs, timecodes, ranges, descriptors, or fields. Return only the structured response.`
 }

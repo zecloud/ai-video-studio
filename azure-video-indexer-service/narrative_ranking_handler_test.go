@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/zecloud/ai-video-studio/internal/videoindexerstudio"
@@ -70,5 +72,34 @@ func TestNarrativeRankingHandlerMapsDeadline(t *testing.T) {
 	response := narrativeRankingHTTPTestRequest(t, server, string(request))
 	if response.Code != http.StatusGatewayTimeout {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusGatewayTimeout)
+	}
+}
+
+func TestNarrativeRankingHandlerReturnsSafeFailureCodes(t *testing.T) {
+	request, err := json.Marshal(narrativeRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name    string
+		failure error
+		status  int
+		code    string
+	}{
+		{name: "timeout", failure: narrativeFailureError(narrativeFailureTimeout, context.DeadlineExceeded), status: http.StatusGatewayTimeout, code: "narrative_ranking_timeout"},
+		{name: "invalid response", failure: narrativeFailureError(narrativeFailureInvalid, errors.New("private provider response")), status: http.StatusBadGateway, code: "narrative_ranking_invalid_response"},
+		{name: "limit", failure: narrativeFailureError(narrativeFailureLimit, errors.New("private limit")), status: http.StatusUnprocessableEntity, code: "narrative_ranking_request_limit"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := NewServer(Config{APIKey: "test-key"}, nil)
+			server.SetNarrativeRanker(narrativeRankerFunc(func(context.Context, videoindexerstudio.NarrativeRankingRequest) (videoindexerstudio.NarrativeRankingResponse, error) {
+				return videoindexerstudio.NarrativeRankingResponse{}, test.failure
+			}))
+			response := narrativeRankingHTTPTestRequest(t, server, string(request))
+			var apiErr APIErrorResponse
+			if err := json.NewDecoder(response.Body).Decode(&apiErr); err != nil || response.Code != test.status || apiErr.Code != test.code || strings.Contains(apiErr.Message, "private") {
+				t.Fatalf("safe mapping = status %d payload %#v err %v", response.Code, apiErr, err)
+			}
+		})
 	}
 }

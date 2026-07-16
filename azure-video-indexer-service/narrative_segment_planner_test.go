@@ -41,7 +41,7 @@ func TestNarrativeSegmentPlannerRejectsLimitTimeoutAndInvalidResponse(t *testing
 	planner.runner = narrativeSegmentPlannerRunnerFunc(func(context.Context, string) (videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
 		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, nil
 	})
-	if _, err := planner.Plan(context.Background(), request); err == nil || !strings.Contains(err.Error(), "invalid segment planner response") {
+	if _, err := planner.Plan(context.Background(), request); err == nil || narrativeFailureFor(err) != narrativeFailureInvalid {
 		t.Fatalf("expected response rejection, got %v", err)
 	}
 	planner.timeout = time.Millisecond
@@ -86,5 +86,28 @@ func TestNarrativeSegmentPlannerConfigCapsBounds(t *testing.T) {
 	cfg := (Config{NarrativeSegmentPlannerTimeout: 30 * time.Second, NarrativeSegmentPlannerMaxCatalog: 49, NarrativeSegmentPlannerMaxSegments: 49}).Normalize()
 	if cfg.NarrativeSegmentPlannerTimeout != 20*time.Second || cfg.NarrativeSegmentPlannerMaxCatalog != 48 || cfg.NarrativeSegmentPlannerMaxSegments != 24 {
 		t.Fatalf("normalized planner config = %#v", cfg)
+	}
+}
+
+func TestNarrativeSegmentPlannerRetriesTransientButNotInvalidResponse(t *testing.T) {
+	request := segmentPlanningRequest()
+	attempts := 0
+	planner := narrativeSegmentPlanner{timeout: time.Second, maxCatalog: 1, maxSegments: 1, runner: narrativeSegmentPlannerRunnerFunc(func(context.Context, string) (videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
+		attempts++
+		if attempts == 1 {
+			return videoindexerstudio.NarrativeSegmentPlanningResponse{}, errors.New("temporary upstream failure")
+		}
+		return videoindexerstudio.NarrativeSegmentPlanningResponse{SchemaVersion: 1, Segments: []videoindexerstudio.NarrativeSegmentPlanItem{{SegmentID: "segment-1", Role: videoindexerstudio.NarrativeSegmentRoleHook, EvidenceIDs: []string{"evidence-1"}}}}, nil
+	})}
+	if _, err := planner.Plan(context.Background(), request); err != nil || attempts != 2 {
+		t.Fatalf("plan = %v, attempts = %d", err, attempts)
+	}
+	attempts = 0
+	planner.runner = narrativeSegmentPlannerRunnerFunc(func(context.Context, string) (videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
+		attempts++
+		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, nil
+	})
+	if _, err := planner.Plan(context.Background(), request); narrativeFailureFor(err) != narrativeFailureInvalid || attempts != 1 {
+		t.Fatalf("invalid response = %v, attempts = %d", err, attempts)
 	}
 }

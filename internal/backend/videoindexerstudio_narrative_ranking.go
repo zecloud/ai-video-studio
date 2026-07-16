@@ -12,7 +12,7 @@ import (
 
 const (
 	narrativeMaxCandidates = 48
-	narrativeMaxEvidence   = 160
+	narrativeMaxEvidence   = 54
 	narrativeTextLimit     = 240
 )
 
@@ -107,7 +107,7 @@ func buildNarrativeRankingRequest(composition videoindexerstudio.CompositionEdit
 }
 
 func selectNarrativeEvidence(candidates []videoindexerstudio.NarrativeRankingCandidate, evidence []videoindexerstudio.NarrativeEvidence) ([]videoindexerstudio.NarrativeEvidence, error) {
-	selected := make(map[string]struct{}, len(candidates))
+	selected := make(map[string]struct{}, len(candidates)*3)
 	for _, candidate := range candidates {
 		for _, item := range evidence {
 			if item.SourceAssetID == candidate.SourceAssetID && overlaps(candidate.StartMs, candidate.EndMs, item.StartMs, item.EndMs) {
@@ -119,11 +119,27 @@ func selectNarrativeEvidence(candidates []videoindexerstudio.NarrativeRankingCan
 			return nil, errors.New("narrative evidence budget cannot cover every candidate")
 		}
 	}
-	for _, item := range evidence {
-		if len(selected) == narrativeMaxEvidence {
-			break
+	const perCandidateLimit = 3
+	for _, candidate := range candidates {
+		selectedForCandidate := 0
+		for _, item := range evidence {
+			if item.SourceAssetID == candidate.SourceAssetID && overlaps(candidate.StartMs, candidate.EndMs, item.StartMs, item.EndMs) {
+				if _, exists := selected[item.ID]; exists {
+					selectedForCandidate++
+				}
+			}
 		}
-		selected[item.ID] = struct{}{}
+		for _, item := range evidence {
+			if len(selected) == narrativeMaxEvidence || selectedForCandidate == perCandidateLimit {
+				break
+			}
+			if item.SourceAssetID == candidate.SourceAssetID && overlaps(candidate.StartMs, candidate.EndMs, item.StartMs, item.EndMs) {
+				if _, exists := selected[item.ID]; !exists {
+					selected[item.ID] = struct{}{}
+					selectedForCandidate++
+				}
+			}
+		}
 	}
 	limited := make([]videoindexerstudio.NarrativeEvidence, 0, len(selected))
 	for _, item := range evidence {
@@ -133,7 +149,6 @@ func selectNarrativeEvidence(candidates []videoindexerstudio.NarrativeRankingCan
 	}
 	return limited, nil
 }
-
 func narrativeEvidenceForSource(assetID string, result videoindexerstudio.VideoIndexResult) []videoindexerstudio.NarrativeEvidence {
 	evidence := make([]videoindexerstudio.NarrativeEvidence, 0)
 	add := func(id, kind, text string, start, end int64) {

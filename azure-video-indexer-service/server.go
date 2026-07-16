@@ -100,19 +100,18 @@ func (s *Server) handleNarrativeSegmentPlanning(w http.ResponseWriter, r *http.R
 	response, err := s.narrativeSegmentPlanner.Plan(r.Context(), req)
 	if err == nil {
 		err = response.Validate()
+		if err != nil {
+			err = narrativeFailureError(narrativeFailureInvalid, err)
+		}
 	}
 	if err != nil {
-		status, code, retryable := http.StatusBadGateway, "narrative_segment_planning_failed", true
-		if errors.Is(err, context.DeadlineExceeded) {
-			status, code = http.StatusGatewayTimeout, "narrative_segment_planning_timeout"
-		} else if strings.Contains(err.Error(), "invalid") {
-			status, code, retryable = http.StatusUnprocessableEntity, "narrative_segment_planning_invalid", false
-		}
+		status, code, retryable := narrativeFailureHTTP("narrative_segment_planning", err)
 		writeAPIError(w, status, "narrative segment planning failed", code, retryable)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
 }
+
 func (s *Server) handleNarrativeIntentClassification(w http.ResponseWriter, r *http.Request) {
 	if s.narrativeIntentClassifier == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "narrative intent classifier is not configured", "narrative_intent_classifier_unavailable", true)
@@ -131,21 +130,17 @@ func (s *Server) handleNarrativeIntentClassification(w http.ResponseWriter, r *h
 	if err == nil {
 		err = response.Validate()
 		if err != nil {
-			err = fmt.Errorf("invalid classifier response: %w", err)
+			err = narrativeFailureError(narrativeFailureInvalid, err)
 		}
 	}
 	if err != nil {
-		status, code, retryable := http.StatusBadGateway, "narrative_intent_classification_failed", true
-		if errors.Is(err, context.DeadlineExceeded) {
-			status, code = http.StatusGatewayTimeout, "narrative_intent_classification_timeout"
-		} else if strings.Contains(err.Error(), "invalid classifier response") {
-			status, code, retryable = http.StatusBadGateway, "narrative_intent_classification_invalid_response", false
-		}
+		status, code, retryable := narrativeFailureHTTP("narrative_intent_classification", err)
 		writeAPIError(w, status, "narrative intent classification failed", code, retryable)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
 }
+
 func (s *Server) handleNarrativeRanking(w http.ResponseWriter, r *http.Request) {
 	if s.narrativeRanker == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "narrative ranker is not configured", "narrative_ranker_unavailable", true)
@@ -162,19 +157,12 @@ func (s *Server) handleNarrativeRanking(w http.ResponseWriter, r *http.Request) 
 	}
 	response, err := s.narrativeRanker.Rank(r.Context(), req)
 	if err != nil {
-		status, code, retryable := http.StatusBadGateway, "narrative_ranking_failed", false
-		if errors.Is(err, context.DeadlineExceeded) {
-			status, code, retryable = http.StatusGatewayTimeout, "narrative_ranking_timeout", true
-		}
-		if strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "unique") {
-			status, code = http.StatusUnprocessableEntity, "narrative_ranking_invalid"
-		}
+		status, code, retryable := narrativeFailureHTTP("narrative_ranking", err)
 		writeAPIError(w, status, "narrative ranking failed", code, retryable)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
 }
-
 func (s *Server) handleCreateRenderJob(w http.ResponseWriter, r *http.Request) {
 	if s.renderJobs == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "render job service is not configured", "service_unavailable", true)

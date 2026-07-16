@@ -174,8 +174,8 @@ func TestBuildNarrativeRankingRequestRetainsEvidenceForEveryCandidateWithinBudge
 	if request.NarrativeIntent != composition.NarrativeIntent {
 		t.Fatalf("narrative intent = %q", request.NarrativeIntent)
 	}
-	if len(request.Evidence) != narrativeMaxEvidence {
-		t.Fatalf("evidence count = %d, want %d", len(request.Evidence), narrativeMaxEvidence)
+	if len(request.Evidence) != 2 {
+		t.Fatalf("evidence count = %d, want %d", len(request.Evidence), 2)
 	}
 	for _, candidate := range request.Candidates {
 		if len(candidate.EvidenceIDs) == 0 {
@@ -294,5 +294,33 @@ func TestCompositionPersistsFoundryClassificationWhenRankingFallsBack(t *testing
 		if clip.SourceAssetID != "asset-a" && clip.SourceAssetID != "asset-b" || clip.StartMs < 0 || clip.EndMs <= clip.StartMs {
 			t.Fatalf("fallback changed grounded clip: %#v", clip)
 		}
+	}
+}
+
+func TestSelectNarrativeEvidenceCapsPerCandidateDeterministically(t *testing.T) {
+	candidates := []videoindexerstudio.NarrativeRankingCandidate{{ID: "candidate-a", SourceAssetID: "asset-a", StartMs: 0, EndMs: 100}, {ID: "candidate-b", SourceAssetID: "asset-b", StartMs: 0, EndMs: 100}}
+	evidence := make([]videoindexerstudio.NarrativeEvidence, 0, 12)
+	for _, assetID := range []string{"asset-a", "asset-b"} {
+		for i := 0; i < 6; i++ {
+			evidence = append(evidence, videoindexerstudio.NarrativeEvidence{ID: fmt.Sprintf("%s:scene:%d", assetID, i), SourceAssetID: assetID, Kind: "scene", StartMs: int64(i * 10), EndMs: int64(i*10 + 5)})
+		}
+	}
+	first, err := selectNarrativeEvidence(candidates, evidence)
+	if err != nil {
+		t.Fatalf("select evidence: %v", err)
+	}
+	second, err := selectNarrativeEvidence(candidates, evidence)
+	if err != nil || len(first) != 6 || len(second) != len(first) {
+		t.Fatalf("bounded selection = %d, %d, %v", len(first), len(second), err)
+	}
+	counts := map[string]int{}
+	for i := range first {
+		counts[first[i].SourceAssetID]++
+		if first[i] != second[i] {
+			t.Fatalf("selection is not deterministic: %#v != %#v", first, second)
+		}
+	}
+	if counts["asset-a"] != 3 || counts["asset-b"] != 3 {
+		t.Fatalf("per-candidate evidence cap not enforced: %#v", counts)
 	}
 }

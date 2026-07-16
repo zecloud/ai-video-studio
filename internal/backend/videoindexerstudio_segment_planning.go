@@ -204,11 +204,18 @@ func rebuildCompositionFromClips(plan videoindexerstudio.EditPlan, composition v
 	return plan, composition, []videoindexerstudio.TimelineDraft{draft}, nil
 }
 func narrativeSegmentPlanningFallbackReason(err error) videoindexerstudio.NarrativeSegmentPlanningFallbackReason {
+	if code := narrativeAPIErrorCode(err); code != "" {
+		switch code {
+		case "narrative_segment_planning_unavailable":
+			return videoindexerstudio.NarrativeSegmentPlanningFallbackUnavailable
+		case "narrative_segment_planning_timeout":
+			return videoindexerstudio.NarrativeSegmentPlanningFallbackTimeout
+		case "narrative_segment_planning_invalid_response", "narrative_segment_planning_invalid", "narrative_segment_planning_request_limit":
+			return videoindexerstudio.NarrativeSegmentPlanningFallbackInvalidResponse
+		}
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return videoindexerstudio.NarrativeSegmentPlanningFallbackTimeout
-	}
-	if err != nil && strings.Contains(err.Error(), "invalid") {
-		return videoindexerstudio.NarrativeSegmentPlanningFallbackInvalidResponse
 	}
 	return videoindexerstudio.NarrativeSegmentPlanningFallbackRequestFailed
 }
