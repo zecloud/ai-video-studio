@@ -84,6 +84,14 @@ func runAPI(ctx context.Context, logger *slog.Logger, cfg Config, store JobStore
 	} else {
 		logger.Warn("narrative ranking unavailable", "error", redactURLsInText(plannerErr.Error()))
 	}
+	if classifier, classifierErr := newNarrativeIntentClassifier(editPlannerConfig{
+		FoundryEndpoint: getRequiredEditPlannerEnv("FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_ENDPOINT", "AZURE_FOUNDRY_ENDPOINT"),
+		ModelDeployment: getOptionalEditPlannerEnv("FOUNDRY_DEPLOYMENT_NAME", "AZURE_FOUNDRY_DEPLOYMENT_NAME"),
+	}, cfg.NarrativeIntentClassifierTimeout, obs); classifierErr == nil {
+		server.SetNarrativeIntentClassifier(classifier)
+	} else {
+		logger.Warn("narrative intent classifier unavailable", "error", redactURLsInText(classifierErr.Error()))
+	}
 	server.SetRenderJobs(renderJobs)
 	server.obs = obs
 	server.blobSvc = blobSvc

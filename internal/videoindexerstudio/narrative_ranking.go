@@ -29,6 +29,28 @@ func (c *Client) RankNarrative(ctx context.Context, request NarrativeRankingRequ
 	return &response, nil
 }
 
+// ClassifyNarrativeIntent maps a normalized editorial preference to a closed
+// local pacing profile. The service never receives media or evidence here.
+func (c *Client) ClassifyNarrativeIntent(ctx context.Context, request NarrativeIntentClassificationRequest) (*NarrativeIntentClassificationResponse, error) {
+	if c == nil {
+		return nil, fmt.Errorf("%w: nil client", ErrInvalidConfig)
+	}
+	if err := c.cfg.validate(); err != nil {
+		return nil, err
+	}
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+	var response NarrativeIntentClassificationResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/narrative-intent-classifications", request, &response); err != nil {
+		return nil, fmt.Errorf("classify narrative intent: %w", err)
+	}
+	if err := response.Validate(); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
 func (r NarrativeRankingRequest) Validate() error {
 	if r.SchemaVersion != NarrativeRankingSchemaVersion || strings.TrimSpace(r.CompositionID) == "" || len(r.Candidates) == 0 {
 		return fmt.Errorf("%w: invalid narrative ranking request", ErrInvalidRequest)

@@ -283,6 +283,47 @@ const (
 	NarrativePacingProfileChronologicalContinuity NarrativePacingProfile = "chronological_continuity"
 )
 
+// NarrativeIntentProfile is the closed result contract returned by the
+// classifier. It is mapped locally to a pacing profile before any candidates
+// are selected.
+type NarrativeIntentProfile string
+
+const (
+	NarrativeIntentProfileStandard      NarrativeIntentProfile = "standard"
+	NarrativeIntentProfileEnergetic     NarrativeIntentProfile = "energetic"
+	NarrativeIntentProfileCalm          NarrativeIntentProfile = "calm"
+	NarrativeIntentProfileChronological NarrativeIntentProfile = "chronological"
+)
+
+type NarrativePacingClassifierMode string
+
+const (
+	NarrativePacingClassifierModeFoundryStructured            NarrativePacingClassifierMode = "foundry_structured"
+	NarrativePacingClassifierModeDeterministicKeywordFallback NarrativePacingClassifierMode = "deterministic_keyword_fallback"
+	NarrativePacingClassifierModeStandardFallback             NarrativePacingClassifierMode = "standard_fallback"
+)
+
+type NarrativePacingClassifierFallbackReason string
+
+const (
+	NarrativePacingClassifierFallbackNone            NarrativePacingClassifierFallbackReason = ""
+	NarrativePacingClassifierFallbackNoIntent        NarrativePacingClassifierFallbackReason = "no_intent"
+	NarrativePacingClassifierFallbackUnavailable     NarrativePacingClassifierFallbackReason = "classifier_unavailable"
+	NarrativePacingClassifierFallbackTimeout         NarrativePacingClassifierFallbackReason = "classifier_timeout"
+	NarrativePacingClassifierFallbackInvalidResponse NarrativePacingClassifierFallbackReason = "classifier_invalid_response"
+	NarrativePacingClassifierFallbackRequestFailed   NarrativePacingClassifierFallbackReason = "classifier_request_failed"
+)
+
+type NarrativeIntentClassificationRequest struct {
+	SchemaVersion   int    `json:"schemaVersion"`
+	NarrativeIntent string `json:"narrativeIntent"`
+}
+
+type NarrativeIntentClassificationResponse struct {
+	SchemaVersion int                    `json:"schemaVersion"`
+	Profile       NarrativeIntentProfile `json:"profile"`
+}
+
 // NarrativeRankingRequest contains only immutable clip identities and canonical
 // evidence. The ranker cannot alter source assets or time ranges.
 type NarrativeRankingRequest struct {
@@ -327,20 +368,22 @@ type NarrativeRankedClip struct {
 // composition. It is deliberately separate from EditPlan so single-video
 // planner responses remain backwards compatible.
 type CompositionEditPlan struct {
-	SchemaVersion         int                       `json:"schemaVersion"`
-	CompositionID         string                    `json:"compositionId"`
-	NarrativeIntent       string                    `json:"narrativeIntent,omitempty"`
-	PacingProfile         NarrativePacingProfile    `json:"pacingProfile,omitempty"`
-	VariantCount          int                       `json:"variantCount,omitempty"`
-	Title                 string                    `json:"title"`
-	Summary               string                    `json:"summary"`
-	RankingMode           string                    `json:"rankingMode"`
-	RecommendationVersion string                    `json:"recommendationVersion"`
-	EvidenceFingerprint   string                    `json:"evidenceFingerprint"`
-	SourceAssetIDs        []string                  `json:"sourceAssetIds"`
-	Sources               []CompositionSourceStatus `json:"sources"`
-	Clips                 []CompositionClip         `json:"clips"`
-	SourceRefs            []SourceRef               `json:"sourceRefs"`
+	SchemaVersion         int                                     `json:"schemaVersion"`
+	CompositionID         string                                  `json:"compositionId"`
+	NarrativeIntent       string                                  `json:"narrativeIntent,omitempty"`
+	PacingProfile         NarrativePacingProfile                  `json:"pacingProfile,omitempty"`
+	VariantCount          int                                     `json:"variantCount,omitempty"`
+	PacingClassifierMode  NarrativePacingClassifierMode           `json:"pacingClassifierMode,omitempty"`
+	PacingFallbackReason  NarrativePacingClassifierFallbackReason `json:"pacingFallbackReason,omitempty"`
+	Title                 string                                  `json:"title"`
+	Summary               string                                  `json:"summary"`
+	RankingMode           string                                  `json:"rankingMode"`
+	RecommendationVersion string                                  `json:"recommendationVersion"`
+	EvidenceFingerprint   string                                  `json:"evidenceFingerprint"`
+	SourceAssetIDs        []string                                `json:"sourceAssetIds"`
+	Sources               []CompositionSourceStatus               `json:"sources"`
+	Clips                 []CompositionClip                       `json:"clips"`
+	SourceRefs            []SourceRef                             `json:"sourceRefs"`
 }
 
 // NormalizeNarrativeIntent creates a bounded editorial preference suitable for
@@ -382,6 +425,49 @@ func NarrativePacingProfileForIntent(intent string) NarrativePacingProfile {
 	default:
 		return NarrativePacingProfileStandard
 	}
+}
+
+func (p NarrativeIntentProfile) Valid() bool {
+	return p == NarrativeIntentProfileStandard || p == NarrativeIntentProfileEnergetic || p == NarrativeIntentProfileCalm || p == NarrativeIntentProfileChronological
+}
+
+func (p NarrativeIntentProfile) PacingProfile() NarrativePacingProfile {
+	switch p {
+	case NarrativeIntentProfileEnergetic:
+		return NarrativePacingProfileEnergeticShortForm
+	case NarrativeIntentProfileCalm:
+		return NarrativePacingProfileCalmRecap
+	case NarrativeIntentProfileChronological:
+		return NarrativePacingProfileChronologicalContinuity
+	default:
+		return NarrativePacingProfileStandard
+	}
+}
+
+func (m NarrativePacingClassifierMode) Valid() bool {
+	return m == "" || m == NarrativePacingClassifierModeFoundryStructured || m == NarrativePacingClassifierModeDeterministicKeywordFallback || m == NarrativePacingClassifierModeStandardFallback
+}
+
+func (r NarrativePacingClassifierFallbackReason) Valid() bool {
+	return r == NarrativePacingClassifierFallbackNone || r == NarrativePacingClassifierFallbackNoIntent || r == NarrativePacingClassifierFallbackUnavailable || r == NarrativePacingClassifierFallbackTimeout || r == NarrativePacingClassifierFallbackInvalidResponse || r == NarrativePacingClassifierFallbackRequestFailed
+}
+
+func (r NarrativeIntentClassificationRequest) Validate() error {
+	if r.SchemaVersion != NarrativeRankingSchemaVersion {
+		return fmt.Errorf("%w: invalid narrative intent classification request", ErrInvalidRequest)
+	}
+	normalized, err := NormalizeNarrativeIntent(r.NarrativeIntent)
+	if err != nil || normalized == "" || normalized != r.NarrativeIntent {
+		return fmt.Errorf("%w: invalid narrative intent", ErrInvalidRequest)
+	}
+	return nil
+}
+
+func (r NarrativeIntentClassificationResponse) Validate() error {
+	if r.SchemaVersion != NarrativeRankingSchemaVersion || !r.Profile.Valid() {
+		return fmt.Errorf("%w: invalid narrative intent classification response", ErrInvalidRequest)
+	}
+	return nil
 }
 
 func (p NarrativePacingProfile) Valid() bool {

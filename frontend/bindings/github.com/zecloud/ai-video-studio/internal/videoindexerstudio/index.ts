@@ -12,6 +12,8 @@ export {
     MediaAudioSignals,
     MediaSignals,
     MediaVideoSignals,
+    NarrativePacingClassifierFallbackReason,
+    NarrativePacingClassifierMode,
     NarrativePacingProfile,
     SilenceInterval,
     SourceRef,

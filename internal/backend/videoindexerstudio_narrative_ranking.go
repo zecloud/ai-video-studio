@@ -62,7 +62,7 @@ func buildNarrativeRankingRequest(composition videoindexerstudio.CompositionEdit
 	if len(composition.Clips) > narrativeMaxCandidates {
 		return videoindexerstudio.NarrativeRankingRequest{}, errors.New("narrative candidate limit exceeded")
 	}
-	request := videoindexerstudio.NarrativeRankingRequest{SchemaVersion: videoindexerstudio.NarrativeRankingSchemaVersion, CompositionID: composition.CompositionID, NarrativeIntent: composition.NarrativeIntent, PacingProfile: composition.PacingProfile, VariantCount: composition.VariantCount}
+	request := videoindexerstudio.NarrativeRankingRequest{SchemaVersion: videoindexerstudio.NarrativeRankingSchemaVersion, CompositionID: composition.CompositionID, NarrativeIntent: composition.NarrativeIntent}
 	for _, clip := range composition.Clips {
 		request.Candidates = append(request.Candidates, videoindexerstudio.NarrativeRankingCandidate{ID: clip.ID, SourceAssetID: clip.SourceAssetID, StartMs: clip.StartMs, EndMs: clip.EndMs, Score: clip.Score})
 	}

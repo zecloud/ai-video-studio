@@ -41,6 +41,16 @@ type narrativeRankingClient interface {
 	RankNarrative(context.Context, videoindexerstudio.NarrativeRankingRequest) (*videoindexerstudio.NarrativeRankingResponse, error)
 }
 
+type narrativeIntentClassificationClient interface {
+	ClassifyNarrativeIntent(context.Context, videoindexerstudio.NarrativeIntentClassificationRequest) (*videoindexerstudio.NarrativeIntentClassificationResponse, error)
+}
+
+type narrativePacingResolution struct {
+	profile        videoindexerstudio.NarrativePacingProfile
+	mode           videoindexerstudio.NarrativePacingClassifierMode
+	fallbackReason videoindexerstudio.NarrativePacingClassifierFallbackReason
+}
+
 type videoIndexerJobStore interface {
 	Load(context.Context) ([]VideoIndexerStudioJob, error)
 	Save(context.Context, []VideoIndexerStudioJob) error
@@ -432,7 +442,8 @@ func (s *VideoIndexerStudioService) evaluateComposition(ctx context.Context, com
 		}
 		dependencies = append(dependencies, dependency)
 	}
-	plan, compositionPlan, drafts, err := buildMultiVideoCompositionWithIntent(composition.ID, composition.AssetIDs, dependencies, composition.NarrativeIntent)
+	resolution := s.resolveNarrativePacing(ctx, composition.NarrativeIntent)
+	plan, compositionPlan, drafts, err := buildMultiVideoCompositionWithPacing(composition.ID, composition.AssetIDs, dependencies, composition.NarrativeIntent, resolution)
 	if err != nil {
 		return failComposition(composition, s.nowTime(), err.Error())
 	}
@@ -466,12 +477,60 @@ func failComposition(job VideoIndexerStudioJob, now time.Time, message string) V
 	return job
 }
 
+func (s *VideoIndexerStudioService) resolveNarrativePacing(ctx context.Context, intent string) narrativePacingResolution {
+	if intent == "" {
+		return narrativePacingResolution{
+			profile:        videoindexerstudio.NarrativePacingProfileStandard,
+			mode:           videoindexerstudio.NarrativePacingClassifierModeStandardFallback,
+			fallbackReason: videoindexerstudio.NarrativePacingClassifierFallbackNoIntent,
+		}
+	}
+	if client, err := s.clientFor(ctx); err == nil {
+		if classifier, ok := client.(narrativeIntentClassificationClient); ok {
+			response, classifyErr := classifier.ClassifyNarrativeIntent(ctx, videoindexerstudio.NarrativeIntentClassificationRequest{SchemaVersion: videoindexerstudio.NarrativeRankingSchemaVersion, NarrativeIntent: intent})
+			if classifyErr == nil {
+				if response == nil || response.Validate() != nil {
+					return deterministicNarrativePacingResolution(intent, videoindexerstudio.NarrativePacingClassifierFallbackInvalidResponse)
+				}
+				return narrativePacingResolution{profile: response.Profile.PacingProfile(), mode: videoindexerstudio.NarrativePacingClassifierModeFoundryStructured}
+			}
+			return deterministicNarrativePacingResolution(intent, narrativePacingFallbackReason(classifyErr))
+		}
+	}
+	return deterministicNarrativePacingResolution(intent, videoindexerstudio.NarrativePacingClassifierFallbackUnavailable)
+}
+
+func deterministicNarrativePacingResolution(intent string, reason videoindexerstudio.NarrativePacingClassifierFallbackReason) narrativePacingResolution {
+	profile := videoindexerstudio.NarrativePacingProfileForIntent(intent)
+	mode := videoindexerstudio.NarrativePacingClassifierModeDeterministicKeywordFallback
+	if profile == videoindexerstudio.NarrativePacingProfileStandard {
+		mode = videoindexerstudio.NarrativePacingClassifierModeStandardFallback
+	}
+	return narrativePacingResolution{profile: profile, mode: mode, fallbackReason: reason}
+}
+
+func narrativePacingFallbackReason(err error) videoindexerstudio.NarrativePacingClassifierFallbackReason {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return videoindexerstudio.NarrativePacingClassifierFallbackTimeout
+	}
+	if err != nil && strings.Contains(err.Error(), "invalid narrative intent classification response") {
+		return videoindexerstudio.NarrativePacingClassifierFallbackInvalidResponse
+	}
+	return videoindexerstudio.NarrativePacingClassifierFallbackRequestFailed
+}
 func buildMultiVideoComposition(compositionID string, assetIDs []string, dependencies []VideoIndexerStudioJob) (videoindexerstudio.EditPlan, videoindexerstudio.CompositionEditPlan, []videoindexerstudio.TimelineDraft, error) {
 	return buildMultiVideoCompositionWithIntent(compositionID, assetIDs, dependencies, "")
 }
 
 func buildMultiVideoCompositionWithIntent(compositionID string, assetIDs []string, dependencies []VideoIndexerStudioJob, narrativeIntent string) (videoindexerstudio.EditPlan, videoindexerstudio.CompositionEditPlan, []videoindexerstudio.TimelineDraft, error) {
-	profile := videoindexerstudio.NarrativePacingProfileForIntent(narrativeIntent)
+	return buildMultiVideoCompositionWithPacing(compositionID, assetIDs, dependencies, narrativeIntent, narrativePacingResolution{
+		profile: videoindexerstudio.NarrativePacingProfileForIntent(narrativeIntent),
+		mode:    videoindexerstudio.NarrativePacingClassifierModeDeterministicKeywordFallback,
+	})
+}
+
+func buildMultiVideoCompositionWithPacing(compositionID string, assetIDs []string, dependencies []VideoIndexerStudioJob, narrativeIntent string, resolution narrativePacingResolution) (videoindexerstudio.EditPlan, videoindexerstudio.CompositionEditPlan, []videoindexerstudio.TimelineDraft, error) {
+	profile := resolution.profile
 	if len(assetIDs) < 2 || len(dependencies) != len(assetIDs) {
 		return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, errors.New("composition requires a completed analysis for every selected asset")
 	}
@@ -533,7 +592,7 @@ func buildMultiVideoCompositionWithIntent(compositionID string, assetIDs []strin
 	sort.Strings(canonicalAssetIDs)
 	suggestion := videoindexerstudio.EditSuggestion{ID: "multi-video-narrative", Title: "Multi-video narrative", Reason: "Orders grounded clips by their validated highlight score.", StartMs: 0, EndMs: duration, Score: averageClipScore(clips), SourceRefs: refs, Clips: clips}
 	plan := videoindexerstudio.EditPlan{SchemaVersion: 1, AssetID: canonicalAssetIDs[0], SourceAssetIDs: canonicalAssetIDs, Title: "Multi-video smart edit", Summary: fmt.Sprintf("A grounded narrative edit using all %d selected videos.", len(assetIDs)), Suggestions: []videoindexerstudio.EditSuggestion{suggestion}, SourceRefs: refs}
-	compositionPlan := videoindexerstudio.CompositionEditPlan{SchemaVersion: videoindexerstudio.CompositionEditPlanSchemaVersion, CompositionID: compositionID, NarrativeIntent: narrativeIntent, PacingProfile: profile, VariantCount: variantCount, Title: plan.Title, Summary: plan.Summary, RankingMode: "deterministic_grounded_v1", RecommendationVersion: "multi-video-composition-v2", EvidenceFingerprint: compositionEvidenceFingerprint(canonicalAssetIDs, sources, compositionClips), SourceAssetIDs: canonicalAssetIDs, Sources: sources, Clips: compositionClips, SourceRefs: refs}
+	compositionPlan := videoindexerstudio.CompositionEditPlan{SchemaVersion: videoindexerstudio.CompositionEditPlanSchemaVersion, CompositionID: compositionID, NarrativeIntent: narrativeIntent, PacingProfile: profile, VariantCount: variantCount, PacingClassifierMode: resolution.mode, PacingFallbackReason: resolution.fallbackReason, Title: plan.Title, Summary: plan.Summary, RankingMode: "deterministic_grounded_v1", RecommendationVersion: "multi-video-composition-v2", EvidenceFingerprint: compositionEvidenceFingerprint(canonicalAssetIDs, sources, compositionClips), SourceAssetIDs: canonicalAssetIDs, Sources: sources, Clips: compositionClips, SourceRefs: refs}
 	draft, err := timelineDraftFromSuggestion(compositionID, suggestion)
 	if err != nil {
 		return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, err

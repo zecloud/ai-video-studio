@@ -690,6 +690,8 @@ function renderCompositionRecommendation(job: BackendModels.VideoIndexerStudioJo
           <div class="composition-summary">
             <div class="kv"><span>Summary</span><strong>${escapeHTML(plan?.summary || "—")}</strong></div>
             ${narrativeIntent ? `<div class="kv"><span>Narrative intent</span><strong>${escapeHTML(narrativeIntent)}</strong></div>` : ""}
+            ${plan?.pacingProfile ? `<div class="kv"><span>Local pacing</span><strong>${escapeHTML(plan.pacingProfile.replaceAll("_", " "))}</strong></div>` : ""}
+            ${plan?.pacingClassifierMode ? `<div class="kv"><span>Intent classification</span><strong>${escapeHTML(plan.pacingClassifierMode.replaceAll("_", " "))}${plan.pacingFallbackReason ? ` (${escapeHTML(plan.pacingFallbackReason.replaceAll("_", " "))})` : ""}</strong></div>` : ""}
             <div class="kv"><span>Ranking</span><strong>${escapeHTML(plan?.rankingMode || "Grounded ranking")}</strong></div>
             <div class="kv"><span>Evidence</span><strong class="path-detail">${escapeHTML(plan?.evidenceFingerprint || "Unavailable")}</strong></div>
           </div>` : `<div class="empty-state"><strong>${job.status === "failed" ? "Composition unavailable" : job.status === "canceled" ? "Composition canceled" : "Composition not ready"}</strong>${narrativeIntent ? `<p>Narrative intent: ${escapeHTML(narrativeIntent)}</p>` : ""}<p>${escapeHTML(statusMessage)}</p></div>`}

@@ -22,7 +22,7 @@ func narrativeRequest() videoindexerstudio.NarrativeRankingRequest {
 
 func TestNarrativeRankerAcceptsOnlyCompleteGroundedOrder(t *testing.T) {
 	ranker := narrativeRanker{max: 2, timeout: time.Second, planner: narrativePlannerFunc(func(_ context.Context, prompt string) (EditPlan, error) {
-		if !strings.Contains(prompt, "clip-a") || !strings.Contains(prompt, `"narrativeIntent":"action-forward"`) || !strings.Contains(prompt, "editorial ordering preferences only") || !strings.Contains(prompt, "Order every candidate exactly once") {
+		if !strings.Contains(prompt, "clip-a") || !strings.Contains(prompt, `"narrativeIntent":"action-forward"`) || !strings.Contains(prompt, "Local candidate selection is already complete") || !strings.Contains(prompt, "Order every candidate exactly once") {
 			t.Fatalf("prompt omitted strict contract: %s", prompt)
 		}
 		return EditPlan{Suggestions: []EditSuggestion{{ID: "clip-b", SourceRefs: []SourceRef{{RefID: "asset-b:scene:scene-b"}}}, {ID: "clip-a", SourceRefs: []SourceRef{{RefID: "asset-a:scene:scene-a"}}}}}, nil

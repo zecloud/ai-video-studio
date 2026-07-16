@@ -8,10 +8,38 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/zecloud/ai-video-studio/internal/library"
 	"github.com/zecloud/ai-video-studio/internal/videoindexerstudio"
 )
 
 type rankingClientFunc func(context.Context, videoindexerstudio.NarrativeRankingRequest) (*videoindexerstudio.NarrativeRankingResponse, error)
+
+type classifierClientFunc func(context.Context, videoindexerstudio.NarrativeIntentClassificationRequest) (*videoindexerstudio.NarrativeIntentClassificationResponse, error)
+
+type classifierAndRankingClient struct {
+	classifier classifierClientFunc
+	ranker     rankingClientFunc
+}
+
+func (c classifierAndRankingClient) CreateJob(context.Context, videoindexerstudio.CreateJobRequest) (*videoindexerstudio.JobResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (c classifierAndRankingClient) GetJob(context.Context, string) (*videoindexerstudio.JobResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (c classifierAndRankingClient) CancelJob(context.Context, string) (*videoindexerstudio.JobResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (c classifierAndRankingClient) ClassifyNarrativeIntent(ctx context.Context, req videoindexerstudio.NarrativeIntentClassificationRequest) (*videoindexerstudio.NarrativeIntentClassificationResponse, error) {
+	return c.classifier(ctx, req)
+}
+
+func (c classifierAndRankingClient) RankNarrative(ctx context.Context, req videoindexerstudio.NarrativeRankingRequest) (*videoindexerstudio.NarrativeRankingResponse, error) {
+	return c.ranker(ctx, req)
+}
 
 func (f rankingClientFunc) RankNarrative(ctx context.Context, request videoindexerstudio.NarrativeRankingRequest) (*videoindexerstudio.NarrativeRankingResponse, error) {
 	return f(ctx, request)
@@ -177,5 +205,94 @@ func TestTruncateNarrativeTextPreservesUTF8(t *testing.T) {
 	truncated := truncateNarrativeText(text)
 	if !utf8.ValidString(truncated) || utf8.RuneCountInString(truncated) != narrativeTextLimit {
 		t.Fatalf("invalid rune-safe truncation: %q", truncated)
+	}
+}
+func TestResolveNarrativePacingUsesFoundryProfileAndSafeFallbacks(t *testing.T) {
+	validResponse := func(profile videoindexerstudio.NarrativeIntentProfile) *videoindexerstudio.NarrativeIntentClassificationResponse {
+		return &videoindexerstudio.NarrativeIntentClassificationResponse{SchemaVersion: videoindexerstudio.NarrativeRankingSchemaVersion, Profile: profile}
+	}
+	tests := map[string]struct {
+		intent       string
+		response     *videoindexerstudio.NarrativeIntentClassificationResponse
+		err          error
+		wantProfile  videoindexerstudio.NarrativePacingProfile
+		wantMode     videoindexerstudio.NarrativePacingClassifierMode
+		wantFallback videoindexerstudio.NarrativePacingClassifierFallbackReason
+	}{
+		"multilingual Foundry energetic":        {intent: "dynamic tiktok video", response: validResponse(videoindexerstudio.NarrativeIntentProfileEnergetic), wantProfile: videoindexerstudio.NarrativePacingProfileEnergeticShortForm, wantMode: videoindexerstudio.NarrativePacingClassifierModeFoundryStructured},
+		"French Foundry calm":                   {intent: "recapitulatif calme", response: validResponse(videoindexerstudio.NarrativeIntentProfileCalm), wantProfile: videoindexerstudio.NarrativePacingProfileCalmRecap, wantMode: videoindexerstudio.NarrativePacingClassifierModeFoundryStructured},
+		"timeout uses keyword fallback":         {intent: "energetic", err: context.DeadlineExceeded, wantProfile: videoindexerstudio.NarrativePacingProfileEnergeticShortForm, wantMode: videoindexerstudio.NarrativePacingClassifierModeDeterministicKeywordFallback, wantFallback: videoindexerstudio.NarrativePacingClassifierFallbackTimeout},
+		"invalid result uses standard fallback": {intent: "recapitulatif calme", response: &videoindexerstudio.NarrativeIntentClassificationResponse{SchemaVersion: 1, Profile: "untrusted"}, wantProfile: videoindexerstudio.NarrativePacingProfileStandard, wantMode: videoindexerstudio.NarrativePacingClassifierModeStandardFallback, wantFallback: videoindexerstudio.NarrativePacingClassifierFallbackInvalidResponse},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			client := classifierAndRankingClient{
+				classifier: func(_ context.Context, req videoindexerstudio.NarrativeIntentClassificationRequest) (*videoindexerstudio.NarrativeIntentClassificationResponse, error) {
+					if req.NarrativeIntent != test.intent || req.SchemaVersion != videoindexerstudio.NarrativeRankingSchemaVersion {
+						t.Fatalf("unexpected classification request: %#v", req)
+					}
+					return test.response, test.err
+				},
+				ranker: func(context.Context, videoindexerstudio.NarrativeRankingRequest) (*videoindexerstudio.NarrativeRankingResponse, error) {
+					return nil, errors.New("not used")
+				},
+			}
+			svc := NewVideoIndexerStudioService(nil, nil, nil, client)
+			got := svc.resolveNarrativePacing(context.Background(), test.intent)
+			if got.profile != test.wantProfile || got.mode != test.wantMode || got.fallbackReason != test.wantFallback {
+				t.Fatalf("resolution = %#v", got)
+			}
+		})
+	}
+}
+
+func TestBuildNarrativeRankingRequestExcludesLocalPacingMetadata(t *testing.T) {
+	dependencies := narrativeDependencies()
+	_, composition, _, err := buildMultiVideoCompositionWithPacing("composition-1", []string{"asset-a", "asset-b"}, dependencies, "recapitulatif calme", narrativePacingResolution{profile: videoindexerstudio.NarrativePacingProfileCalmRecap, mode: videoindexerstudio.NarrativePacingClassifierModeFoundryStructured})
+	if err != nil {
+		t.Fatalf("build composition: %v", err)
+	}
+	request, err := buildNarrativeRankingRequest(composition, dependencies)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if request.PacingProfile != "" || request.VariantCount != 0 || request.NarrativeIntent != "recapitulatif calme" {
+		t.Fatalf("ranking packet leaked local pacing metadata: %#v", request)
+	}
+}
+
+func TestCompositionPersistsFoundryClassificationWhenRankingFallsBack(t *testing.T) {
+	assets := []library.ProjectAsset{{ID: "asset-a", Name: "a.mp4", CloudAssetID: "drive-a"}, {ID: "asset-b", Name: "b.mp4", CloudAssetID: "drive-b"}}
+	store := &memoryVideoIndexerJobStore{jobs: narrativeDependencies()}
+	client := classifierAndRankingClient{
+		classifier: func(_ context.Context, req videoindexerstudio.NarrativeIntentClassificationRequest) (*videoindexerstudio.NarrativeIntentClassificationResponse, error) {
+			if req.NarrativeIntent != "recapitulatif calme" {
+				t.Fatalf("classifier intent = %q", req.NarrativeIntent)
+			}
+			return &videoindexerstudio.NarrativeIntentClassificationResponse{SchemaVersion: videoindexerstudio.NarrativeRankingSchemaVersion, Profile: videoindexerstudio.NarrativeIntentProfileCalm}, nil
+		},
+		ranker: func(context.Context, videoindexerstudio.NarrativeRankingRequest) (*videoindexerstudio.NarrativeRankingResponse, error) {
+			return nil, errors.New("ranking unavailable")
+		},
+	}
+	svc := NewVideoIndexerStudioService(&fakeLibraryStore{assets: assets}, nil, &fakeEditingSaver{}, client, store)
+	composition, err := svc.GenerateMultiVideoEditWithIntent(context.Background(), []string{"asset-a", "asset-b"}, "recapitulatif calme")
+	if err != nil {
+		t.Fatalf("GenerateMultiVideoEditWithIntent: %v", err)
+	}
+	if composition.CompositionPlan == nil {
+		t.Fatal("composition plan is missing")
+	}
+	plan := composition.CompositionPlan
+	if plan.PacingProfile != videoindexerstudio.NarrativePacingProfileCalmRecap || plan.PacingClassifierMode != videoindexerstudio.NarrativePacingClassifierModeFoundryStructured || plan.PacingFallbackReason != "" {
+		t.Fatalf("persisted classifier metadata = %#v", plan)
+	}
+	if plan.RankingMode != "deterministic_grounded_fallback_v1" || len(plan.Clips) != 2 {
+		t.Fatalf("ranking fallback did not preserve locally selected candidates: %#v", plan)
+	}
+	for _, clip := range plan.Clips {
+		if clip.SourceAssetID != "asset-a" && clip.SourceAssetID != "asset-b" || clip.StartMs < 0 || clip.EndMs <= clip.StartMs {
+			t.Fatalf("fallback changed grounded clip: %#v", clip)
+		}
 	}
 }

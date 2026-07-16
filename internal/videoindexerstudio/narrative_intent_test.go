@@ -71,7 +71,24 @@ func TestCompositionEditPlanAcceptsLegacyJSONWithoutPacingMetadata(t *testing.T)
 	if err := json.Unmarshal([]byte(`{"schemaVersion":1,"compositionId":"composition-1","title":"Edit","summary":"Summary","rankingMode":"deterministic_grounded_fallback_v1","recommendationVersion":"multi-video-composition-v2","evidenceFingerprint":"fingerprint"}`), &plan); err != nil {
 		t.Fatalf("unmarshal legacy composition: %v", err)
 	}
-	if plan.PacingProfile != "" || plan.VariantCount != 0 {
+	if plan.PacingProfile != "" || plan.VariantCount != 0 || plan.PacingClassifierMode != "" || plan.PacingFallbackReason != "" {
 		t.Fatalf("legacy composition acquired pacing metadata: %#v", plan)
+	}
+}
+func TestNarrativeIntentClassificationContracts(t *testing.T) {
+	valid := NarrativeIntentClassificationRequest{SchemaVersion: NarrativeRankingSchemaVersion, NarrativeIntent: "recapitulatif calme"}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid classification request: %v", err)
+	}
+	if err := (NarrativeIntentClassificationRequest{SchemaVersion: NarrativeRankingSchemaVersion, NarrativeIntent: "calm\nrecap"}).Validate(); err == nil {
+		t.Fatal("expected unnormalized classification request rejection")
+	}
+	for _, profile := range []NarrativeIntentProfile{NarrativeIntentProfileStandard, NarrativeIntentProfileEnergetic, NarrativeIntentProfileCalm, NarrativeIntentProfileChronological} {
+		if err := (NarrativeIntentClassificationResponse{SchemaVersion: NarrativeRankingSchemaVersion, Profile: profile}).Validate(); err != nil {
+			t.Fatalf("valid profile %q: %v", profile, err)
+		}
+	}
+	if err := (NarrativeIntentClassificationResponse{SchemaVersion: NarrativeRankingSchemaVersion, Profile: "invented"}).Validate(); err == nil {
+		t.Fatal("expected unknown profile rejection")
 	}
 }

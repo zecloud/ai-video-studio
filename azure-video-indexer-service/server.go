@@ -18,25 +18,29 @@ import (
 )
 
 type Server struct {
-	cfg             Config
-	jobs            JobService
-	renderJobs      RenderJobService
-	obs             *Observability
-	blobSvc         *AzureBlobService
-	renderOutputs   RenderOutputStreamer
-	videoIndexer    videoIndexerReadiness
-	planner         EditPlanner
-	narrativeRanker NarrativeRanker
-	lookPath        func(string) (string, error)
-	readiness       readinessReporter
-	readinessOnce   sync.Once
+	cfg                       Config
+	jobs                      JobService
+	renderJobs                RenderJobService
+	obs                       *Observability
+	blobSvc                   *AzureBlobService
+	renderOutputs             RenderOutputStreamer
+	videoIndexer              videoIndexerReadiness
+	planner                   EditPlanner
+	narrativeRanker           NarrativeRanker
+	narrativeIntentClassifier NarrativeIntentClassifier
+	lookPath                  func(string) (string, error)
+	readiness                 readinessReporter
+	readinessOnce             sync.Once
 }
 
 type RenderOutputStreamer interface {
 	OpenDownload(context.Context, StagedAsset) (BlobDownload, error)
 }
 
-func (s *Server) SetNarrativeRanker(ranker NarrativeRanker)            { s.narrativeRanker = ranker }
+func (s *Server) SetNarrativeRanker(ranker NarrativeRanker) { s.narrativeRanker = ranker }
+func (s *Server) SetNarrativeIntentClassifier(classifier NarrativeIntentClassifier) {
+	s.narrativeIntentClassifier = classifier
+}
 func (s *Server) SetRenderJobs(jobs RenderJobService)                  { s.renderJobs = jobs }
 func (s *Server) SetRenderOutputStreamer(outputs RenderOutputStreamer) { s.renderOutputs = outputs }
 
@@ -63,6 +67,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/render-jobs/{jobID}/cancel", s.requireAPIKey(http.HandlerFunc(s.handleCancelRenderJob)))
 	mux.Handle("POST /api/v1/jobs", s.requireAPIKey(http.HandlerFunc(s.handleCreateJob)))
 	mux.Handle("POST /api/v1/narrative-rankings", s.requireAPIKey(http.HandlerFunc(s.handleNarrativeRanking)))
+	mux.Handle("POST /api/v1/narrative-intent-classifications", s.requireAPIKey(http.HandlerFunc(s.handleNarrativeIntentClassification)))
 	mux.Handle("GET /api/v1/jobs", s.requireAPIKey(http.HandlerFunc(s.handleListJobs)))
 	mux.Handle("GET /api/v1/jobs/{jobID}", s.requireAPIKey(http.HandlerFunc(s.handleGetJob)))
 	mux.Handle("POST /api/v1/jobs/{jobID}/cancel", s.requireAPIKey(http.HandlerFunc(s.handleCancelJob)))
@@ -73,6 +78,39 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
+func (s *Server) handleNarrativeIntentClassification(w http.ResponseWriter, r *http.Request) {
+	if s.narrativeIntentClassifier == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "narrative intent classifier is not configured", "narrative_intent_classifier_unavailable", true)
+		return
+	}
+	var req videoindexerstudio.NarrativeIntentClassificationRequest
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid JSON request body", "bad_request", false)
+		return
+	}
+	if err := req.Validate(); err != nil {
+		writeAPIError(w, http.StatusUnprocessableEntity, "invalid narrative intent classification request", "narrative_intent_classification_invalid", false)
+		return
+	}
+	response, err := s.narrativeIntentClassifier.Classify(r.Context(), req)
+	if err == nil {
+		err = response.Validate()
+		if err != nil {
+			err = fmt.Errorf("invalid classifier response: %w", err)
+		}
+	}
+	if err != nil {
+		status, code, retryable := http.StatusBadGateway, "narrative_intent_classification_failed", true
+		if errors.Is(err, context.DeadlineExceeded) {
+			status, code = http.StatusGatewayTimeout, "narrative_intent_classification_timeout"
+		} else if strings.Contains(err.Error(), "invalid classifier response") {
+			status, code, retryable = http.StatusBadGateway, "narrative_intent_classification_invalid_response", false
+		}
+		writeAPIError(w, status, "narrative intent classification failed", code, retryable)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
 func (s *Server) handleNarrativeRanking(w http.ResponseWriter, r *http.Request) {
 	if s.narrativeRanker == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "narrative ranker is not configured", "narrative_ranker_unavailable", true)
