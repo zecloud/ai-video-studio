@@ -718,6 +718,15 @@ module workerFoundryRole 'foundry-role-assignment.bicep' = {
   }
 }
 
+module apiFoundryRole 'foundry-role-assignment.bicep' = {
+  name: 'api-foundry-user'
+  params: {
+    accountName: foundryAccountName
+    principalId: apiIdentity.properties.principalId
+    roleDefinitionId: foundryUserRoleDefinitionId
+  }
+}
+
 module videoIndexerFoundryRole 'foundry-role-assignment.bicep' = {
   name: 'video-indexer-openai-user'
   params: {
