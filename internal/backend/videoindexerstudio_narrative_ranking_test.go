@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -66,6 +67,53 @@ func TestRankMultiVideoCompositionRejectsMissingCitation(t *testing.T) {
 	}), plan, composition, dependencies)
 	if err == nil {
 		t.Fatal("expected missing citation rejection")
+	}
+}
+
+func TestBuildNarrativeRankingRequestRetainsEvidenceForEveryCandidateWithinBudget(t *testing.T) {
+	firstResult := &videoindexerstudio.VideoIndexResult{}
+	for i := 0; i < narrativeMaxEvidence; i++ {
+		firstResult.Insights.Scenes = append(firstResult.Insights.Scenes, videoindexerstudio.VideoIndexScene{ID: fmt.Sprintf("scene-%03d", i), StartMs: int64(i * 10), EndMs: int64(i*10 + 5)})
+	}
+	lateResult := &videoindexerstudio.VideoIndexResult{Insights: videoindexerstudio.VideoIndexInsights{Scenes: []videoindexerstudio.VideoIndexScene{{ID: "late-scene", StartMs: 0, EndMs: 5}}}}
+	composition := videoindexerstudio.CompositionEditPlan{
+		CompositionID:  "composition-1",
+		SourceAssetIDs: []string{"asset-a", "asset-z"},
+		Clips: []videoindexerstudio.CompositionClip{
+			{ID: "candidate-a", SourceAssetID: "asset-a", StartMs: 0, EndMs: 5},
+			{ID: "candidate-z", SourceAssetID: "asset-z", StartMs: 0, EndMs: 5},
+		},
+	}
+	request, err := buildNarrativeRankingRequest(composition, []VideoIndexerStudioJob{
+		{AssetID: "asset-a", VideoIndexResult: firstResult},
+		{AssetID: "asset-z", VideoIndexResult: lateResult},
+	})
+	if err != nil {
+		t.Fatalf("build narrative ranking request: %v", err)
+	}
+	if len(request.Evidence) != narrativeMaxEvidence {
+		t.Fatalf("evidence count = %d, want %d", len(request.Evidence), narrativeMaxEvidence)
+	}
+	for _, candidate := range request.Candidates {
+		if len(candidate.EvidenceIDs) == 0 {
+			t.Fatalf("candidate %q has no evidence after bounded selection", candidate.ID)
+		}
+	}
+	if got := request.Candidates[1].EvidenceIDs; len(got) != 1 || got[0] != "asset-z:scene:late-scene" {
+		t.Fatalf("late candidate evidence = %#v", got)
+	}
+}
+
+func TestSelectNarrativeEvidenceRejectsBudgetWithoutCandidateCoverage(t *testing.T) {
+	candidates := make([]videoindexerstudio.NarrativeRankingCandidate, narrativeMaxEvidence+1)
+	evidence := make([]videoindexerstudio.NarrativeEvidence, narrativeMaxEvidence+1)
+	for i := range candidates {
+		assetID := fmt.Sprintf("asset-%03d", i)
+		candidates[i] = videoindexerstudio.NarrativeRankingCandidate{ID: assetID, SourceAssetID: assetID, StartMs: 0, EndMs: 1}
+		evidence[i] = videoindexerstudio.NarrativeEvidence{ID: assetID + ":scene", SourceAssetID: assetID, Kind: "scene", StartMs: 0, EndMs: 1}
+	}
+	if _, err := selectNarrativeEvidence(candidates, evidence); err == nil || !strings.Contains(err.Error(), "budget cannot cover") {
+		t.Fatalf("expected explicit evidence budget error, got %v", err)
 	}
 }
 
