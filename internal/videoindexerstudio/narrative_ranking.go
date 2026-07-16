@@ -51,6 +51,27 @@ func (c *Client) ClassifyNarrativeIntent(ctx context.Context, request NarrativeI
 	return &response, nil
 }
 
+// PlanNarrativeSegments submits a separately versioned, bounded catalog. Deployments
+// without this endpoint fail closed and callers retain the deterministic local plan.
+func (c *Client) PlanNarrativeSegments(ctx context.Context, request NarrativeSegmentPlanningRequest) (*NarrativeSegmentPlanningResponse, error) {
+	if c == nil {
+		return nil, fmt.Errorf("%w: nil client", ErrInvalidConfig)
+	}
+	if err := c.cfg.validate(); err != nil {
+		return nil, err
+	}
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+	var response NarrativeSegmentPlanningResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/narrative-segment-plans", request, &response); err != nil {
+		return nil, fmt.Errorf("plan narrative segments: %w", err)
+	}
+	if err := response.Validate(); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
 func (r NarrativeRankingRequest) Validate() error {
 	if r.SchemaVersion != NarrativeRankingSchemaVersion || strings.TrimSpace(r.CompositionID) == "" || len(r.Candidates) == 0 {
 		return fmt.Errorf("%w: invalid narrative ranking request", ErrInvalidRequest)

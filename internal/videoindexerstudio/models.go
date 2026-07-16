@@ -281,6 +281,15 @@ const (
 	NarrativePacingProfileEnergeticShortForm      NarrativePacingProfile = "energetic_short_form"
 	NarrativePacingProfileCalmRecap               NarrativePacingProfile = "calm_recap"
 	NarrativePacingProfileChronologicalContinuity NarrativePacingProfile = "chronological_continuity"
+	NarrativePacingProfileCinematic               NarrativePacingProfile = "cinematic"
+	NarrativePacingProfileSocialShortForm         NarrativePacingProfile = "social_short_form"
+	NarrativePacingProfileTutorial                NarrativePacingProfile = "tutorial"
+	NarrativePacingProfileHighlightReel           NarrativePacingProfile = "highlight_reel"
+	NarrativePacingProfileRecap                   NarrativePacingProfile = "recap"
+	NarrativePacingProfileStorytelling            NarrativePacingProfile = "storytelling"
+	NarrativePacingProfileTravel                  NarrativePacingProfile = "travel"
+	NarrativePacingProfileInterview               NarrativePacingProfile = "interview"
+	NarrativePacingProfileProductShowcase         NarrativePacingProfile = "product_showcase"
 )
 
 // NarrativeIntentProfile is the closed result contract returned by the
@@ -289,10 +298,19 @@ const (
 type NarrativeIntentProfile string
 
 const (
-	NarrativeIntentProfileStandard      NarrativeIntentProfile = "standard"
-	NarrativeIntentProfileEnergetic     NarrativeIntentProfile = "energetic"
-	NarrativeIntentProfileCalm          NarrativeIntentProfile = "calm"
-	NarrativeIntentProfileChronological NarrativeIntentProfile = "chronological"
+	NarrativeIntentProfileStandard        NarrativeIntentProfile = "standard"
+	NarrativeIntentProfileEnergetic       NarrativeIntentProfile = "energetic"
+	NarrativeIntentProfileCalm            NarrativeIntentProfile = "calm"
+	NarrativeIntentProfileChronological   NarrativeIntentProfile = "chronological"
+	NarrativeIntentProfileCinematic       NarrativeIntentProfile = "cinematic"
+	NarrativeIntentProfileSocialShortForm NarrativeIntentProfile = "social_short_form"
+	NarrativeIntentProfileTutorial        NarrativeIntentProfile = "tutorial"
+	NarrativeIntentProfileHighlightReel   NarrativeIntentProfile = "highlight_reel"
+	NarrativeIntentProfileRecap           NarrativeIntentProfile = "recap"
+	NarrativeIntentProfileStorytelling    NarrativeIntentProfile = "storytelling"
+	NarrativeIntentProfileTravel          NarrativeIntentProfile = "travel"
+	NarrativeIntentProfileInterview       NarrativeIntentProfile = "interview"
+	NarrativeIntentProfileProductShowcase NarrativeIntentProfile = "product_showcase"
 )
 
 type NarrativePacingClassifierMode string
@@ -368,22 +386,25 @@ type NarrativeRankedClip struct {
 // composition. It is deliberately separate from EditPlan so single-video
 // planner responses remain backwards compatible.
 type CompositionEditPlan struct {
-	SchemaVersion         int                                     `json:"schemaVersion"`
-	CompositionID         string                                  `json:"compositionId"`
-	NarrativeIntent       string                                  `json:"narrativeIntent,omitempty"`
-	PacingProfile         NarrativePacingProfile                  `json:"pacingProfile,omitempty"`
-	VariantCount          int                                     `json:"variantCount,omitempty"`
-	PacingClassifierMode  NarrativePacingClassifierMode           `json:"pacingClassifierMode,omitempty"`
-	PacingFallbackReason  NarrativePacingClassifierFallbackReason `json:"pacingFallbackReason,omitempty"`
-	Title                 string                                  `json:"title"`
-	Summary               string                                  `json:"summary"`
-	RankingMode           string                                  `json:"rankingMode"`
-	RecommendationVersion string                                  `json:"recommendationVersion"`
-	EvidenceFingerprint   string                                  `json:"evidenceFingerprint"`
-	SourceAssetIDs        []string                                `json:"sourceAssetIds"`
-	Sources               []CompositionSourceStatus               `json:"sources"`
-	Clips                 []CompositionClip                       `json:"clips"`
-	SourceRefs            []SourceRef                             `json:"sourceRefs"`
+	SchemaVersion          int                                     `json:"schemaVersion"`
+	CompositionID          string                                  `json:"compositionId"`
+	NarrativeIntent        string                                  `json:"narrativeIntent,omitempty"`
+	PacingProfile          NarrativePacingProfile                  `json:"pacingProfile,omitempty"`
+	VariantCount           int                                     `json:"variantCount,omitempty"`
+	PacingClassifierMode   NarrativePacingClassifierMode           `json:"pacingClassifierMode,omitempty"`
+	PacingFallbackReason   NarrativePacingClassifierFallbackReason `json:"pacingFallbackReason,omitempty"`
+	EditorialProfile       NarrativeIntentProfile                  `json:"editorialProfile,omitempty"`
+	PlanningMode           NarrativeSegmentPlanningMode            `json:"planningMode,omitempty"`
+	PlanningFallbackReason NarrativeSegmentPlanningFallbackReason  `json:"planningFallbackReason,omitempty"`
+	Title                  string                                  `json:"title"`
+	Summary                string                                  `json:"summary"`
+	RankingMode            string                                  `json:"rankingMode"`
+	RecommendationVersion  string                                  `json:"recommendationVersion"`
+	EvidenceFingerprint    string                                  `json:"evidenceFingerprint"`
+	SourceAssetIDs         []string                                `json:"sourceAssetIds"`
+	Sources                []CompositionSourceStatus               `json:"sources"`
+	Clips                  []CompositionClip                       `json:"clips"`
+	SourceRefs             []SourceRef                             `json:"sourceRefs"`
 }
 
 // NormalizeNarrativeIntent creates a bounded editorial preference suitable for
@@ -418,19 +439,43 @@ func NarrativePacingProfileForIntent(intent string) NarrativePacingProfile {
 	switch {
 	case has("chronological", "chronologic", "continuity", "continuous"):
 		return NarrativePacingProfileChronologicalContinuity
-	case has("energetic", "energy", "action", "social", "short", "fast"):
+	case has("energetic", "energy", "action", "fast"):
 		return NarrativePacingProfileEnergeticShortForm
-	case has("calm", "recap", "reflective", "relaxed"):
+	case has("social", "tiktok", "shortform", "short", "reels"):
+		return NarrativePacingProfileSocialShortForm
+	case has("cinematic", "cinema", "film"):
+		return NarrativePacingProfileCinematic
+	case has("tutorial", "tutorials", "howto", "guide"):
+		return NarrativePacingProfileTutorial
+	case has("highlight", "highlights", "bestof"):
+		return NarrativePacingProfileHighlightReel
+	case has("story", "storytelling", "narrative"):
+		return NarrativePacingProfileStorytelling
+	case has("travel", "trip", "voyage"):
+		return NarrativePacingProfileTravel
+	case has("interview", "interviews"):
+		return NarrativePacingProfileInterview
+	case has("product", "showcase", "demo"):
+		return NarrativePacingProfileProductShowcase
+	case has("calm", "reflective", "relaxed"):
 		return NarrativePacingProfileCalmRecap
+	case has("recap", "summary", "roundup"):
+		return NarrativePacingProfileRecap
 	default:
 		return NarrativePacingProfileStandard
 	}
 }
 
 func (p NarrativeIntentProfile) Valid() bool {
-	return p == NarrativeIntentProfileStandard || p == NarrativeIntentProfileEnergetic || p == NarrativeIntentProfileCalm || p == NarrativeIntentProfileChronological
+	switch p {
+	case NarrativeIntentProfileStandard, NarrativeIntentProfileEnergetic, NarrativeIntentProfileCalm, NarrativeIntentProfileChronological, NarrativeIntentProfileCinematic, NarrativeIntentProfileSocialShortForm, NarrativeIntentProfileTutorial, NarrativeIntentProfileHighlightReel, NarrativeIntentProfileRecap, NarrativeIntentProfileStorytelling, NarrativeIntentProfileTravel, NarrativeIntentProfileInterview, NarrativeIntentProfileProductShowcase:
+		return true
+	default:
+		return false
+	}
 }
 
+// PacingProfile maps a closed editorial style to deterministic local selection semantics.
 func (p NarrativeIntentProfile) PacingProfile() NarrativePacingProfile {
 	switch p {
 	case NarrativeIntentProfileEnergetic:
@@ -439,6 +484,24 @@ func (p NarrativeIntentProfile) PacingProfile() NarrativePacingProfile {
 		return NarrativePacingProfileCalmRecap
 	case NarrativeIntentProfileChronological:
 		return NarrativePacingProfileChronologicalContinuity
+	case NarrativeIntentProfileCinematic:
+		return NarrativePacingProfileCinematic
+	case NarrativeIntentProfileSocialShortForm:
+		return NarrativePacingProfileSocialShortForm
+	case NarrativeIntentProfileTutorial:
+		return NarrativePacingProfileTutorial
+	case NarrativeIntentProfileHighlightReel:
+		return NarrativePacingProfileHighlightReel
+	case NarrativeIntentProfileRecap:
+		return NarrativePacingProfileRecap
+	case NarrativeIntentProfileStorytelling:
+		return NarrativePacingProfileStorytelling
+	case NarrativeIntentProfileTravel:
+		return NarrativePacingProfileTravel
+	case NarrativeIntentProfileInterview:
+		return NarrativePacingProfileInterview
+	case NarrativeIntentProfileProductShowcase:
+		return NarrativePacingProfileProductShowcase
 	default:
 		return NarrativePacingProfileStandard
 	}
@@ -471,7 +534,7 @@ func (r NarrativeIntentClassificationResponse) Validate() error {
 }
 
 func (p NarrativePacingProfile) Valid() bool {
-	return p == "" || p == NarrativePacingProfileStandard || p == NarrativePacingProfileEnergeticShortForm || p == NarrativePacingProfileCalmRecap || p == NarrativePacingProfileChronologicalContinuity
+	return p == "" || NarrativeIntentProfile(p).Valid() || p == NarrativePacingProfileEnergeticShortForm || p == NarrativePacingProfileCalmRecap || p == NarrativePacingProfileChronologicalContinuity
 }
 
 type CompositionSourceStatus struct {

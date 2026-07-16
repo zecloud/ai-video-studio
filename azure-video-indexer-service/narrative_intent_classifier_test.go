@@ -115,3 +115,16 @@ func TestNarrativeIntentClassificationHandlerDoesNotEchoIntent(t *testing.T) {
 		t.Fatalf("unsafe classifier error: %d %s", response.Code, response.Body.String())
 	}
 }
+
+func TestNarrativeIntentClassifierAcceptsMultilingualSocialShortFormProfile(t *testing.T) {
+	classifier := narrativeIntentClassifier{timeout: time.Second, runner: narrativeIntentClassifierRunnerFunc(func(_ context.Context, intent string) (videoindexerstudio.NarrativeIntentClassificationResponse, error) {
+		if intent != "robots dansants en mode video TikTok" {
+			t.Fatalf("intent = %q", intent)
+		}
+		return videoindexerstudio.NarrativeIntentClassificationResponse{SchemaVersion: 1, Profile: videoindexerstudio.NarrativeIntentProfileSocialShortForm}, nil
+	})}
+	response, err := classifier.Classify(context.Background(), videoindexerstudio.NarrativeIntentClassificationRequest{SchemaVersion: 1, NarrativeIntent: "robots dansants en mode video TikTok"})
+	if err != nil || response.Profile != videoindexerstudio.NarrativeIntentProfileSocialShortForm {
+		t.Fatalf("classification = %#v, %v", response, err)
+	}
+}

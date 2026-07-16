@@ -28,6 +28,7 @@ type Server struct {
 	planner                   EditPlanner
 	narrativeRanker           NarrativeRanker
 	narrativeIntentClassifier NarrativeIntentClassifier
+	narrativeSegmentPlanner   NarrativeSegmentPlanner
 	lookPath                  func(string) (string, error)
 	readiness                 readinessReporter
 	readinessOnce             sync.Once
@@ -40,6 +41,9 @@ type RenderOutputStreamer interface {
 func (s *Server) SetNarrativeRanker(ranker NarrativeRanker) { s.narrativeRanker = ranker }
 func (s *Server) SetNarrativeIntentClassifier(classifier NarrativeIntentClassifier) {
 	s.narrativeIntentClassifier = classifier
+}
+func (s *Server) SetNarrativeSegmentPlanner(planner NarrativeSegmentPlanner) {
+	s.narrativeSegmentPlanner = planner
 }
 func (s *Server) SetRenderJobs(jobs RenderJobService)                  { s.renderJobs = jobs }
 func (s *Server) SetRenderOutputStreamer(outputs RenderOutputStreamer) { s.renderOutputs = outputs }
@@ -68,6 +72,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/jobs", s.requireAPIKey(http.HandlerFunc(s.handleCreateJob)))
 	mux.Handle("POST /api/v1/narrative-rankings", s.requireAPIKey(http.HandlerFunc(s.handleNarrativeRanking)))
 	mux.Handle("POST /api/v1/narrative-intent-classifications", s.requireAPIKey(http.HandlerFunc(s.handleNarrativeIntentClassification)))
+	mux.Handle("POST /api/v1/narrative-segment-plans", s.requireAPIKey(http.HandlerFunc(s.handleNarrativeSegmentPlanning)))
 	mux.Handle("GET /api/v1/jobs", s.requireAPIKey(http.HandlerFunc(s.handleListJobs)))
 	mux.Handle("GET /api/v1/jobs/{jobID}", s.requireAPIKey(http.HandlerFunc(s.handleGetJob)))
 	mux.Handle("POST /api/v1/jobs/{jobID}/cancel", s.requireAPIKey(http.HandlerFunc(s.handleCancelJob)))
@@ -78,6 +83,36 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
+func (s *Server) handleNarrativeSegmentPlanning(w http.ResponseWriter, r *http.Request) {
+	if s.narrativeSegmentPlanner == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "narrative segment planner is not configured", "narrative_segment_planner_unavailable", true)
+		return
+	}
+	var req videoindexerstudio.NarrativeSegmentPlanningRequest
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid JSON request body", "bad_request", false)
+		return
+	}
+	if err := req.Validate(); err != nil {
+		writeAPIError(w, http.StatusUnprocessableEntity, "invalid narrative segment planning request", "narrative_segment_planning_invalid", false)
+		return
+	}
+	response, err := s.narrativeSegmentPlanner.Plan(r.Context(), req)
+	if err == nil {
+		err = response.Validate()
+	}
+	if err != nil {
+		status, code, retryable := http.StatusBadGateway, "narrative_segment_planning_failed", true
+		if errors.Is(err, context.DeadlineExceeded) {
+			status, code = http.StatusGatewayTimeout, "narrative_segment_planning_timeout"
+		} else if strings.Contains(err.Error(), "invalid") {
+			status, code, retryable = http.StatusUnprocessableEntity, "narrative_segment_planning_invalid", false
+		}
+		writeAPIError(w, status, "narrative segment planning failed", code, retryable)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
 func (s *Server) handleNarrativeIntentClassification(w http.ResponseWriter, r *http.Request) {
 	if s.narrativeIntentClassifier == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "narrative intent classifier is not configured", "narrative_intent_classifier_unavailable", true)

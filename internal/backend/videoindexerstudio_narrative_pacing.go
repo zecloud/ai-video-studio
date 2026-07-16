@@ -16,60 +16,78 @@ const (
 	narrativeEnergeticMaximumMS      = 6000
 	narrativeCalmMaximumMS           = 15000
 	narrativeContinuityMaximumMS     = 12000
+	narrativeCinematicMaximumMS      = 10000
+	narrativeTutorialMaximumMS       = 14000
+	narrativeHighlightMaximumMS      = 7000
+	narrativeStoryMaximumMS          = 11000
+	narrativeInterviewMaximumMS      = 15000
+	narrativeProductMaximumMS        = 8000
 )
 
-// applyNarrativePacing derives at most one local, grounded range variant per
-// source candidate. It never widens a source range and retains its provenance.
+// applyNarrativePacing derives one reproducible, source-range-contained variant.
+// Profile bounds deliberately trade pace against coverage without creating fragments.
 func applyNarrativePacing(candidates []compositionCandidate, profile videoindexerstudio.NarrativePacingProfile) ([]compositionCandidate, int) {
 	if profile == videoindexerstudio.NarrativePacingProfileStandard || profile == "" {
 		return candidates, 0
 	}
 	paced := make([]compositionCandidate, 0, len(candidates))
-	variantCount := 0
+	variants := 0
 	for _, candidate := range candidates {
 		variant, changed := pacedCompositionCandidate(candidate, profile)
 		if changed {
-			variantCount++
+			variants++
 		}
 		paced = append(paced, variant)
 	}
-	return paced, variantCount
+	return paced, variants
+}
+
+func narrativePacingMaximum(profile videoindexerstudio.NarrativePacingProfile) int64 {
+	switch profile {
+	case videoindexerstudio.NarrativePacingProfileEnergeticShortForm, videoindexerstudio.NarrativePacingProfileSocialShortForm:
+		return narrativeEnergeticMaximumMS
+	case videoindexerstudio.NarrativePacingProfileCalmRecap, videoindexerstudio.NarrativePacingProfileRecap, videoindexerstudio.NarrativePacingProfileTravel:
+		return narrativeCalmMaximumMS
+	case videoindexerstudio.NarrativePacingProfileChronologicalContinuity:
+		return narrativeContinuityMaximumMS
+	case videoindexerstudio.NarrativePacingProfileCinematic:
+		return narrativeCinematicMaximumMS
+	case videoindexerstudio.NarrativePacingProfileTutorial:
+		return narrativeTutorialMaximumMS
+	case videoindexerstudio.NarrativePacingProfileHighlightReel:
+		return narrativeHighlightMaximumMS
+	case videoindexerstudio.NarrativePacingProfileStorytelling:
+		return narrativeStoryMaximumMS
+	case videoindexerstudio.NarrativePacingProfileInterview:
+		return narrativeInterviewMaximumMS
+	case videoindexerstudio.NarrativePacingProfileProductShowcase:
+		return narrativeProductMaximumMS
+	default:
+		return 0
+	}
 }
 
 func pacedCompositionCandidate(candidate compositionCandidate, profile videoindexerstudio.NarrativePacingProfile) (compositionCandidate, bool) {
 	clip := candidate.clip
 	duration := clip.EndMs - clip.StartMs
-	maximum := int64(0)
-	switch profile {
-	case videoindexerstudio.NarrativePacingProfileEnergeticShortForm:
-		maximum = narrativeEnergeticMaximumMS
-	case videoindexerstudio.NarrativePacingProfileCalmRecap:
-		maximum = narrativeCalmMaximumMS
-	case videoindexerstudio.NarrativePacingProfileChronologicalContinuity:
-		maximum = narrativeContinuityMaximumMS
-	default:
+	maximum := narrativePacingMaximum(profile)
+	if maximum == 0 || duration < narrativePacingMinimumDurationMS || duration <= maximum {
 		return candidate, false
 	}
-	if duration < narrativePacingMinimumDurationMS || duration <= maximum {
-		return candidate, false
-	}
-	// The fixed, start-anchored window makes local pacing reproducible and
-	// avoids inventing a timestamp outside the already grounded suggestion.
 	clip.EndMs = clip.StartMs + maximum
 	clip.ID = stablePacingVariantID(candidate.clip.ID, profile, clip.StartMs, clip.EndMs)
 	candidate.clip = clip
 	return candidate, true
 }
-
 func stablePacingVariantID(sourceID string, profile videoindexerstudio.NarrativePacingProfile, startMS, endMS int64) string {
 	input := strings.Join([]string{sourceID, string(profile), fmt.Sprintf("%d", startMS), fmt.Sprintf("%d", endMS)}, "\x1f")
 	sum := sha256.Sum256([]byte(input))
 	return "clip-" + hex.EncodeToString(sum[:16])
 }
-
 func sortPacedCompositionCandidates(candidates []compositionCandidate, profile videoindexerstudio.NarrativePacingProfile) {
 	sort.SliceStable(candidates, func(i, j int) bool {
-		if profile == videoindexerstudio.NarrativePacingProfileChronologicalContinuity && candidates[i].sourceStartMS != candidates[j].sourceStartMS {
+		continuity := profile == videoindexerstudio.NarrativePacingProfileChronologicalContinuity || profile == videoindexerstudio.NarrativePacingProfileTutorial
+		if continuity && candidates[i].sourceStartMS != candidates[j].sourceStartMS {
 			return candidates[i].sourceStartMS < candidates[j].sourceStartMS
 		}
 		if candidates[i].clip.Score != candidates[j].clip.Score {

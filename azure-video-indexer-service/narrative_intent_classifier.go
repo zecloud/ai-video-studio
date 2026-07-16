@@ -92,8 +92,8 @@ func newNarrativeIntentClassifier(plannerConfig editPlannerConfig, timeout time.
 }
 
 func narrativeIntentClassifierInstructions() string {
-	return `narrative-intent-classifier instructions v1
-Classify a user-authored editorial preference in any language into exactly one closed profile: energetic, chronological, calm, or standard.
-Energetic means faster, action-forward, or short-form social pacing. Chronological means continuity or time order. Calm means recap, reflective, or relaxed pacing. Use standard when unclear.
+	return `narrative-intent-classifier instructions v2
+Classify a user-authored editorial preference in any language into exactly one closed profile: standard, energetic, chronological, calm, cinematic, social_short_form, tutorial, highlight_reel, recap, storytelling, travel, interview, or product_showcase.
+Energetic means fast action. Social_short_form means social or TikTok-style pacing, including multilingual requests such as "robots dansants en mode video TikTok". Chronological means continuity or time order. Calm and recap mean reflective coverage. Cinematic emphasizes measured visual moments. Tutorial prioritizes explanatory continuity. Highlight_reel prioritizes concise best moments. Storytelling prioritizes narrative development. Travel, interview, and product_showcase select their corresponding editorial approach. Use standard when unclear.
 Return only the structured response. Do not return clip IDs, source IDs, evidence, timestamps, ranges, ordering, explanations, or user text.`
 }

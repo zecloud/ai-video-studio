@@ -11,62 +11,68 @@ import (
 )
 
 type Config struct {
-	ServiceRole                      string
-	ListenAddr                       string
-	APIKey                           string
-	StorageURL                       string
-	StagingContainer                 string
-	JobContainer                     string
-	SASValidity                      time.Duration
-	GraphBaseURL                     string
-	VideoIndexerSubscriptionID       string
-	VideoIndexerResourceGroup        string
-	VideoIndexerAccountName          string
-	VideoIndexerAccountID            string
-	VideoIndexerLocation             string
-	VideoIndexerTimeout              time.Duration
-	DTSEndpoint                      string
-	DTSTaskHub                       string
-	DTSRenderTaskHub                 string
-	DTSCancellationGrace             time.Duration
-	ManagedIdentityClientID          string
-	FFmpegPath                       string
-	RenderWorkspaceRoot              string
-	RenderTimeout                    time.Duration
-	NarrativeRankingTimeout          time.Duration
-	NarrativeIntentClassifierTimeout time.Duration
-	NarrativeRankingMaxCandidates    int
-	NarrativeRankingMaxSources       int
+	ServiceRole                        string
+	ListenAddr                         string
+	APIKey                             string
+	StorageURL                         string
+	StagingContainer                   string
+	JobContainer                       string
+	SASValidity                        time.Duration
+	GraphBaseURL                       string
+	VideoIndexerSubscriptionID         string
+	VideoIndexerResourceGroup          string
+	VideoIndexerAccountName            string
+	VideoIndexerAccountID              string
+	VideoIndexerLocation               string
+	VideoIndexerTimeout                time.Duration
+	DTSEndpoint                        string
+	DTSTaskHub                         string
+	DTSRenderTaskHub                   string
+	DTSCancellationGrace               time.Duration
+	ManagedIdentityClientID            string
+	FFmpegPath                         string
+	RenderWorkspaceRoot                string
+	RenderTimeout                      time.Duration
+	NarrativeRankingTimeout            time.Duration
+	NarrativeIntentClassifierTimeout   time.Duration
+	NarrativeSegmentPlannerTimeout     time.Duration
+	NarrativeSegmentPlannerMaxCatalog  int
+	NarrativeSegmentPlannerMaxSegments int
+	NarrativeRankingMaxCandidates      int
+	NarrativeRankingMaxSources         int
 }
 
 func LoadConfig() (Config, error) {
 	cfg := Config{
-		ServiceRole:                      getEnvDefault("SERVICE_ROLE", "api"),
-		ListenAddr:                       getEnvDefault("LISTEN_ADDR", ":8080"),
-		APIKey:                           os.Getenv("API_KEY"),
-		StorageURL:                       os.Getenv("AZURE_STORAGE_URL"),
-		StagingContainer:                 getEnvDefault("AZURE_STORAGE_STAGING_CONTAINER", getEnvDefault("STAGING_CONTAINER", "video-indexer-staging")),
-		JobContainer:                     getEnvDefault("AZURE_STORAGE_JOBS_CONTAINER", getEnvDefault("JOB_CONTAINER", "video-indexer-jobs")),
-		SASValidity:                      getEnvDuration("SAS_VALIDITY", 2*time.Hour),
-		GraphBaseURL:                     getEnvDefault("GRAPH_BASE_URL", "https://graph.microsoft.com/v1.0"),
-		VideoIndexerSubscriptionID:       strings.TrimSpace(os.Getenv("AZURE_VIDEO_INDEXER_SUBSCRIPTION_ID")),
-		VideoIndexerResourceGroup:        strings.TrimSpace(os.Getenv("AZURE_VIDEO_INDEXER_RESOURCE_GROUP")),
-		VideoIndexerAccountName:          strings.TrimSpace(os.Getenv("AZURE_VIDEO_INDEXER_ACCOUNT_NAME")),
-		VideoIndexerAccountID:            strings.TrimSpace(os.Getenv("AZURE_VIDEO_INDEXER_ACCOUNT_ID")),
-		VideoIndexerLocation:             strings.TrimSpace(os.Getenv("AZURE_VIDEO_INDEXER_LOCATION")),
-		VideoIndexerTimeout:              getEnvDuration("AZURE_VIDEO_INDEXER_TIMEOUT", 30*time.Minute),
-		DTSEndpoint:                      strings.TrimSpace(os.Getenv("DTS_ENDPOINT")),
-		DTSTaskHub:                       strings.TrimSpace(os.Getenv("DTS_TASK_HUB")),
-		DTSRenderTaskHub:                 strings.TrimSpace(os.Getenv("DTS_RENDER_TASK_HUB")),
-		DTSCancellationGrace:             getEnvDuration("DTS_CANCELLATION_GRACE", 30*time.Second),
-		ManagedIdentityClientID:          strings.TrimSpace(os.Getenv("AZURE_CLIENT_ID")),
-		FFmpegPath:                       getEnvDefault("FFMPEG_PATH", "ffmpeg"),
-		RenderWorkspaceRoot:              getEnvDefault("RENDER_WORKSPACE_ROOT", os.TempDir()),
-		RenderTimeout:                    getEnvDuration("RENDER_TIMEOUT", 2*time.Hour),
-		NarrativeRankingTimeout:          getEnvDuration("NARRATIVE_RANKING_TIMEOUT", 20*time.Second),
-		NarrativeIntentClassifierTimeout: getEnvDuration("NARRATIVE_INTENT_CLASSIFIER_TIMEOUT", 8*time.Second),
-		NarrativeRankingMaxCandidates:    getEnvInt("NARRATIVE_RANKING_MAX_CANDIDATES", 48),
-		NarrativeRankingMaxSources:       getEnvInt("NARRATIVE_RANKING_MAX_SOURCES", 8),
+		ServiceRole:                        getEnvDefault("SERVICE_ROLE", "api"),
+		ListenAddr:                         getEnvDefault("LISTEN_ADDR", ":8080"),
+		APIKey:                             os.Getenv("API_KEY"),
+		StorageURL:                         os.Getenv("AZURE_STORAGE_URL"),
+		StagingContainer:                   getEnvDefault("AZURE_STORAGE_STAGING_CONTAINER", getEnvDefault("STAGING_CONTAINER", "video-indexer-staging")),
+		JobContainer:                       getEnvDefault("AZURE_STORAGE_JOBS_CONTAINER", getEnvDefault("JOB_CONTAINER", "video-indexer-jobs")),
+		SASValidity:                        getEnvDuration("SAS_VALIDITY", 2*time.Hour),
+		GraphBaseURL:                       getEnvDefault("GRAPH_BASE_URL", "https://graph.microsoft.com/v1.0"),
+		VideoIndexerSubscriptionID:         strings.TrimSpace(os.Getenv("AZURE_VIDEO_INDEXER_SUBSCRIPTION_ID")),
+		VideoIndexerResourceGroup:          strings.TrimSpace(os.Getenv("AZURE_VIDEO_INDEXER_RESOURCE_GROUP")),
+		VideoIndexerAccountName:            strings.TrimSpace(os.Getenv("AZURE_VIDEO_INDEXER_ACCOUNT_NAME")),
+		VideoIndexerAccountID:              strings.TrimSpace(os.Getenv("AZURE_VIDEO_INDEXER_ACCOUNT_ID")),
+		VideoIndexerLocation:               strings.TrimSpace(os.Getenv("AZURE_VIDEO_INDEXER_LOCATION")),
+		VideoIndexerTimeout:                getEnvDuration("AZURE_VIDEO_INDEXER_TIMEOUT", 30*time.Minute),
+		DTSEndpoint:                        strings.TrimSpace(os.Getenv("DTS_ENDPOINT")),
+		DTSTaskHub:                         strings.TrimSpace(os.Getenv("DTS_TASK_HUB")),
+		DTSRenderTaskHub:                   strings.TrimSpace(os.Getenv("DTS_RENDER_TASK_HUB")),
+		DTSCancellationGrace:               getEnvDuration("DTS_CANCELLATION_GRACE", 30*time.Second),
+		ManagedIdentityClientID:            strings.TrimSpace(os.Getenv("AZURE_CLIENT_ID")),
+		FFmpegPath:                         getEnvDefault("FFMPEG_PATH", "ffmpeg"),
+		RenderWorkspaceRoot:                getEnvDefault("RENDER_WORKSPACE_ROOT", os.TempDir()),
+		RenderTimeout:                      getEnvDuration("RENDER_TIMEOUT", 2*time.Hour),
+		NarrativeRankingTimeout:            getEnvDuration("NARRATIVE_RANKING_TIMEOUT", 20*time.Second),
+		NarrativeIntentClassifierTimeout:   getEnvDuration("NARRATIVE_INTENT_CLASSIFIER_TIMEOUT", 8*time.Second),
+		NarrativeSegmentPlannerTimeout:     getEnvDuration("NARRATIVE_SEGMENT_PLANNER_TIMEOUT", 12*time.Second),
+		NarrativeSegmentPlannerMaxCatalog:  getEnvInt("NARRATIVE_SEGMENT_PLANNER_MAX_CATALOG", 48),
+		NarrativeSegmentPlannerMaxSegments: getEnvInt("NARRATIVE_SEGMENT_PLANNER_MAX_SEGMENTS", 24),
+		NarrativeRankingMaxCandidates:      getEnvInt("NARRATIVE_RANKING_MAX_CANDIDATES", 48),
+		NarrativeRankingMaxSources:         getEnvInt("NARRATIVE_RANKING_MAX_SOURCES", 8),
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -116,6 +122,18 @@ func (c Config) Normalize() Config {
 	}
 	if c.NarrativeIntentClassifierTimeout > 20*time.Second {
 		c.NarrativeIntentClassifierTimeout = 20 * time.Second
+	}
+	if c.NarrativeSegmentPlannerTimeout <= 0 {
+		c.NarrativeSegmentPlannerTimeout = 12 * time.Second
+	}
+	if c.NarrativeSegmentPlannerTimeout > 20*time.Second {
+		c.NarrativeSegmentPlannerTimeout = 20 * time.Second
+	}
+	if c.NarrativeSegmentPlannerMaxCatalog <= 0 || c.NarrativeSegmentPlannerMaxCatalog > 48 {
+		c.NarrativeSegmentPlannerMaxCatalog = 48
+	}
+	if c.NarrativeSegmentPlannerMaxSegments <= 0 || c.NarrativeSegmentPlannerMaxSegments > 48 {
+		c.NarrativeSegmentPlannerMaxSegments = 24
 	}
 	if c.NarrativeRankingMaxCandidates <= 0 {
 		c.NarrativeRankingMaxCandidates = 48

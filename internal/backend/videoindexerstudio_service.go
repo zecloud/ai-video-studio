@@ -45,6 +45,10 @@ type narrativeIntentClassificationClient interface {
 	ClassifyNarrativeIntent(context.Context, videoindexerstudio.NarrativeIntentClassificationRequest) (*videoindexerstudio.NarrativeIntentClassificationResponse, error)
 }
 
+type narrativeSegmentPlanningClient interface {
+	PlanNarrativeSegments(context.Context, videoindexerstudio.NarrativeSegmentPlanningRequest) (*videoindexerstudio.NarrativeSegmentPlanningResponse, error)
+}
+
 type narrativePacingResolution struct {
 	profile        videoindexerstudio.NarrativePacingProfile
 	mode           videoindexerstudio.NarrativePacingClassifierMode
@@ -448,6 +452,18 @@ func (s *VideoIndexerStudioService) evaluateComposition(ctx context.Context, com
 		return failComposition(composition, s.nowTime(), err.Error())
 	}
 	compositionPlan.RankingMode = "deterministic_grounded_fallback_v1"
+	compositionPlan.EditorialProfile = narrativeIntentProfileForPacing(resolution.profile)
+	compositionPlan.PlanningMode = videoindexerstudio.NarrativeSegmentPlanningModeDeterministic
+	compositionPlan.PlanningFallbackReason = videoindexerstudio.NarrativeSegmentPlanningFallbackUnavailable
+	if client, clientErr := s.clientFor(ctx); clientErr == nil {
+		if planner, ok := client.(narrativeSegmentPlanningClient); ok {
+			if plannedPlan, plannedComposition, plannedDrafts, planErr := planMultiVideoCompositionSegments(ctx, planner, plan, compositionPlan, dependencies); planErr == nil {
+				plan, compositionPlan, drafts = plannedPlan, plannedComposition, plannedDrafts
+			} else {
+				compositionPlan.PlanningFallbackReason = narrativeSegmentPlanningFallbackReason(planErr)
+			}
+		}
+	}
 	if client, clientErr := s.clientFor(ctx); clientErr == nil {
 		if ranker, ok := client.(narrativeRankingClient); ok {
 			if rankedPlan, rankedComposition, rankedDrafts, rankErr := rankMultiVideoComposition(ctx, ranker, plan, compositionPlan, dependencies); rankErr == nil {
