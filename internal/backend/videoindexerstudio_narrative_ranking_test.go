@@ -42,6 +42,38 @@ func TestRankMultiVideoCompositionPreservesKnownClips(t *testing.T) {
 	}
 }
 
+func TestRankMultiVideoCompositionPermutesFilteredCandidates(t *testing.T) {
+	dependencies := narrativeDependencies()
+	dependencies[0].EditPlan.Suggestions = []videoindexerstudio.EditSuggestion{
+		{ID: "first", Score: 0.9, Clips: []videoindexerstudio.SuggestedClip{{ID: "first", StartMs: 0, EndMs: 100, Score: 0.9}}},
+		{ID: "duplicate", Score: 0.8, Clips: []videoindexerstudio.SuggestedClip{{ID: "duplicate", StartMs: 0, EndMs: 100, Score: 0.8}}},
+		{ID: "adjacent", Score: 0.7, Clips: []videoindexerstudio.SuggestedClip{{ID: "adjacent", StartMs: 100, EndMs: 200, Score: 0.7}}},
+	}
+	plan, composition, _, err := buildMultiVideoComposition("composition-1", []string{"asset-a", "asset-b"}, dependencies)
+	if err != nil {
+		t.Fatalf("build filtered composition: %v", err)
+	}
+	if len(composition.Clips) != 3 {
+		t.Fatalf("filtered candidate count = %d, want 3", len(composition.Clips))
+	}
+	ranked, rankedComposition, _, err := rankMultiVideoComposition(context.Background(), rankingClientFunc(func(_ context.Context, request videoindexerstudio.NarrativeRankingRequest) (*videoindexerstudio.NarrativeRankingResponse, error) {
+		if len(request.Candidates) != len(composition.Clips) {
+			t.Fatalf("Azure request candidates = %d, want %d filtered candidates", len(request.Candidates), len(composition.Clips))
+		}
+		ordered := make([]videoindexerstudio.NarrativeRankedClip, 0, len(request.Candidates))
+		for i := len(request.Candidates) - 1; i >= 0; i-- {
+			candidate := request.Candidates[i]
+			ordered = append(ordered, videoindexerstudio.NarrativeRankedClip{CandidateID: candidate.ID, EvidenceIDs: []string{candidate.EvidenceIDs[0]}})
+		}
+		return &videoindexerstudio.NarrativeRankingResponse{SchemaVersion: 1, OrderedClips: ordered}, nil
+	}), plan, composition, dependencies)
+	if err != nil {
+		t.Fatalf("rank filtered composition: %v", err)
+	}
+	if len(rankedComposition.Clips) != len(composition.Clips) || len(ranked.Suggestions[0].Clips) != len(composition.Clips) {
+		t.Fatalf("Azure ranking did not preserve a permutation of filtered candidates: %#v", rankedComposition.Clips)
+	}
+}
 func TestRankMultiVideoCompositionRejectsInvalidOrder(t *testing.T) {
 	dependencies := narrativeDependencies()
 	plan, composition, _, err := buildMultiVideoComposition("composition-1", []string{"asset-a", "asset-b"}, dependencies)
