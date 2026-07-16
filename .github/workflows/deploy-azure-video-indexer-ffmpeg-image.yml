@@ -1,0 +1,109 @@
+# Build and deploy the dedicated FFmpeg render-worker image. The infrastructure
+# workflow must have provisioned the registry and Container App before this runs.
+
+name: Deploy Video Indexer FFmpeg image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'azure-video-indexer-service/Dockerfile.ffmpeg'
+      - 'azure-video-indexer-service/*render*.go'
+      - 'azure-video-indexer-service/render_*.go'
+      - 'azure-video-indexer-service/ffmpeg_*.go'
+      - 'azure-video-indexer-service/config.go'
+      - 'azure-video-indexer-service/main.go'
+      - 'azure-video-indexer-service/dts_runtime.go'
+      - 'azure-video-indexer-service/durable_job_service.go'
+      - 'azure-video-indexer-service/blob.go'
+      - 'azure-video-indexer-service/types.go'
+      - 'azure-video-indexer-service/errors.go'
+      - 'azure-video-indexer-service/go.mod'
+      - 'azure-video-indexer-service/go.sum'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/deploy-azure-video-indexer-ffmpeg-image.yml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-video-indexer-ffmpeg-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-ffmpeg-image:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      ACR_NAME: ${{ vars.ACR_NAME || 'acrvideostudio' }}
+      FFMPEG_WORKER_APP_NAME: ffmpeg-render-worker
+      IMAGE_REPOSITORY: ffmpeg-render-worker
+      IMAGE_TAG: ${{ github.sha }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate deployment inputs
+        run: |
+          set -euo pipefail
+          for name in AZURE_RESOURCE_GROUP ACR_NAME; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required deployment input: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: azure-video-indexer-service/go.mod
+          cache-dependency-path: azure-video-indexer-service/go.sum
+
+      - name: Test durable Video Indexer service
+        run: go test ./...
+        working-directory: azure-video-indexer-service
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Container Apps CLI extension
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az extension add --name containerapp --upgrade --yes
+
+      - name: Verify infrastructure prerequisites
+        run: |
+          set -euo pipefail
+          if ! az acr show --name "$ACR_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --only-show-errors >/dev/null; then
+            echo "Azure Container Registry '$ACR_NAME' does not exist. Run the infrastructure workflow first." >&2
+            exit 1
+          fi
+          if ! az containerapp show --name "$FFMPEG_WORKER_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --only-show-errors >/dev/null; then
+            echo "Container App '$FFMPEG_WORKER_APP_NAME' does not exist. Run the infrastructure workflow first." >&2
+            exit 1
+          fi
+          echo "ACR_LOGIN_SERVER=$(az acr show --name "$ACR_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --query loginServer -o tsv)" >> "$GITHUB_ENV"
+
+      - name: Build and push immutable FFmpeg worker image
+        run: |
+          set -euo pipefail
+          az acr build --registry "$ACR_NAME" --image "${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
+            --file azure-video-indexer-service/Dockerfile.ffmpeg . --only-show-errors
+          az acr repository show --name "$ACR_NAME" --image "${IMAGE_REPOSITORY}:${IMAGE_TAG}" --only-show-errors >/dev/null
+
+      - name: Update FFmpeg render worker
+        run: |
+          set -euo pipefail
+          az containerapp update --name "$FFMPEG_WORKER_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" \
+            --image "${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}:${IMAGE_TAG}" --only-show-errors

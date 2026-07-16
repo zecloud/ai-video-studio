@@ -79,6 +79,18 @@ az role definition list \
 
 Cette connexion active les capacites natives Video Indexer qui utilisent Azure OpenAI. Elle ne remplace pas l'acces du worker : celui-ci conserve sa propre affectation `Cognitive Services OpenAI User` et utilise `FOUNDRY_PROJECT_ENDPOINT` avec `FOUNDRY_DEPLOYMENT_NAME` pour le planning d'edition. Microsoft recommande de placer Video Indexer et Azure OpenAI dans la meme region.
 
+## Workflows GitHub Actions
+
+Trois workflows independants gerent le pipeline Video Indexer :
+
+- `Deploy azure-video-indexer-service` est le workflow de bootstrap et d'infrastructure. Il est declenche sur les changements dans `infra/**`, `azure.yaml` ou son propre fichier. Il cree ou met a jour l'ACR et la stack Bicep, construit les deux images, puis deploie les Container Apps. Utiliser ce workflow pour le premier deploiement et tout changement d'infrastructure.
+- `Deploy Video Indexer API image` est declenche sur les changements du service API/durable worker, du front-end, des dependances ou de son propre fichier. Il teste le service, publie l'image API avec le tag immuable `GITHUB_SHA`, puis met a jour `video-indexer-api` et `video-indexer-worker` sans redeployer Bicep.
+- `Deploy Video Indexer FFmpeg image` est declenche par le Dockerfile FFmpeg et le code de rendu associe. Il publie l'image avec le tag immuable `GITHUB_SHA`, puis met a jour uniquement `ffmpeg-render-worker`. Les changements du code Go commun et de `internal/**` declenchent les deux workflows d'images car les deux images compilent ce code.
+
+Les workflows d'images exigent que l'ACR et les Container Apps concernes existent deja. Ils echouent avec une erreur actionnable lorsqu'ils sont absents : lancer alors le workflow infrastructure. Pour un changement qui modifie a la fois l'infrastructure et le runtime, lancer le workflow infrastructure en premier ; relancer ensuite le ou les workflows d'images si une nouvelle image est requise.
+
+Les trois workflows utilisent l'environnement GitHub `production`, les memes secrets OIDC et les variables `AZURE_RESOURCE_GROUP` et `ACR_NAME`. Le workflow infrastructure utilise en plus les variables Foundry et Video Indexer decrites ci-dessous.
+
 ## Deploiement local avec Azure CLI
 
 Le workflow GitHub cree d'abord l'ACR avec `infra/container-registry.bicep`, construit ensuite l'image, puis deploye `infra/main.bicep`. Pour reproduire le deploiement localement, creer d'abord l'ACR :
@@ -142,7 +154,7 @@ az deployment group create \
     serviceApiKey="<SERVICE_API_KEY>"
 ```
 
-Pour un deploiement CI/CD, utiliser de preference le workflow `Deploy azure-video-indexer-service` : il pousse une image taggee avec `GITHUB_SHA`, deploie la stack et teste `GET /ready`.
+Pour le premier deploiement CI/CD ou une modification Bicep, utiliser `Deploy azure-video-indexer-service`. Pour une modification applicative seulement, utiliser `Deploy Video Indexer API image` ou `Deploy Video Indexer FFmpeg image` selon le composant modifie ; chaque workflow pousse une image taggee avec `GITHUB_SHA` et met a jour uniquement ses Container Apps.
 
 ## Configurer les secrets et variables GitHub
 
