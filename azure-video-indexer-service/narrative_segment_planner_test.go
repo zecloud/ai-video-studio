@@ -143,6 +143,21 @@ func TestNarrativeSegmentPlannerRetriesTransientButNotInvalidResponse(t *testing
 	}
 }
 
+func TestNarrativeSegmentPlannerRetriesCatalogGroundingFailure(t *testing.T) {
+	request := segmentPlanningRequest()
+	attempts := 0
+	planner := narrativeSegmentPlanner{timeout: time.Second, maxCatalog: 1, maxSegments: 1, runner: narrativeSegmentPlannerRunnerFunc(func(context.Context, string) (foundryNarrativeSegmentPlan, error) {
+		attempts++
+		if attempts == 1 {
+			return foundryNarrativeSegmentPlan{Segments: []foundryNarrativeSegmentPlanItem{{SegmentID: "invented", Role: "hook", AnchorEvidenceIDs: []string{"evidence-1"}, AnchorMode: "simultaneous"}}}, nil
+		}
+		return foundrySegmentPlan(), nil
+	})}
+	if _, err := planner.Plan(context.Background(), request); err != nil || attempts != 2 {
+		t.Fatalf("plan = %v, attempts = %d", err, attempts)
+	}
+}
+
 func TestNarrativeSegmentPlannerMapsProviderDTOToVersionedContract(t *testing.T) {
 	request := segmentPlanningRequest()
 	planner := narrativeSegmentPlanner{timeout: time.Second, maxCatalog: 1, maxSegments: 1, runner: narrativeSegmentPlannerRunnerFunc(func(context.Context, string) (foundryNarrativeSegmentPlan, error) {

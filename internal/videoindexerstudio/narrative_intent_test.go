@@ -144,6 +144,46 @@ func TestNarrativeSegmentPlanningLegacyContractRemainsValid(t *testing.T) {
 	}
 }
 
+func TestNarrativeSegmentPlanningResponseValidatesAgainstCatalog(t *testing.T) {
+	request := NarrativeSegmentPlanningRequest{
+		SchemaVersion: NarrativeSegmentPlanningSchemaVersion,
+		CompositionID: "composition-1",
+		Profile:       NarrativeIntentProfileStandard,
+		Catalog: []NarrativeSegmentCatalogItem{{
+			SegmentID: "segment-1", CandidateID: "candidate-1", SourceAssetID: "asset-1",
+			AllowedStartMs: 0, AllowedEndMs: 30_000,
+			EvidenceIDs: []string{"robot", "dance"},
+			Evidence: []NarrativeSegmentEvidence{
+				{EvidenceID: "robot", Kind: "object", StartMs: 12_000, EndMs: 15_000},
+				{EvidenceID: "dance", Kind: "label", StartMs: 13_000, EndMs: 16_000},
+			},
+		}},
+	}
+	response := NarrativeSegmentPlanningResponse{SchemaVersion: NarrativeSegmentPlanningSchemaVersion, Segments: []NarrativeSegmentPlanItem{{
+		SegmentID: "segment-1", Role: NarrativeSegmentRolePayoff,
+		AnchorEvidenceIDs: []string{"robot", "dance"}, AnchorMode: NarrativeSegmentAnchorModeSimultaneous,
+	}}}
+	if err := response.ValidateAgainst(request); err != nil {
+		t.Fatalf("valid grounded response: %v", err)
+	}
+
+	response.Segments[0].SegmentID = "invented"
+	if err := response.ValidateAgainst(request); err == nil {
+		t.Fatal("expected unknown segment rejection")
+	}
+	response.Segments[0].SegmentID = "segment-1"
+	response.Segments[0].AnchorEvidenceIDs = []string{"invented"}
+	if err := response.ValidateAgainst(request); err == nil {
+		t.Fatal("expected unknown evidence rejection")
+	}
+	response.Segments[0].AnchorEvidenceIDs = []string{"robot", "dance"}
+	request.Catalog[0].Evidence[1].StartMs = 16_000
+	request.Catalog[0].Evidence[1].EndMs = 18_000
+	if err := response.ValidateAgainst(request); err == nil {
+		t.Fatal("expected empty simultaneous anchor rejection")
+	}
+}
+
 func TestNarrativeIntentClassificationAcceptsAllClosedProfiles(t *testing.T) {
 	profiles := []NarrativeIntentProfile{NarrativeIntentProfileStandard, NarrativeIntentProfileEnergetic, NarrativeIntentProfileCalm, NarrativeIntentProfileChronological, NarrativeIntentProfileCinematic, NarrativeIntentProfileSocialShortForm, NarrativeIntentProfileTutorial, NarrativeIntentProfileHighlightReel, NarrativeIntentProfileRecap, NarrativeIntentProfileStorytelling, NarrativeIntentProfileTravel, NarrativeIntentProfileInterview, NarrativeIntentProfileProductShowcase}
 	for _, profile := range profiles {

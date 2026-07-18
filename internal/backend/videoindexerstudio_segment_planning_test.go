@@ -191,3 +191,9 @@ func TestNarrativeSegmentPlanningFallbackReportsLocalCatalogFailure(t *testing.T
 		t.Fatalf("catalog fallback = %q", got)
 	}
 }
+
+func TestNarrativeSegmentPlanningFallbackReportsLocalPlanFailure(t *testing.T) {
+	if got := narrativeSegmentPlanningFallbackReason(fmt.Errorf("wrapped: %w", errNarrativeSegmentPlanInvalid)); got != videoindexerstudio.NarrativeSegmentPlanningFallbackInvalidResponse {
+		t.Fatalf("plan fallback = %q", got)
+	}
+}

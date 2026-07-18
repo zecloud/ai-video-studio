@@ -9,7 +9,10 @@ import (
 	"github.com/zecloud/ai-video-studio/internal/videoindexerstudio"
 )
 
-var errNarrativeSegmentCatalogInvalid = errors.New("narrative segment catalog is invalid")
+var (
+	errNarrativeSegmentCatalogInvalid = errors.New("narrative segment catalog is invalid")
+	errNarrativeSegmentPlanInvalid    = errors.New("narrative segment plan is invalid")
+)
 
 const (
 	narrativePlanningGridMS       int64 = 100
@@ -124,11 +127,15 @@ func planMultiVideoCompositionSegments(ctx context.Context, planner narrativeSeg
 	if err != nil {
 		return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, err
 	}
-	return applyNarrativeSegmentPlan(plan, composition, request, response)
+	plannedPlan, plannedComposition, drafts, err := applyNarrativeSegmentPlan(plan, composition, request, response)
+	if err != nil {
+		return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, fmt.Errorf("%w: %v", errNarrativeSegmentPlanInvalid, err)
+	}
+	return plannedPlan, plannedComposition, drafts, nil
 }
 
 func applyNarrativeSegmentPlan(plan videoindexerstudio.EditPlan, composition videoindexerstudio.CompositionEditPlan, request videoindexerstudio.NarrativeSegmentPlanningRequest, response *videoindexerstudio.NarrativeSegmentPlanningResponse) (videoindexerstudio.EditPlan, videoindexerstudio.CompositionEditPlan, []videoindexerstudio.TimelineDraft, error) {
-	if request.Validate() != nil || response == nil || response.Validate() != nil {
+	if response == nil || response.ValidateAgainst(request) != nil {
 		return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, errors.New("invalid narrative segment planning response")
 	}
 	catalog := map[string]videoindexerstudio.NarrativeSegmentCatalogItem{}
@@ -334,6 +341,9 @@ func rebuildCompositionFromClips(plan videoindexerstudio.EditPlan, composition v
 func narrativeSegmentPlanningFallbackReason(err error) videoindexerstudio.NarrativeSegmentPlanningFallbackReason {
 	if errors.Is(err, errNarrativeSegmentCatalogInvalid) {
 		return videoindexerstudio.NarrativeSegmentPlanningFallbackCatalogInvalid
+	}
+	if errors.Is(err, errNarrativeSegmentPlanInvalid) {
+		return videoindexerstudio.NarrativeSegmentPlanningFallbackInvalidResponse
 	}
 	if code := narrativeAPIErrorCode(err); code != "" {
 		switch code {

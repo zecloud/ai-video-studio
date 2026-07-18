@@ -8,6 +8,7 @@ import (
 const (
 	NarrativeSegmentPlanningLegacySchemaVersion = 1
 	NarrativeSegmentPlanningSchemaVersion       = 2
+	NarrativeSegmentPlanningMaximumAnchorMS     = 15_000
 )
 
 type NarrativeSegmentRole string
@@ -171,4 +172,105 @@ func (r NarrativeSegmentPlanningResponse) Validate() error {
 		}
 	}
 	return nil
+}
+
+// ValidateAgainst verifies the response against the exact bounded catalog that
+// was supplied to the planner. It intentionally does not infer or repair IDs.
+func (r NarrativeSegmentPlanningResponse) ValidateAgainst(request NarrativeSegmentPlanningRequest) error {
+	if err := request.Validate(); err != nil {
+		return err
+	}
+	if err := r.Validate(); err != nil {
+		return err
+	}
+	if r.SchemaVersion != request.SchemaVersion {
+		return fmt.Errorf("%w: narrative segment plan schema mismatch", ErrInvalidRequest)
+	}
+	catalog := make(map[string]NarrativeSegmentCatalogItem, len(request.Catalog))
+	for _, item := range request.Catalog {
+		catalog[item.SegmentID] = item
+	}
+	seenSegments := make(map[string]struct{}, len(r.Segments))
+	for _, planned := range r.Segments {
+		item, known := catalog[planned.SegmentID]
+		if !known {
+			return fmt.Errorf("%w: narrative segment plan references unknown segment", ErrInvalidRequest)
+		}
+		if _, duplicate := seenSegments[planned.SegmentID]; duplicate {
+			return fmt.Errorf("%w: narrative segment plan duplicates segment", ErrInvalidRequest)
+		}
+		seenSegments[planned.SegmentID] = struct{}{}
+		if request.SchemaVersion == NarrativeSegmentPlanningLegacySchemaVersion {
+			if !knownNarrativeSegmentEvidence(planned.EvidenceIDs, item.EvidenceIDs) {
+				return fmt.Errorf("%w: narrative segment plan references unknown evidence", ErrInvalidRequest)
+			}
+			continue
+		}
+		start, end, err := narrativeSegmentProtectedAnchor(item, planned.AnchorEvidenceIDs, planned.AnchorMode)
+		if err != nil || start < item.AllowedStartMs || end > item.AllowedEndMs || end-start > NarrativeSegmentPlanningMaximumAnchorMS {
+			return fmt.Errorf("%w: narrative segment plan has invalid protected anchor", ErrInvalidRequest)
+		}
+	}
+	return nil
+}
+
+func knownNarrativeSegmentEvidence(actual, allowed []string) bool {
+	if len(actual) == 0 {
+		return false
+	}
+	known := make(map[string]struct{}, len(allowed))
+	for _, id := range allowed {
+		known[id] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(actual))
+	for _, id := range actual {
+		if _, ok := known[id]; !ok {
+			return false
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return false
+		}
+		seen[id] = struct{}{}
+	}
+	return true
+}
+
+func narrativeSegmentProtectedAnchor(item NarrativeSegmentCatalogItem, ids []string, mode NarrativeSegmentAnchorMode) (int64, int64, error) {
+	if !mode.Valid() || !knownNarrativeSegmentEvidence(ids, item.EvidenceIDs) {
+		return 0, 0, fmt.Errorf("%w: invalid narrative segment anchor evidence", ErrInvalidRequest)
+	}
+	byID := make(map[string]NarrativeSegmentEvidence, len(item.Evidence))
+	for _, evidence := range item.Evidence {
+		byID[evidence.EvidenceID] = evidence
+	}
+	first, ok := byID[ids[0]]
+	if !ok {
+		return 0, 0, fmt.Errorf("%w: unknown narrative segment anchor evidence", ErrInvalidRequest)
+	}
+	start, end := first.StartMs, first.EndMs
+	for _, id := range ids[1:] {
+		evidence, ok := byID[id]
+		if !ok {
+			return 0, 0, fmt.Errorf("%w: unknown narrative segment anchor evidence", ErrInvalidRequest)
+		}
+		if mode == NarrativeSegmentAnchorModeSimultaneous {
+			if evidence.StartMs > start {
+				start = evidence.StartMs
+			}
+			if evidence.EndMs < end {
+				end = evidence.EndMs
+			}
+		} else {
+			if evidence.StartMs < start {
+				start = evidence.StartMs
+			}
+			if evidence.EndMs > end {
+				end = evidence.EndMs
+			}
+		}
+	}
+	if end <= start {
+		return 0, 0, fmt.Errorf("%w: empty narrative segment anchor", ErrInvalidRequest)
+	}
+	return start, end, nil
 }

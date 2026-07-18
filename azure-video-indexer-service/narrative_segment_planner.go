@@ -79,6 +79,9 @@ func (p narrativeSegmentPlanner) Plan(ctx context.Context, request videoindexers
 			if validationErr := response.Validate(); validationErr != nil {
 				validationReason = "invalid_response"
 				err = narrativeFailureError(narrativeFailureInvalid, validationErr)
+			} else if validationErr := response.ValidateAgainst(request); validationErr != nil {
+				validationReason = "catalog_grounding_or_anchor"
+				err = narrativeFailureError(narrativeFailureInvalid, validationErr)
 			} else if len(response.Segments) > p.maxSegments {
 				err = narrativeFailureError(narrativeFailureLimit, errors.New("segment limit exceeded"))
 			}
@@ -86,7 +89,8 @@ func (p narrativeSegmentPlanner) Plan(ctx context.Context, request videoindexers
 			validationReason = narrativePlannerProviderFailureReason(err)
 			err = classifyNarrativeProviderError(err)
 		}
-		if err == nil || !isRetryableNarrativeFailure(err) || planCtx.Err() != nil || attempts == narrativeSegmentPlannerAttempts {
+		semanticRetry := validationReason == "catalog_grounding_or_anchor"
+		if err == nil || (!isRetryableNarrativeFailure(err) && !semanticRetry) || planCtx.Err() != nil || attempts == narrativeSegmentPlannerAttempts {
 			break
 		}
 		if p.obs != nil {
