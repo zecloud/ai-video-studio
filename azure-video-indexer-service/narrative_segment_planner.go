@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	narrativeSegmentPlannerInstructionsVersion = "v2"
+	narrativeSegmentPlannerInstructionsVersion = "v3"
 	narrativeSegmentPlannerAttempts            = 2
 )
 
@@ -23,7 +23,18 @@ type NarrativeSegmentPlanner interface {
 	Plan(context.Context, videoindexerstudio.NarrativeSegmentPlanningRequest) (videoindexerstudio.NarrativeSegmentPlanningResponse, error)
 }
 type narrativeSegmentPlannerRunner interface {
-	RunSegmentPlan(context.Context, string) (videoindexerstudio.NarrativeSegmentPlanningResponse, error)
+	RunSegmentPlan(context.Context, string) (foundryNarrativeSegmentPlan, error)
+}
+
+type foundryNarrativeSegmentPlan struct {
+	Segments []foundryNarrativeSegmentPlanItem `json:"segments"`
+}
+
+type foundryNarrativeSegmentPlanItem struct {
+	SegmentID         string   `json:"segmentId"`
+	Role              string   `json:"role"`
+	AnchorEvidenceIDs []string `json:"anchorEvidenceIds"`
+	AnchorMode        string   `json:"anchorMode"`
 }
 type narrativeSegmentPlanner struct {
 	runner                  narrativeSegmentPlannerRunner
@@ -60,14 +71,11 @@ func (p narrativeSegmentPlanner) Plan(ctx context.Context, request videoindexers
 	validationReason := ""
 	attempts := 0
 	for attempts = 1; attempts <= narrativeSegmentPlannerAttempts; attempts++ {
-		response, err = p.runner.RunSegmentPlan(planCtx, string(raw))
+		var providerResponse foundryNarrativeSegmentPlan
+		providerResponse, err = p.runner.RunSegmentPlan(planCtx, string(raw))
 		if err == nil {
+			response = narrativeSegmentPlanningResponse(request.SchemaVersion, providerResponse)
 			validationReason = ""
-			if response.SchemaVersion == 0 {
-				// The endpoint fixes this contract version; the framework may omit a constant field.
-				response.SchemaVersion = videoindexerstudio.NarrativeSegmentPlanningSchemaVersion
-				validationReason = "missing_schema_version_normalized"
-			}
 			if validationErr := response.Validate(); validationErr != nil {
 				validationReason = "invalid_response"
 				err = narrativeFailureError(narrativeFailureInvalid, validationErr)
@@ -103,13 +111,28 @@ func (p narrativeSegmentPlanner) Plan(ctx context.Context, request videoindexers
 
 type foundryNarrativeSegmentPlannerRunner struct{ agent agentTextRunner }
 
-func (r foundryNarrativeSegmentPlannerRunner) RunSegmentPlan(ctx context.Context, packet string) (videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
+func (r foundryNarrativeSegmentPlannerRunner) RunSegmentPlan(ctx context.Context, packet string) (foundryNarrativeSegmentPlan, error) {
 	if r.agent == nil {
-		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, errors.New("foundry agent is not configured")
+		return foundryNarrativeSegmentPlan{}, errors.New("foundry agent is not configured")
 	}
-	var output videoindexerstudio.NarrativeSegmentPlanningResponse
+	var output foundryNarrativeSegmentPlan
 	_, err := r.agent.RunText(ctx, "Create a bounded grounded segment plan from this catalog only.\n"+packet, agent.WithStructuredOutput(&output), agent.Stream(false)).Collect()
 	return output, err
+}
+
+func narrativeSegmentPlanningResponse(schemaVersion int, output foundryNarrativeSegmentPlan) videoindexerstudio.NarrativeSegmentPlanningResponse {
+	response := videoindexerstudio.NarrativeSegmentPlanningResponse{SchemaVersion: schemaVersion, Segments: make([]videoindexerstudio.NarrativeSegmentPlanItem, 0, len(output.Segments))}
+	for _, item := range output.Segments {
+		planned := videoindexerstudio.NarrativeSegmentPlanItem{SegmentID: item.SegmentID, Role: videoindexerstudio.NarrativeSegmentRole(item.Role)}
+		if schemaVersion == videoindexerstudio.NarrativeSegmentPlanningLegacySchemaVersion {
+			planned.EvidenceIDs = append([]string(nil), item.AnchorEvidenceIDs...)
+		} else {
+			planned.AnchorEvidenceIDs = append([]string(nil), item.AnchorEvidenceIDs...)
+			planned.AnchorMode = videoindexerstudio.NarrativeSegmentAnchorMode(item.AnchorMode)
+		}
+		response.Segments = append(response.Segments, planned)
+	}
+	return response
 }
 func newNarrativeSegmentPlanner(cfg editPlannerConfig, timeout time.Duration, maxCatalog, maxSegments int, obs *Observability) (NarrativeSegmentPlanner, error) {
 	if timeout <= 0 {
@@ -135,8 +158,8 @@ func newNarrativeSegmentPlanner(cfg editPlannerConfig, timeout time.Duration, ma
 	return narrativeSegmentPlanner{runner: foundryNarrativeSegmentPlannerRunner{agent: ag}, timeout: timeout, maxCatalog: maxCatalog, maxSegments: maxSegments, obs: obs}, nil
 }
 func narrativeSegmentPlannerInstructions() string {
-	return `narrative-segment-planner instructions v2
-The input packet contains maxSegments and request. Return schemaVersion 1 and one to maxSegments segments. Select only request.catalog segmentId values, each once. Each segment must cite one or more evidenceIds listed on that exact catalog item. Omit startMs and endMs unless a shorter valid trim is necessary; a supplied trim must use 100ms boundaries, remain entirely inside that item's allowed range, and preserve at least one second. Roles are exactly hook, context, development, payoff, outro. Never invent or alter source IDs, candidate IDs, evidence IDs, timecodes, ranges, descriptors, or fields. Return only the structured response.`
+	return `narrative-segment-planner instructions v3
+The input packet contains maxSegments and request. Return one to maxSegments segments. Select only request.catalog segmentId values, each once. Roles are exactly hook, context, development, payoff, outro. For every selected segment cite one or more anchorEvidenceIds from that exact catalog item. Use anchorMode simultaneous only when all cited evidence must overlap at the chosen moment; use sequence when the complete ordered span of the cited evidence must be preserved. Do not generate timecodes. Prefer evidence whose descriptor is relevant to narrativeIntent. Never invent or alter IDs, sources, ranges, evidence, descriptors, or fields. Return only the structured response.`
 }
 
 func narrativePlannerProviderFailureReason(err error) string {

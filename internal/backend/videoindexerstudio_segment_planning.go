@@ -61,7 +61,21 @@ func buildNarrativeSegmentCatalog(composition videoindexerstudio.CompositionEdit
 	}
 	catalog := make([]videoindexerstudio.NarrativeSegmentCatalogItem, 0, len(ranking.Candidates))
 	for _, candidate := range ranking.Candidates {
-		catalog = append(catalog, videoindexerstudio.NarrativeSegmentCatalogItem{SegmentID: candidate.ID, CandidateID: candidate.ID, SourceAssetID: candidate.SourceAssetID, AllowedStartMs: candidate.StartMs, AllowedEndMs: candidate.EndMs, EvidenceIDs: append([]string(nil), candidate.EvidenceIDs...), Descriptor: narrativeSegmentDescriptor(candidate.EvidenceIDs, evidenceByID)})
+		item := videoindexerstudio.NarrativeSegmentCatalogItem{SegmentID: candidate.ID, CandidateID: candidate.ID, SourceAssetID: candidate.SourceAssetID, AllowedStartMs: candidate.StartMs, AllowedEndMs: candidate.EndMs}
+		for _, evidenceID := range candidate.EvidenceIDs {
+			evidence, ok := evidenceByID[evidenceID]
+			if !ok {
+				continue
+			}
+			start, end := maxInt64(evidence.StartMs, candidate.StartMs), minInt64(evidence.EndMs, candidate.EndMs)
+			if end <= start {
+				continue
+			}
+			item.EvidenceIDs = append(item.EvidenceIDs, evidenceID)
+			item.Evidence = append(item.Evidence, videoindexerstudio.NarrativeSegmentEvidence{EvidenceID: evidenceID, Kind: evidence.Kind, StartMs: start, EndMs: end, Descriptor: canonicalNarrativeSegmentDescriptor(evidence.Text)})
+		}
+		item.Descriptor = narrativeSegmentDescriptor(item.EvidenceIDs, evidenceByID)
+		catalog = append(catalog, item)
 	}
 	request := videoindexerstudio.NarrativeSegmentPlanningRequest{SchemaVersion: videoindexerstudio.NarrativeSegmentPlanningSchemaVersion, CompositionID: composition.CompositionID, NarrativeIntent: composition.NarrativeIntent, Profile: composition.EditorialProfile, Catalog: catalog}
 	if err := request.Validate(); err != nil {
@@ -138,24 +152,25 @@ func applyNarrativeSegmentPlan(plan videoindexerstudio.EditPlan, composition vid
 			return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, errors.New("narrative segment plan duplicates segment")
 		}
 		seen[planned.SegmentID] = struct{}{}
-		if !narrativePlanCitesKnownEvidence(planned.EvidenceIDs, item.EvidenceIDs) {
+		if !narrativePlanCitesKnownEvidence(planned.AnchorEvidenceIDs, item.EvidenceIDs) {
 			return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, errors.New("narrative segment plan references ungrounded evidence")
 		}
-		start, end := planned.StartMs, planned.EndMs
-		if start == 0 && end == 0 {
-			start, end = item.AllowedStartMs, item.AllowedEndMs
-		} else {
-			if start%narrativePlanningGridMS != 0 || end%narrativePlanningGridMS != 0 || start < item.AllowedStartMs || end > item.AllowedEndMs {
-				return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, errors.New("narrative segment plan contains invalid trim")
-			}
+		anchorStart, anchorEnd, anchorErr := narrativeSegmentAnchor(item, planned.AnchorEvidenceIDs, planned.AnchorMode)
+		if anchorErr != nil {
+			return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, anchorErr
 		}
+		start, end := narrativeSegmentTrim(item, anchorStart, anchorEnd, composition.PacingProfile, planned.Role)
 		if end-start < narrativePlanningMinimumMS || end-start > narrativePlanningMaximumMS {
 			return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, errors.New("narrative segment plan violates duration budget")
+		}
+		if start > anchorStart || end < anchorEnd {
+			return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, errors.New("narrative segment plan truncates protected evidence")
 		}
 		clip := clips[item.CandidateID]
 		if clip.ID == "" || clip.SourceAssetID != item.SourceAssetID {
 			return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, errors.New("narrative segment plan changes source")
 		}
+
 		clip.StartMs, clip.EndMs = start, end
 		sourceCounts[clip.SourceAssetID]++
 		total += end - start
@@ -168,6 +183,101 @@ func applyNarrativeSegmentPlan(plan videoindexerstudio.EditPlan, composition vid
 		return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, errors.New("narrative segment plan is empty")
 	}
 	return rebuildCompositionFromClips(plan, composition, selected)
+}
+
+func narrativeSegmentAnchor(item videoindexerstudio.NarrativeSegmentCatalogItem, ids []string, mode videoindexerstudio.NarrativeSegmentAnchorMode) (int64, int64, error) {
+	if !mode.Valid() || len(ids) == 0 {
+		return 0, 0, errors.New("narrative segment plan has invalid anchor")
+	}
+	byID := make(map[string]videoindexerstudio.NarrativeSegmentEvidence, len(item.Evidence))
+	for _, evidence := range item.Evidence {
+		byID[evidence.EvidenceID] = evidence
+	}
+	first, ok := byID[ids[0]]
+	if !ok {
+		return 0, 0, errors.New("narrative segment plan references unknown anchor evidence")
+	}
+	start, end := first.StartMs, first.EndMs
+	seen := map[string]struct{}{ids[0]: {}}
+	for _, id := range ids[1:] {
+		evidence, known := byID[id]
+		if !known {
+			return 0, 0, errors.New("narrative segment plan references unknown anchor evidence")
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return 0, 0, errors.New("narrative segment plan duplicates anchor evidence")
+		}
+		seen[id] = struct{}{}
+		if mode == videoindexerstudio.NarrativeSegmentAnchorModeSimultaneous {
+			start, end = maxInt64(start, evidence.StartMs), minInt64(end, evidence.EndMs)
+		} else {
+			start, end = minInt64(start, evidence.StartMs), maxInt64(end, evidence.EndMs)
+		}
+	}
+	if start < item.AllowedStartMs || end > item.AllowedEndMs || end <= start || end-start > narrativePlanningMaximumMS {
+		return 0, 0, errors.New("narrative segment plan has an invalid protected anchor")
+	}
+	return start, end, nil
+}
+
+func narrativeSegmentTrim(item videoindexerstudio.NarrativeSegmentCatalogItem, anchorStart, anchorEnd int64, profile videoindexerstudio.NarrativePacingProfile, role videoindexerstudio.NarrativeSegmentRole) (int64, int64) {
+	margin := int64(1000)
+	switch profile {
+	case videoindexerstudio.NarrativePacingProfileEnergeticShortForm, videoindexerstudio.NarrativePacingProfileSocialShortForm, videoindexerstudio.NarrativePacingProfileHighlightReel:
+		margin = 500
+	case videoindexerstudio.NarrativePacingProfileCalmRecap, videoindexerstudio.NarrativePacingProfileRecap, videoindexerstudio.NarrativePacingProfileTravel, videoindexerstudio.NarrativePacingProfileInterview:
+		margin = 1500
+	}
+	before, after := margin, margin
+	if role == videoindexerstudio.NarrativeSegmentRoleHook {
+		before = margin / 2
+	} else if role == videoindexerstudio.NarrativeSegmentRoleOutro {
+		after = margin / 2
+	}
+	start := maxInt64(item.AllowedStartMs, floorToGrid(anchorStart-before, narrativePlanningGridMS))
+	end := minInt64(item.AllowedEndMs, ceilToGrid(anchorEnd+after, narrativePlanningGridMS))
+	if end-start > narrativePlanningMaximumMS {
+		extra := narrativePlanningMaximumMS - (anchorEnd - anchorStart)
+		start = maxInt64(item.AllowedStartMs, floorToGrid(anchorStart-extra/2, narrativePlanningGridMS))
+		end = minInt64(item.AllowedEndMs, start+narrativePlanningMaximumMS)
+		if end < anchorEnd {
+			end = minInt64(item.AllowedEndMs, ceilToGrid(anchorEnd, narrativePlanningGridMS))
+			start = maxInt64(item.AllowedStartMs, end-narrativePlanningMaximumMS)
+		}
+		if start > anchorStart || end < anchorEnd {
+			start, end = anchorStart, anchorEnd
+		}
+	}
+	if end-start < narrativePlanningMinimumMS {
+		missing := narrativePlanningMinimumMS - (end - start)
+		start = maxInt64(item.AllowedStartMs, floorToGrid(start-missing/2, narrativePlanningGridMS))
+		end = minInt64(item.AllowedEndMs, start+narrativePlanningMinimumMS)
+		if end-start < narrativePlanningMinimumMS {
+			start = maxInt64(item.AllowedStartMs, end-narrativePlanningMinimumMS)
+		}
+	}
+	return start, end
+}
+
+func floorToGrid(value, grid int64) int64 {
+	if value <= 0 {
+		return 0
+	}
+	return value / grid * grid
+}
+
+func ceilToGrid(value, grid int64) int64 { return (value + grid - 1) / grid * grid }
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func compositionCandidatesFromClips(clips []videoindexerstudio.CompositionClip) []compositionCandidate {

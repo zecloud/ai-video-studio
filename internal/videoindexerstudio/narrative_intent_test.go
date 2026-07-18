@@ -103,7 +103,7 @@ func TestNarrativeIntentClassificationContracts(t *testing.T) {
 }
 
 func TestNarrativeSegmentPlanningContractsRejectUngroundedCatalog(t *testing.T) {
-	catalog := NarrativeSegmentCatalogItem{SegmentID: "segment-1", CandidateID: "candidate-1", SourceAssetID: "asset-1", AllowedStartMs: 1_000, AllowedEndMs: 3_000, EvidenceIDs: []string{"evidence-1"}}
+	catalog := NarrativeSegmentCatalogItem{SegmentID: "segment-1", CandidateID: "candidate-1", SourceAssetID: "asset-1", AllowedStartMs: 1_000, AllowedEndMs: 3_000, EvidenceIDs: []string{"evidence-1"}, Evidence: []NarrativeSegmentEvidence{{EvidenceID: "evidence-1", Kind: "label", StartMs: 1_200, EndMs: 2_000, Descriptor: "robot dansant"}}}
 	request := NarrativeSegmentPlanningRequest{SchemaVersion: NarrativeSegmentPlanningSchemaVersion, CompositionID: "composition-1", NarrativeIntent: "recapitulatif calme", Profile: NarrativeIntentProfileRecap, Catalog: []NarrativeSegmentCatalogItem{catalog}}
 	if err := request.Validate(); err != nil {
 		t.Fatalf("valid request: %v", err)
@@ -112,13 +112,35 @@ func TestNarrativeSegmentPlanningContractsRejectUngroundedCatalog(t *testing.T) 
 	if err := request.Validate(); err == nil {
 		t.Fatal("expected duplicate catalog rejection")
 	}
-	response := NarrativeSegmentPlanningResponse{SchemaVersion: NarrativeSegmentPlanningSchemaVersion, Segments: []NarrativeSegmentPlanItem{{SegmentID: "segment-1", Role: NarrativeSegmentRoleHook, EvidenceIDs: []string{"evidence-1"}}}}
+	response := NarrativeSegmentPlanningResponse{SchemaVersion: NarrativeSegmentPlanningSchemaVersion, Segments: []NarrativeSegmentPlanItem{{SegmentID: "segment-1", Role: NarrativeSegmentRoleHook, AnchorEvidenceIDs: []string{"evidence-1"}, AnchorMode: NarrativeSegmentAnchorModeSimultaneous}}}
 	if err := response.Validate(); err != nil {
 		t.Fatalf("valid response: %v", err)
 	}
 	response.Segments[0].Role = "invented"
 	if err := response.Validate(); err == nil {
 		t.Fatal("expected closed role rejection")
+	}
+}
+
+func TestNarrativeSegmentPlanningV2RequiresTemporalEvidenceAndBackendOwnedTrims(t *testing.T) {
+	request := NarrativeSegmentPlanningRequest{SchemaVersion: NarrativeSegmentPlanningSchemaVersion, CompositionID: "composition-1", Profile: NarrativeIntentProfileStandard, Catalog: []NarrativeSegmentCatalogItem{{SegmentID: "segment-1", CandidateID: "candidate-1", SourceAssetID: "asset-1", AllowedStartMs: 1_000, AllowedEndMs: 3_000, EvidenceIDs: []string{"evidence-1"}}}}
+	if err := request.Validate(); err == nil {
+		t.Fatal("expected missing temporal evidence rejection")
+	}
+	response := NarrativeSegmentPlanningResponse{SchemaVersion: NarrativeSegmentPlanningSchemaVersion, Segments: []NarrativeSegmentPlanItem{{SegmentID: "segment-1", StartMs: 1_000, EndMs: 2_000, Role: NarrativeSegmentRoleHook, AnchorEvidenceIDs: []string{"evidence-1"}, AnchorMode: NarrativeSegmentAnchorModeSimultaneous}}}
+	if err := response.Validate(); err == nil {
+		t.Fatal("expected model-supplied timecode rejection")
+	}
+}
+
+func TestNarrativeSegmentPlanningLegacyContractRemainsValid(t *testing.T) {
+	request := NarrativeSegmentPlanningRequest{SchemaVersion: NarrativeSegmentPlanningLegacySchemaVersion, CompositionID: "composition-1", Profile: NarrativeIntentProfileStandard, Catalog: []NarrativeSegmentCatalogItem{{SegmentID: "segment-1", CandidateID: "candidate-1", SourceAssetID: "asset-1", AllowedStartMs: 1_000, AllowedEndMs: 3_000, EvidenceIDs: []string{"evidence-1"}}}}
+	response := NarrativeSegmentPlanningResponse{SchemaVersion: NarrativeSegmentPlanningLegacySchemaVersion, Segments: []NarrativeSegmentPlanItem{{SegmentID: "segment-1", Role: NarrativeSegmentRoleHook, EvidenceIDs: []string{"evidence-1"}}}}
+	if err := request.Validate(); err != nil {
+		t.Fatalf("legacy request: %v", err)
+	}
+	if err := response.Validate(); err != nil {
+		t.Fatalf("legacy response: %v", err)
 	}
 }
 

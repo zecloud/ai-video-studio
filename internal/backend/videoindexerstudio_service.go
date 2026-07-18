@@ -456,14 +456,23 @@ func (s *VideoIndexerStudioService) evaluateComposition(ctx context.Context, com
 	compositionPlan.PlanningMode = videoindexerstudio.NarrativeSegmentPlanningModeDeterministic
 	compositionPlan.PlanningFallbackReason = videoindexerstudio.NarrativeSegmentPlanningFallbackUnavailable
 	if composition.NarrativeIntent != "" {
-		if client, clientErr := s.clientFor(ctx); clientErr == nil {
-			if planner, ok := client.(narrativeSegmentPlanningClient); ok {
-				if plannedPlan, plannedComposition, plannedDrafts, planErr := planMultiVideoCompositionSegments(ctx, planner, plan, compositionPlan, dependencies); planErr == nil {
-					plan, compositionPlan, drafts = plannedPlan, plannedComposition, plannedDrafts
-				} else {
-					compositionPlan.PlanningFallbackReason = narrativeSegmentPlanningFallbackReason(planErr)
+		planningPlan, planningComposition, _, planningErr := buildMultiVideoCompositionCore(composition.ID, composition.AssetIDs, dependencies, composition.NarrativeIntent, resolution, false)
+		if planningErr == nil {
+			planningComposition.RankingMode = compositionPlan.RankingMode
+			planningComposition.EditorialProfile = compositionPlan.EditorialProfile
+			planningComposition.PlanningMode = compositionPlan.PlanningMode
+			planningComposition.PlanningFallbackReason = compositionPlan.PlanningFallbackReason
+			if client, clientErr := s.clientFor(ctx); clientErr == nil {
+				if planner, ok := client.(narrativeSegmentPlanningClient); ok {
+					if plannedPlan, plannedComposition, plannedDrafts, planErr := planMultiVideoCompositionSegments(ctx, planner, planningPlan, planningComposition, dependencies); planErr == nil {
+						plan, compositionPlan, drafts = plannedPlan, plannedComposition, plannedDrafts
+					} else {
+						compositionPlan.PlanningFallbackReason = narrativeSegmentPlanningFallbackReason(planErr)
+					}
 				}
 			}
+		} else {
+			compositionPlan.PlanningFallbackReason = videoindexerstudio.NarrativeSegmentPlanningFallbackCatalogInvalid
 		}
 	}
 	if client, clientErr := s.clientFor(ctx); clientErr == nil {
@@ -566,6 +575,10 @@ func buildMultiVideoCompositionWithIntent(compositionID string, assetIDs []strin
 }
 
 func buildMultiVideoCompositionWithPacing(compositionID string, assetIDs []string, dependencies []VideoIndexerStudioJob, narrativeIntent string, resolution narrativePacingResolution) (videoindexerstudio.EditPlan, videoindexerstudio.CompositionEditPlan, []videoindexerstudio.TimelineDraft, error) {
+	return buildMultiVideoCompositionCore(compositionID, assetIDs, dependencies, narrativeIntent, resolution, true)
+}
+
+func buildMultiVideoCompositionCore(compositionID string, assetIDs []string, dependencies []VideoIndexerStudioJob, narrativeIntent string, resolution narrativePacingResolution, applyPacing bool) (videoindexerstudio.EditPlan, videoindexerstudio.CompositionEditPlan, []videoindexerstudio.TimelineDraft, error) {
 	profile := resolution.profile
 	if len(assetIDs) < 2 || len(dependencies) != len(assetIDs) {
 		return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, errors.New("composition requires a completed analysis for every selected asset")
@@ -605,7 +618,10 @@ func buildMultiVideoCompositionWithPacing(compositionID string, assetIDs []strin
 		return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, errors.New("selected analyses did not contain usable clips")
 	}
 	sort.Slice(sources, func(i, j int) bool { return sources[i].AssetID < sources[j].AssetID })
-	candidates, variantCount := applyNarrativePacing(candidates, profile)
+	variantCount := 0
+	if applyPacing {
+		candidates, variantCount = applyNarrativePacing(candidates, profile)
+	}
 	sortPacedCompositionCandidates(candidates, profile)
 	candidates = selectCompositionCandidates(candidates)
 	if len(candidates) > narrativeMaxCandidates {
