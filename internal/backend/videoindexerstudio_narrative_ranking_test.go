@@ -216,22 +216,23 @@ func TestTruncateNarrativeTextPreservesUTF8(t *testing.T) {
 		t.Fatalf("invalid rune-safe truncation: %q", truncated)
 	}
 }
-func TestResolveNarrativePacingUsesFoundryProfileAndSafeFallbacks(t *testing.T) {
+func TestResolveNarrativePacingUsesFoundryProfileAndFailsExplicitly(t *testing.T) {
 	validResponse := func(profile videoindexerstudio.NarrativeIntentProfile) *videoindexerstudio.NarrativeIntentClassificationResponse {
 		return &videoindexerstudio.NarrativeIntentClassificationResponse{SchemaVersion: videoindexerstudio.NarrativeRankingSchemaVersion, Profile: profile}
 	}
 	tests := map[string]struct {
-		intent       string
-		response     *videoindexerstudio.NarrativeIntentClassificationResponse
-		err          error
-		wantProfile  videoindexerstudio.NarrativePacingProfile
-		wantMode     videoindexerstudio.NarrativePacingClassifierMode
-		wantFallback videoindexerstudio.NarrativePacingClassifierFallbackReason
+		intent          string
+		response        *videoindexerstudio.NarrativeIntentClassificationResponse
+		err             error
+		wantProfile     videoindexerstudio.NarrativePacingProfile
+		wantMode        videoindexerstudio.NarrativePacingClassifierMode
+		wantFallback    videoindexerstudio.NarrativePacingClassifierFallbackReason
+		wantErrContains string
 	}{
-		"multilingual Foundry energetic":        {intent: "dynamic tiktok video", response: validResponse(videoindexerstudio.NarrativeIntentProfileEnergetic), wantProfile: videoindexerstudio.NarrativePacingProfileEnergeticShortForm, wantMode: videoindexerstudio.NarrativePacingClassifierModeFoundryProfileOnly},
-		"French Foundry calm":                   {intent: "recapitulatif calme", response: validResponse(videoindexerstudio.NarrativeIntentProfileCalm), wantProfile: videoindexerstudio.NarrativePacingProfileCalmRecap, wantMode: videoindexerstudio.NarrativePacingClassifierModeFoundryProfileOnly},
-		"timeout uses keyword fallback":         {intent: "energetic", err: context.DeadlineExceeded, wantProfile: videoindexerstudio.NarrativePacingProfileEnergeticShortForm, wantMode: videoindexerstudio.NarrativePacingClassifierModeDeterministicKeywordFallback, wantFallback: videoindexerstudio.NarrativePacingClassifierFallbackTimeout},
-		"invalid result uses standard fallback": {intent: "recapitulatif calme", response: &videoindexerstudio.NarrativeIntentClassificationResponse{SchemaVersion: 1, Profile: "untrusted"}, wantProfile: videoindexerstudio.NarrativePacingProfileStandard, wantMode: videoindexerstudio.NarrativePacingClassifierModeStandardFallback, wantFallback: videoindexerstudio.NarrativePacingClassifierFallbackInvalidResponse},
+		"multilingual Foundry energetic":             {intent: "dynamic tiktok video", response: validResponse(videoindexerstudio.NarrativeIntentProfileEnergetic), wantProfile: videoindexerstudio.NarrativePacingProfileEnergeticShortForm, wantMode: videoindexerstudio.NarrativePacingClassifierModeFoundryProfileOnly},
+		"French Foundry calm":                        {intent: "recapitulatif calme", response: validResponse(videoindexerstudio.NarrativeIntentProfileCalm), wantProfile: videoindexerstudio.NarrativePacingProfileCalmRecap, wantMode: videoindexerstudio.NarrativePacingClassifierModeFoundryProfileOnly},
+		"timeout fails classification explicitly":    {intent: "energetic", err: context.DeadlineExceeded, wantErrContains: "timed out"},
+		"invalid result fails classification loudly": {intent: "recapitulatif calme", response: &videoindexerstudio.NarrativeIntentClassificationResponse{SchemaVersion: 1, Profile: "untrusted"}, wantErrContains: "invalid structured response"},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -247,7 +248,16 @@ func TestResolveNarrativePacingUsesFoundryProfileAndSafeFallbacks(t *testing.T) 
 				},
 			}
 			svc := NewVideoIndexerStudioService(nil, nil, nil, client)
-			got := svc.resolveNarrativePacing(context.Background(), test.intent)
+			got, err := svc.resolveNarrativePacing(context.Background(), test.intent)
+			if test.wantErrContains != "" {
+				if err == nil || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(test.wantErrContains)) {
+					t.Fatalf("expected error containing %q, got %v", test.wantErrContains, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected classification error: %v", err)
+			}
 			if got.profile != test.wantProfile || got.mode != test.wantMode || got.fallbackReason != test.wantFallback {
 				t.Fatalf("resolution = %#v", got)
 			}

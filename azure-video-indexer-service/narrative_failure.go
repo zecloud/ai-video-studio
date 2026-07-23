@@ -23,7 +23,12 @@ type narrativeFailure struct {
 	err  error
 }
 
-func (e narrativeFailure) Error() string { return string(e.kind) }
+func (e narrativeFailure) Error() string {
+	if e.err != nil {
+		return string(e.kind) + ": " + e.err.Error()
+	}
+	return string(e.kind)
+}
 func (e narrativeFailure) Unwrap() error { return e.err }
 func narrativeFailureFor(err error) narrativeFailureKind {
 	var failure narrativeFailure

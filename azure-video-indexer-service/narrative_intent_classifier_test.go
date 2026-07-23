@@ -7,10 +7,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/microsoft/agent-framework-go/agent/format/jsonformat"
 	"github.com/zecloud/ai-video-studio/internal/videoindexerstudio"
 )
 
@@ -191,6 +193,80 @@ func TestNarrativeIntentClassifierRetriesOnlyTransientFailure(t *testing.T) {
 	})}
 	if _, err := classifier.Classify(context.Background(), videoindexerstudio.NarrativeIntentClassificationRequest{SchemaVersion: 1, NarrativeIntent: "dynamic tiktok video"}); err != nil || attempts != 2 {
 		t.Fatalf("classification = %v, attempts = %d", err, attempts)
+	}
+}
+
+// TestFoundryNarrativeIntentClassificationSchemaRequiresEveryProperty guards
+// against a regression of the production bug where Azure OpenAI/Foundry
+// strict-mode structured output rejected the classifier's schema with
+// "invalid_json_schema" because "omitempty"-tagged fields on the shared
+// videoindexerstudio.NarrativeIntentClassificationResponse type were excluded
+// from the JSON schema's "required" array at every nesting level. The
+// Foundry-facing mirror type must keep every property required (nested
+// optionality is expressed via nullable types instead), mirroring the same
+// guarantee already enforced for EditPlan.
+func TestFoundryNarrativeIntentClassificationSchemaRequiresEveryProperty(t *testing.T) {
+	format, err := jsonformat.For[foundryNarrativeIntentClassification]()
+	if err != nil {
+		t.Fatalf("generate foundryNarrativeIntentClassification response format: %v", err)
+	}
+	schema, err := json.Marshal(format.Schema)
+	if err != nil {
+		t.Fatalf("marshal foundryNarrativeIntentClassification schema: %v", err)
+	}
+
+	var root map[string]any
+	if err := json.Unmarshal(schema, &root); err != nil {
+		t.Fatalf("decode foundryNarrativeIntentClassification schema: %v", err)
+	}
+	assertStrictObjectSchemas(t, root, "foundryNarrativeIntentClassification")
+}
+
+func TestNarrativeIntentClassificationFromFoundryMapsNilQuery(t *testing.T) {
+	result := narrativeIntentClassificationFromFoundry(foundryNarrativeIntentClassification{SchemaVersion: 1, Profile: "calm"})
+	if result.SchemaVersion != 1 || result.Profile != videoindexerstudio.NarrativeIntentProfileCalm || result.Query != nil {
+		t.Fatalf("nil query mapping = %#v", result)
+	}
+}
+
+func TestNarrativeIntentClassificationFromFoundryMapsQueryFields(t *testing.T) {
+	output := foundryNarrativeIntentClassification{
+		SchemaVersion: 1,
+		Profile:       "social_short_form",
+		Query: &foundryNarrativeQuery{
+			SchemaVersion: 1,
+			Coverage:      "best_subset",
+			Ambiguous:     true,
+			Clauses: []foundryNarrativeQueryClause{{
+				ID:         "c1",
+				Importance: "must",
+				Predicate:  "visible_entity",
+				Terms:      []string{"robot"},
+				MatchMode:  "any",
+				Relation:   "overlap",
+			}},
+		},
+	}
+	result := narrativeIntentClassificationFromFoundry(output)
+	want := videoindexerstudio.NarrativeIntentClassificationResponse{
+		SchemaVersion: 1,
+		Profile:       videoindexerstudio.NarrativeIntentProfileSocialShortForm,
+		Query: &videoindexerstudio.NarrativeQuery{
+			SchemaVersion: 1,
+			Coverage:      videoindexerstudio.NarrativeQueryCoverageBestSubset,
+			Ambiguous:     true,
+			Clauses: []videoindexerstudio.NarrativeQueryClause{{
+				ID:         "c1",
+				Importance: videoindexerstudio.NarrativeQueryMust,
+				Predicate:  videoindexerstudio.NarrativeQueryVisibleEntity,
+				Terms:      []string{"robot"},
+				MatchMode:  videoindexerstudio.NarrativeQueryMatchAny,
+				Relation:   videoindexerstudio.NarrativeQueryRelationOverlap,
+			}},
+		},
+	}
+	if !reflect.DeepEqual(result, want) {
+		t.Fatalf("query mapping = %#v, want %#v", result, want)
 	}
 }
 

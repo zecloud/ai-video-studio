@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	narrativeIntentClassifierPromptVersion = "v4"
+	narrativeIntentClassifierPromptVersion = "v5"
 	narrativeClassifierAttempts            = 2
 )
 
@@ -100,17 +100,78 @@ func (c narrativeIntentClassifier) Classify(ctx context.Context, request videoin
 
 type foundryNarrativeIntentClassifierRunner struct{ agent agentTextRunner }
 
+// foundryNarrativeIntentClassification is a Foundry-facing mirror of
+// videoindexerstudio.NarrativeIntentClassificationResponse with no "omitempty"
+// tags. OpenAI/Foundry structured output ("strict" JSON schema) requires every
+// property to be listed in the schema's "required" array; a Go struct field
+// tagged "omitempty" is excluded from "required" during schema inference,
+// which Azure OpenAI then rejects outright (HTTP 400, "invalid_json_schema")
+// before ever invoking the model. Optionality is instead expressed through the
+// nullable JSON type Go's pointer/slice fields already receive (independent of
+// the "omitempty" tag), so the model can still return null/empty values.
+type foundryNarrativeIntentClassification struct {
+	SchemaVersion int                    `json:"schemaVersion"`
+	Profile       string                 `json:"profile"`
+	Query         *foundryNarrativeQuery `json:"query"`
+}
+
+type foundryNarrativeQuery struct {
+	SchemaVersion int                           `json:"schemaVersion"`
+	Clauses       []foundryNarrativeQueryClause `json:"clauses"`
+	Coverage      string                        `json:"coverage"`
+	Ambiguous     bool                          `json:"ambiguous"`
+}
+
+type foundryNarrativeQueryClause struct {
+	ID         string   `json:"id"`
+	Importance string   `json:"importance"`
+	Predicate  string   `json:"predicate"`
+	Terms      []string `json:"terms"`
+	MatchMode  string   `json:"matchMode"`
+	Relation   string   `json:"relation"`
+}
+
 func (r foundryNarrativeIntentClassifierRunner) RunClassification(ctx context.Context, intent string, correction bool) (videoindexerstudio.NarrativeIntentClassificationResponse, error) {
 	if r.agent == nil {
 		return videoindexerstudio.NarrativeIntentClassificationResponse{}, errors.New("foundry agent is not configured")
 	}
-	var output videoindexerstudio.NarrativeIntentClassificationResponse
+	var output foundryNarrativeIntentClassification
 	prompt := "Interpret this normalized narrative request. Request:\n" + intent
 	if correction {
-		prompt = "Your previous structured response did not satisfy the closed contract. Retry from the request below. Return schemaVersion 1, a valid closed profile, and either no query or a query that exactly satisfies every enum, normalization, count, and term-length rule. Do not guess or emit partial query objects. Request:\n" + intent
+		prompt = "Your previous structured response did not satisfy the closed contract. Retry from the request below. Return schemaVersion 1, a valid closed profile, and either a null query or a query that exactly satisfies every enum, normalization, count, and term-length rule. Do not guess or emit partial query objects. Request:\n" + intent
 	}
-	_, err := r.agent.RunText(ctx, prompt, agent.WithStructuredOutput(&output), agent.Stream(false)).Collect()
-	return output, err
+	if _, err := r.agent.RunText(ctx, prompt, agent.WithStructuredOutput(&output), agent.Stream(false)).Collect(); err != nil {
+		return videoindexerstudio.NarrativeIntentClassificationResponse{}, err
+	}
+	return narrativeIntentClassificationFromFoundry(output), nil
+}
+
+func narrativeIntentClassificationFromFoundry(output foundryNarrativeIntentClassification) videoindexerstudio.NarrativeIntentClassificationResponse {
+	result := videoindexerstudio.NarrativeIntentClassificationResponse{
+		SchemaVersion: output.SchemaVersion,
+		Profile:       videoindexerstudio.NarrativeIntentProfile(output.Profile),
+	}
+	if output.Query == nil {
+		return result
+	}
+	clauses := make([]videoindexerstudio.NarrativeQueryClause, 0, len(output.Query.Clauses))
+	for _, clause := range output.Query.Clauses {
+		clauses = append(clauses, videoindexerstudio.NarrativeQueryClause{
+			ID:         clause.ID,
+			Importance: videoindexerstudio.NarrativeQueryImportance(clause.Importance),
+			Predicate:  videoindexerstudio.NarrativeQueryPredicate(clause.Predicate),
+			Terms:      clause.Terms,
+			MatchMode:  videoindexerstudio.NarrativeQueryMatchMode(clause.MatchMode),
+			Relation:   videoindexerstudio.NarrativeQueryRelation(clause.Relation),
+		})
+	}
+	result.Query = &videoindexerstudio.NarrativeQuery{
+		SchemaVersion: output.Query.SchemaVersion,
+		Clauses:       clauses,
+		Coverage:      videoindexerstudio.NarrativeQueryCoverage(output.Query.Coverage),
+		Ambiguous:     output.Query.Ambiguous,
+	}
+	return result
 }
 
 func newNarrativeIntentClassifier(plannerConfig editPlannerConfig, timeout time.Duration, obs *Observability) (NarrativeIntentClassifier, error) {
@@ -136,10 +197,10 @@ func newNarrativeIntentClassifier(plannerConfig editPlannerConfig, timeout time.
 }
 
 func narrativeIntentClassifierInstructions() string {
-	return `narrative-intent-classifier instructions v4
+	return `narrative-intent-classifier instructions v5
 Interpret a user-authored narrative request in any language into editorial style and independently verifiable content constraints.
 Return schemaVersion 1 and exactly one closed profile: standard, energetic, chronological, calm, cinematic, social_short_form, tutorial, highlight_reel, recap, storytelling, travel, interview, or product_showcase.
 When the request contains content requirements, return query schemaVersion 1, coverage best_subset unless the user explicitly asks for every occurrence or one result per source, and at most 8 clauses. Clause IDs are stable c1, c2, etc. Importance is must for required content, prefer for optional content, and avoid only for explicitly excluded content. Predicates are only visible_entity (objects, actions, or labels visible in the image), spoken_text, visible_text (OCR), or unsupported. Terms are lowercase normalized phrases in the evidence language or explicit multilingual alternatives, at most 8 per clause and 80 characters each. Use matchMode any for alternatives and all for conjunctions. Use relation overlap when all terms must coexist and sequence only when the user explicitly requires ordered events.
 Do not encode pacing, tone, mood, chronology, aesthetics, platform style, duration, quality, emotion, intent, causality, exact identity, precise object position, or visual absence as verifiable content; keep style in profile and use unsupported only when such a requirement is mandatory and cannot be represented. Non-detection never proves absence. Do not invent synonyms unrelated to the request.
-Return only structured output. If a content query cannot be represented exactly, omit query rather than returning an invalid query. Never return clip IDs, source IDs, evidence IDs, timestamps, ranges, ordering, explanations, confidence prose, or the original user text.`
+Return only structured output. If a content query cannot be represented exactly, return query as null rather than an invalid or partial query. Never return clip IDs, source IDs, evidence IDs, timestamps, ranges, ordering, explanations, confidence prose, or the original user text.`
 }

@@ -447,7 +447,10 @@ func (s *VideoIndexerStudioService) evaluateComposition(ctx context.Context, com
 		}
 		dependencies = append(dependencies, dependency)
 	}
-	resolution := s.resolveNarrativePacing(ctx, composition.NarrativeIntent)
+	resolution, pacingErr := s.resolveNarrativePacing(ctx, composition.NarrativeIntent)
+	if pacingErr != nil {
+		return failComposition(composition, s.nowTime(), pacingErr.Error())
+	}
 	plan, compositionPlan, drafts, err := buildMultiVideoCompositionWithPacing(composition.ID, composition.AssetIDs, dependencies, composition.NarrativeIntent, resolution)
 	if err != nil {
 		return failComposition(composition, s.nowTime(), err.Error())
@@ -505,31 +508,40 @@ func failComposition(job VideoIndexerStudioJob, now time.Time, message string) V
 	return job
 }
 
-func (s *VideoIndexerStudioService) resolveNarrativePacing(ctx context.Context, intent string) narrativePacingResolution {
+func (s *VideoIndexerStudioService) resolveNarrativePacing(ctx context.Context, intent string) (narrativePacingResolution, error) {
 	if intent == "" {
 		return narrativePacingResolution{
 			profile:        videoindexerstudio.NarrativePacingProfileStandard,
 			mode:           videoindexerstudio.NarrativePacingClassifierModeStandardFallback,
 			fallbackReason: videoindexerstudio.NarrativePacingClassifierFallbackNoIntent,
-		}
+		}, nil
 	}
 	if client, err := s.clientFor(ctx); err == nil {
 		if classifier, ok := client.(narrativeIntentClassificationClient); ok {
 			response, classifyErr := classifier.ClassifyNarrativeIntent(ctx, videoindexerstudio.NarrativeIntentClassificationRequest{SchemaVersion: videoindexerstudio.NarrativeRankingSchemaVersion, NarrativeIntent: intent})
 			if classifyErr == nil {
 				if response == nil || response.Validate() != nil {
-					return deterministicNarrativePacingResolution(intent, videoindexerstudio.NarrativePacingClassifierFallbackInvalidResponse)
+					return narrativePacingResolution{}, errors.New("intent classification failed: classifier returned invalid structured response")
 				}
 				mode := videoindexerstudio.NarrativePacingClassifierModeFoundryStructured
 				if response.Query == nil {
 					mode = videoindexerstudio.NarrativePacingClassifierModeFoundryProfileOnly
 				}
-				return narrativePacingResolution{profile: response.Profile.PacingProfile(), mode: mode, query: response.Query}
+				return narrativePacingResolution{profile: response.Profile.PacingProfile(), mode: mode, query: response.Query}, nil
 			}
-			return deterministicNarrativePacingResolution(intent, narrativePacingFallbackReason(classifyErr))
+			switch narrativePacingFallbackReason(classifyErr) {
+			case videoindexerstudio.NarrativePacingClassifierFallbackTimeout:
+				return narrativePacingResolution{}, errors.New("intent classification failed: classifier timed out")
+			case videoindexerstudio.NarrativePacingClassifierFallbackUnavailable:
+				return narrativePacingResolution{}, errors.New("intent classification failed: classifier unavailable")
+			case videoindexerstudio.NarrativePacingClassifierFallbackInvalidResponse:
+				return narrativePacingResolution{}, errors.New("intent classification failed: classifier returned invalid structured response")
+			default:
+				return narrativePacingResolution{}, errors.New("intent classification failed: classifier request failed")
+			}
 		}
 	}
-	return deterministicNarrativePacingResolution(intent, videoindexerstudio.NarrativePacingClassifierFallbackUnavailable)
+	return narrativePacingResolution{}, errors.New("intent classification failed: classifier unavailable")
 }
 
 func deterministicNarrativePacingResolution(intent string, reason videoindexerstudio.NarrativePacingClassifierFallbackReason) narrativePacingResolution {

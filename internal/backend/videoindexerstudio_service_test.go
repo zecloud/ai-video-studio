@@ -754,7 +754,7 @@ func TestVideoIndexerGenerateMultiVideoEditReusesCompletedAnalyses(t *testing.T)
 	}
 }
 
-func TestVideoIndexerGenerateMultiVideoEditWithIntentPersistsFallbackPreference(t *testing.T) {
+func TestVideoIndexerGenerateMultiVideoEditWithIntentFailsWithoutClassifierFallback(t *testing.T) {
 	assets := []library.ProjectAsset{{ID: "asset-1", Name: "one.mp4", CloudAssetID: "drive-1"}, {ID: "asset-2", Name: "two.mp4", CloudAssetID: "drive-2"}}
 	store := &memoryVideoIndexerJobStore{jobs: []VideoIndexerStudioJob{
 		completedAnalysisJob("analysis-1", "asset-1", 0, 1200, 0.8),
@@ -766,8 +766,11 @@ func TestVideoIndexerGenerateMultiVideoEditWithIntentPersistsFallbackPreference(
 	if err != nil {
 		t.Fatalf("GenerateMultiVideoEditWithIntent: %v", err)
 	}
-	if composition.NarrativeIntent != "calm recap" || composition.CompositionPlan == nil || composition.CompositionPlan.NarrativeIntent != "calm recap" || composition.CompositionPlan.RankingMode != "deterministic_grounded_fallback_v1" {
-		t.Fatalf("intent was not retained with deterministic fallback: %#v", composition)
+	if composition.NarrativeIntent != "calm recap" || composition.Status != videoIndexerJobStatusFailed || composition.Stage != "composition_failed" {
+		t.Fatalf("intent classification should fail loudly without fallback: %#v", composition)
+	}
+	if !strings.Contains(composition.ErrorMessage, "intent classification failed") {
+		t.Fatalf("unexpected composition error message: %q", composition.ErrorMessage)
 	}
 }
 
