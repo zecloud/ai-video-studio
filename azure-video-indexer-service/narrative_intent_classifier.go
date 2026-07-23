@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	narrativeIntentClassifierPromptVersion = "v2"
+	narrativeIntentClassifierPromptVersion = "v3"
 	narrativeClassifierAttempts            = 2
 )
 
@@ -97,7 +97,7 @@ func (r foundryNarrativeIntentClassifierRunner) RunClassification(ctx context.Co
 		return videoindexerstudio.NarrativeIntentClassificationResponse{}, errors.New("foundry agent is not configured")
 	}
 	var output videoindexerstudio.NarrativeIntentClassificationResponse
-	prompt := "Classify this normalized editorial preference into exactly one profile. Preference:\n" + intent
+	prompt := "Interpret this normalized narrative request. Request:\n" + intent
 	_, err := r.agent.RunText(ctx, prompt, agent.WithStructuredOutput(&output), agent.Stream(false)).Collect()
 	return output, err
 }
@@ -125,8 +125,10 @@ func newNarrativeIntentClassifier(plannerConfig editPlannerConfig, timeout time.
 }
 
 func narrativeIntentClassifierInstructions() string {
-	return `narrative-intent-classifier instructions v2
-Classify a user-authored editorial preference in any language into exactly one closed profile: standard, energetic, chronological, calm, cinematic, social_short_form, tutorial, highlight_reel, recap, storytelling, travel, interview, or product_showcase.
-Energetic means fast action. Social_short_form means social or TikTok-style pacing, including multilingual requests such as "robots dansants en mode video TikTok". Chronological means continuity or time order. Calm and recap mean reflective coverage. Cinematic emphasizes measured visual moments. Tutorial prioritizes explanatory continuity. Highlight_reel prioritizes concise best moments. Storytelling prioritizes narrative development. Travel, interview, and product_showcase select their corresponding editorial approach. Use standard when unclear.
-Return only the structured response with schemaVersion 1 and one valid profile. Do not return clip IDs, source IDs, evidence, timestamps, ranges, ordering, explanations, or user text.`
+	return `narrative-intent-classifier instructions v3
+Interpret a user-authored narrative request in any language into editorial style and independently verifiable content constraints.
+Return schemaVersion 1 and exactly one closed profile: standard, energetic, chronological, calm, cinematic, social_short_form, tutorial, highlight_reel, recap, storytelling, travel, interview, or product_showcase.
+When the request contains content requirements, return query schemaVersion 1, coverage best_subset unless the user explicitly asks for every occurrence or one result per source, and at most 8 clauses. Clause IDs are stable c1, c2, etc. Importance is must for required content, prefer for optional content, and avoid only for explicitly excluded content. Predicates are only visible_entity (objects, actions, or labels visible in the image), spoken_text, visible_text (OCR), or unsupported. Terms are lowercase normalized phrases in the evidence language or explicit multilingual alternatives, at most 8 per clause and 80 characters each. Use matchMode any for alternatives and all for conjunctions. Use relation overlap when all terms must coexist and sequence only when the user explicitly requires ordered events.
+Do not encode pacing, tone, mood, chronology, aesthetics, platform style, duration, quality, emotion, intent, causality, exact identity, precise object position, or visual absence as verifiable content; keep style in profile and use unsupported only when such a requirement is mandatory and cannot be represented. Non-detection never proves absence. Do not invent synonyms unrelated to the request.
+Return only structured output. Never return clip IDs, source IDs, evidence IDs, timestamps, ranges, ordering, explanations, confidence prose, or the original user text.`
 }

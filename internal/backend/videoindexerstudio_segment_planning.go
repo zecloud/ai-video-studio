@@ -4,14 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/zecloud/ai-video-studio/internal/videoindexerstudio"
 )
 
 var (
-	errNarrativeSegmentCatalogInvalid = errors.New("narrative segment catalog is invalid")
-	errNarrativeSegmentPlanInvalid    = errors.New("narrative segment plan is invalid")
+	errNarrativeSegmentCatalogInvalid   = errors.New("narrative segment catalog is invalid")
+	errNarrativeSegmentPlanInvalid      = errors.New("narrative segment plan is invalid")
+	errNarrativeSegmentNoVerifiableMatch = errors.New("narrative query has no verifiable match")
 )
 
 const (
@@ -53,17 +55,27 @@ func narrativeIntentProfileForPacing(profile videoindexerstudio.NarrativePacingP
 	}
 }
 
-func buildNarrativeSegmentCatalog(composition videoindexerstudio.CompositionEditPlan, dependencies []VideoIndexerStudioJob) (videoindexerstudio.NarrativeSegmentPlanningRequest, error) {
+func buildNarrativeSegmentCatalog(composition videoindexerstudio.CompositionEditPlan, dependencies []VideoIndexerStudioJob) (videoindexerstudio.NarrativeSegmentPlanningRequest, videoindexerstudio.NarrativeSelectionOutcome, error) {
 	ranking, err := buildNarrativeRankingRequest(composition, dependencies)
 	if err != nil {
-		return videoindexerstudio.NarrativeSegmentPlanningRequest{}, err
+		return videoindexerstudio.NarrativeSegmentPlanningRequest{}, videoindexerstudio.NarrativeSelectionOutcomeUnavailable, err
 	}
 	evidenceByID := make(map[string]videoindexerstudio.NarrativeEvidence, len(ranking.Evidence))
 	for _, evidence := range ranking.Evidence {
 		evidenceByID[evidence.ID] = evidence
 	}
-	catalog := make([]videoindexerstudio.NarrativeSegmentCatalogItem, 0, len(ranking.Candidates))
-	for _, candidate := range ranking.Candidates {
+
+	catalogCandidates := ranking.Candidates
+	outcome := videoindexerstudio.NarrativeSelectionOutcomeUnavailable
+	if composition.NarrativeQuery != nil && composition.NarrativeQuery.Actionable() {
+		catalogCandidates, outcome = selectQueryAwareCandidates(ranking.Candidates, evidenceByID, composition.NarrativeQuery)
+		if len(catalogCandidates) == 0 {
+			return videoindexerstudio.NarrativeSegmentPlanningRequest{}, outcome, errNarrativeSegmentNoVerifiableMatch
+		}
+	}
+
+	catalog := make([]videoindexerstudio.NarrativeSegmentCatalogItem, 0, len(catalogCandidates))
+	for _, candidate := range catalogCandidates {
 		item := videoindexerstudio.NarrativeSegmentCatalogItem{SegmentID: candidate.ID, CandidateID: candidate.ID, SourceAssetID: candidate.SourceAssetID, AllowedStartMs: candidate.StartMs, AllowedEndMs: candidate.EndMs}
 		for _, evidenceID := range candidate.EvidenceIDs {
 			evidence, ok := evidenceByID[evidenceID]
@@ -82,9 +94,91 @@ func buildNarrativeSegmentCatalog(composition videoindexerstudio.CompositionEdit
 	}
 	request := videoindexerstudio.NarrativeSegmentPlanningRequest{SchemaVersion: videoindexerstudio.NarrativeSegmentPlanningSchemaVersion, CompositionID: composition.CompositionID, NarrativeIntent: composition.NarrativeIntent, Profile: composition.EditorialProfile, Catalog: catalog}
 	if err := request.Validate(); err != nil {
-		return videoindexerstudio.NarrativeSegmentPlanningRequest{}, fmt.Errorf("%w: %v", errNarrativeSegmentCatalogInvalid, err)
+		return videoindexerstudio.NarrativeSegmentPlanningRequest{}, videoindexerstudio.NarrativeSelectionOutcomeUnavailable, fmt.Errorf("%w: %v", errNarrativeSegmentCatalogInvalid, err)
 	}
-	return request, nil
+	if outcome == videoindexerstudio.NarrativeSelectionOutcomeUnavailable && composition.NarrativeQuery != nil && composition.NarrativeQuery.Actionable() {
+		outcome = videoindexerstudio.NarrativeSelectionOutcomePartial
+	}
+	return request, outcome, nil
+}
+
+type narrativeQueryScoredCandidate struct {
+	candidate videoindexerstudio.NarrativeRankingCandidate
+	eval      videoindexerstudio.NarrativeQueryEvaluation
+	score     float64
+}
+
+func selectQueryAwareCandidates(candidates []videoindexerstudio.NarrativeRankingCandidate, evidenceByID map[string]videoindexerstudio.NarrativeEvidence, query *videoindexerstudio.NarrativeQuery) ([]videoindexerstudio.NarrativeRankingCandidate, videoindexerstudio.NarrativeSelectionOutcome) {
+	qualified := make([]narrativeQueryScoredCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		evidence := make([]videoindexerstudio.NarrativeEvidence, 0, len(candidate.EvidenceIDs))
+		for _, id := range candidate.EvidenceIDs {
+			if item, ok := evidenceByID[id]; ok {
+				evidence = append(evidence, item)
+			}
+		}
+		eval := videoindexerstudio.EvaluateNarrativeQuery(evidence, query)
+		if eval.HasUnsupported || !eval.MustSatisfied || eval.AvoidViolated {
+			continue
+		}
+		score := candidate.Score
+		if eval.PreferSatisfied {
+			score += 1.0
+		}
+		qualified = append(qualified, narrativeQueryScoredCandidate{candidate: candidate, eval: eval, score: score})
+	}
+	if len(qualified) == 0 {
+		return nil, videoindexerstudio.NarrativeSelectionOutcomeNoMatch
+	}
+	switch query.Coverage {
+	case videoindexerstudio.NarrativeQueryCoveragePerMatchingSource:
+		qualified = selectPerMatchingSource(qualified)
+	default:
+		sort.SliceStable(qualified, func(i, j int) bool {
+			if qualified[i].score != qualified[j].score {
+				return qualified[i].score > qualified[j].score
+			}
+			return qualified[i].candidate.ID < qualified[j].candidate.ID
+		})
+		limit := narrativeMaxCandidates
+		if query.Coverage == videoindexerstudio.NarrativeQueryCoverageExhaustive && len(qualified) < narrativeMaxCandidates {
+			limit = len(qualified)
+		}
+		if len(qualified) > limit {
+			qualified = qualified[:limit]
+		}
+	}
+	result := make([]videoindexerstudio.NarrativeRankingCandidate, len(qualified))
+	preferFound := false
+	for i, item := range qualified {
+		result[i] = item.candidate
+		if item.eval.PreferSatisfied {
+			preferFound = true
+		}
+	}
+	outcome := videoindexerstudio.NarrativeSelectionOutcomePartial
+	if preferFound {
+		outcome = videoindexerstudio.NarrativeSelectionOutcomeComplete
+	}
+	return result, outcome
+}
+
+func selectPerMatchingSource(qualified []narrativeQueryScoredCandidate) []narrativeQueryScoredCandidate {
+	bySource := make(map[string][]narrativeQueryScoredCandidate)
+	for _, item := range qualified {
+		bySource[item.candidate.SourceAssetID] = append(bySource[item.candidate.SourceAssetID], item)
+	}
+	selected := make([]narrativeQueryScoredCandidate, 0, len(qualified))
+	for _, items := range bySource {
+		if len(items) == 0 {
+			continue
+		}
+		sort.SliceStable(items, func(i, j int) bool {
+			return items[i].score > items[j].score
+		})
+		selected = append(selected, items[0])
+	}
+	return selected
 }
 
 func narrativeSegmentDescriptor(evidenceIDs []string, evidenceByID map[string]videoindexerstudio.NarrativeEvidence) string {
@@ -119,7 +213,7 @@ func planMultiVideoCompositionSegments(ctx context.Context, planner narrativeSeg
 	if planner == nil {
 		return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, errors.New("narrative segment planner is unavailable")
 	}
-	request, err := buildNarrativeSegmentCatalog(composition, dependencies)
+	request, outcome, err := buildNarrativeSegmentCatalog(composition, dependencies)
 	if err != nil {
 		return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, err
 	}
@@ -131,6 +225,8 @@ func planMultiVideoCompositionSegments(ctx context.Context, planner narrativeSeg
 	if err != nil {
 		return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, fmt.Errorf("%w: %v", errNarrativeSegmentPlanInvalid, err)
 	}
+	plannedComposition.SelectionOutcome = outcome
+	plannedComposition.PlanningMode = videoindexerstudio.NarrativeSegmentPlanningModeFoundryStructured
 	return plannedPlan, plannedComposition, drafts, nil
 }
 
@@ -341,6 +437,9 @@ func rebuildCompositionFromClips(plan videoindexerstudio.EditPlan, composition v
 func narrativeSegmentPlanningFallbackReason(err error) videoindexerstudio.NarrativeSegmentPlanningFallbackReason {
 	if errors.Is(err, errNarrativeSegmentCatalogInvalid) {
 		return videoindexerstudio.NarrativeSegmentPlanningFallbackCatalogInvalid
+	}
+	if errors.Is(err, errNarrativeSegmentNoVerifiableMatch) {
+		return videoindexerstudio.NarrativeSegmentPlanningFallbackNoVerifiableMatch
 	}
 	if errors.Is(err, errNarrativeSegmentPlanInvalid) {
 		return videoindexerstudio.NarrativeSegmentPlanningFallbackInvalidResponse

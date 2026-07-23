@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ func TestNarrativeSegmentPlanAppliesOnlyKnownGroundedCandidate(t *testing.T) {
 		t.Fatalf("build composition: %v", err)
 	}
 	composition.EditorialProfile = videoindexerstudio.NarrativeIntentProfileStandard
-	request, err := buildNarrativeSegmentCatalog(composition, dependencies)
+	request, _, err := buildNarrativeSegmentCatalog(composition, dependencies)
 	if err != nil {
 		t.Fatalf("build catalog: %v", err)
 	}
@@ -46,7 +47,7 @@ func TestNarrativeSegmentPlanRejectsUnknownEvidenceAndInvalidTrim(t *testing.T) 
 		t.Fatalf("build composition: %v", err)
 	}
 	composition.EditorialProfile = videoindexerstudio.NarrativeIntentProfileStandard
-	request, err := buildNarrativeSegmentCatalog(composition, dependencies)
+	request, _, err := buildNarrativeSegmentCatalog(composition, dependencies)
 	if err != nil {
 		t.Fatalf("build catalog: %v", err)
 	}
@@ -72,7 +73,7 @@ func TestNarrativeSegmentPlanRejectsDuplicateSegmentAndInvalidRole(t *testing.T)
 		t.Fatalf("build composition: %v", err)
 	}
 	composition.EditorialProfile = videoindexerstudio.NarrativeIntentProfileStandard
-	request, err := buildNarrativeSegmentCatalog(composition, dependencies)
+	request, _, err := buildNarrativeSegmentCatalog(composition, dependencies)
 	if err != nil {
 		t.Fatalf("build catalog: %v", err)
 	}
@@ -105,7 +106,7 @@ func TestNarrativeSegmentCatalogCanonicalizesOCRAndTranscriptDescriptorsBeforePl
 		t.Fatalf("build composition: %v", err)
 	}
 	composition.EditorialProfile = videoindexerstudio.NarrativeIntentProfileSocialShortForm
-	request, err := buildNarrativeSegmentCatalog(composition, dependencies)
+	request, _, err := buildNarrativeSegmentCatalog(composition, dependencies)
 	if err != nil || len(request.Catalog) != len(composition.Clips) {
 		t.Fatalf("catalog = %#v, %v", request, err)
 	}
@@ -195,5 +196,94 @@ func TestNarrativeSegmentPlanningFallbackReportsLocalCatalogFailure(t *testing.T
 func TestNarrativeSegmentPlanningFallbackReportsLocalPlanFailure(t *testing.T) {
 	if got := narrativeSegmentPlanningFallbackReason(fmt.Errorf("wrapped: %w", errNarrativeSegmentPlanInvalid)); got != videoindexerstudio.NarrativeSegmentPlanningFallbackInvalidResponse {
 		t.Fatalf("plan fallback = %q", got)
+	}
+}
+
+func TestNarrativeSegmentCatalogFiltersByActionableQuery(t *testing.T) {
+	dependencies := narrativeDependencies()
+	dependencies[0].VideoIndexResult.Insights.Labels = []videoindexerstudio.VideoIndexLabel{{ID: "robot", Name: "robot", StartMs: 0, EndMs: 2_000}}
+	dependencies[1].VideoIndexResult.Insights.Labels = []videoindexerstudio.VideoIndexLabel{{ID: "tree", Name: "tree", StartMs: 0, EndMs: 2_000}}
+	plan, composition, _, err := buildMultiVideoComposition("composition-1", []string{"asset-a", "asset-b"}, dependencies)
+	if err != nil {
+		t.Fatalf("build composition: %v", err)
+	}
+	composition.NarrativeQuery = &videoindexerstudio.NarrativeQuery{SchemaVersion: videoindexerstudio.NarrativeQuerySchemaVersion, Coverage: videoindexerstudio.NarrativeQueryCoverageBestSubset, Clauses: []videoindexerstudio.NarrativeQueryClause{
+		{ID: "c1", Importance: videoindexerstudio.NarrativeQueryMust, Predicate: videoindexerstudio.NarrativeQueryVisibleEntity, Terms: []string{"robot"}, MatchMode: videoindexerstudio.NarrativeQueryMatchAny, Relation: videoindexerstudio.NarrativeQueryRelationOverlap},
+	}}
+	composition.EditorialProfile = videoindexerstudio.NarrativeIntentProfileStandard
+	request, outcome, err := buildNarrativeSegmentCatalog(composition, dependencies)
+	if err != nil {
+		t.Fatalf("build catalog: %v", err)
+	}
+	if len(request.Catalog) != 1 || request.Catalog[0].SourceAssetID != "asset-a" {
+		t.Fatalf("expected only asset-a to qualify, got %#v", request.Catalog)
+	}
+	if outcome != videoindexerstudio.NarrativeSelectionOutcomePartial {
+		t.Fatalf("expected partial outcome, got %q", outcome)
+	}
+
+	response := anchoredPlanningResponse(request.Catalog[0].SegmentID, request.Catalog[0].EvidenceIDs[0])
+	planned, plannedComposition, _, err := applyNarrativeSegmentPlan(plan, composition, request, response)
+	if err != nil {
+		t.Fatalf("apply plan: %v", err)
+	}
+	plannedComposition.SelectionOutcome = outcome
+	if plannedComposition.SelectionOutcome != videoindexerstudio.NarrativeSelectionOutcomePartial {
+		t.Fatalf("expected outcome persisted in composition, got %q", plannedComposition.SelectionOutcome)
+	}
+	if len(planned.Suggestions[0].Clips) != 1 {
+		t.Fatalf("expected one planned clip, got %d", len(planned.Suggestions[0].Clips))
+	}
+}
+
+func TestNarrativeSegmentCatalogReportsNoVerifiableMatch(t *testing.T) {
+	dependencies := narrativeDependencies()
+	dependencies[0].VideoIndexResult.Insights.Labels = []videoindexerstudio.VideoIndexLabel{{ID: "tree", Name: "tree", StartMs: 0, EndMs: 2_000}}
+	dependencies[1].VideoIndexResult.Insights.Labels = []videoindexerstudio.VideoIndexLabel{{ID: "sky", Name: "sky", StartMs: 0, EndMs: 2_000}}
+	_, composition, _, err := buildMultiVideoComposition("composition-1", []string{"asset-a", "asset-b"}, dependencies)
+	if err != nil {
+		t.Fatalf("build composition: %v", err)
+	}
+	composition.NarrativeQuery = &videoindexerstudio.NarrativeQuery{SchemaVersion: videoindexerstudio.NarrativeQuerySchemaVersion, Coverage: videoindexerstudio.NarrativeQueryCoverageBestSubset, Clauses: []videoindexerstudio.NarrativeQueryClause{
+		{ID: "c1", Importance: videoindexerstudio.NarrativeQueryMust, Predicate: videoindexerstudio.NarrativeQueryVisibleEntity, Terms: []string{"robot"}, MatchMode: videoindexerstudio.NarrativeQueryMatchAny, Relation: videoindexerstudio.NarrativeQueryRelationOverlap},
+	}}
+	composition.EditorialProfile = videoindexerstudio.NarrativeIntentProfileStandard
+	_, outcome, err := buildNarrativeSegmentCatalog(composition, dependencies)
+	if !errors.Is(err, errNarrativeSegmentNoVerifiableMatch) {
+		t.Fatalf("expected no_verifiable_match error, got %v (outcome %q)", err, outcome)
+	}
+	if outcome != videoindexerstudio.NarrativeSelectionOutcomeNoMatch {
+		t.Fatalf("expected no_match outcome, got %q", outcome)
+	}
+	if got := narrativeSegmentPlanningFallbackReason(err); got != videoindexerstudio.NarrativeSegmentPlanningFallbackNoVerifiableMatch {
+		t.Fatalf("expected no_verifiable_match fallback reason, got %q", got)
+	}
+}
+
+func TestNarrativeSegmentCatalogPreservesExistingBehaviorWithoutQuery(t *testing.T) {
+	dependencies := narrativeDependencies()
+	plan, composition, _, err := buildMultiVideoComposition("composition-1", []string{"asset-a", "asset-b"}, dependencies)
+	if err != nil {
+		t.Fatalf("build composition: %v", err)
+	}
+	composition.EditorialProfile = videoindexerstudio.NarrativeIntentProfileStandard
+	request, outcome, err := buildNarrativeSegmentCatalog(composition, dependencies)
+	if err != nil {
+		t.Fatalf("build catalog: %v", err)
+	}
+	if len(request.Catalog) != len(composition.Clips) {
+		t.Fatalf("expected all clips without query, got %d", len(request.Catalog))
+	}
+	if outcome != videoindexerstudio.NarrativeSelectionOutcomeUnavailable {
+		t.Fatalf("expected unavailable outcome without query, got %q", outcome)
+	}
+	response := anchoredPlanningResponse(request.Catalog[0].SegmentID, request.Catalog[0].EvidenceIDs[0])
+	_, plannedComposition, _, err := applyNarrativeSegmentPlan(plan, composition, request, response)
+	if err != nil {
+		t.Fatalf("apply plan: %v", err)
+	}
+	plannedComposition.SelectionOutcome = outcome
+	if plannedComposition.SelectionOutcome != videoindexerstudio.NarrativeSelectionOutcomeUnavailable {
+		t.Fatalf("expected unavailable outcome persisted, got %q", plannedComposition.SelectionOutcome)
 	}
 }

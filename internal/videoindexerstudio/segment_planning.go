@@ -46,12 +46,13 @@ const (
 type NarrativeSegmentPlanningFallbackReason string
 
 const (
-	NarrativeSegmentPlanningFallbackNone            NarrativeSegmentPlanningFallbackReason = ""
-	NarrativeSegmentPlanningFallbackUnavailable     NarrativeSegmentPlanningFallbackReason = "planner_unavailable"
-	NarrativeSegmentPlanningFallbackTimeout         NarrativeSegmentPlanningFallbackReason = "planner_timeout"
-	NarrativeSegmentPlanningFallbackInvalidResponse NarrativeSegmentPlanningFallbackReason = "planner_invalid_response"
-	NarrativeSegmentPlanningFallbackRequestFailed   NarrativeSegmentPlanningFallbackReason = "planner_request_failed"
-	NarrativeSegmentPlanningFallbackCatalogInvalid  NarrativeSegmentPlanningFallbackReason = "planner_catalog_invalid"
+	NarrativeSegmentPlanningFallbackNone              NarrativeSegmentPlanningFallbackReason = ""
+	NarrativeSegmentPlanningFallbackUnavailable       NarrativeSegmentPlanningFallbackReason = "planner_unavailable"
+	NarrativeSegmentPlanningFallbackTimeout           NarrativeSegmentPlanningFallbackReason = "planner_timeout"
+	NarrativeSegmentPlanningFallbackInvalidResponse   NarrativeSegmentPlanningFallbackReason = "planner_invalid_response"
+	NarrativeSegmentPlanningFallbackRequestFailed     NarrativeSegmentPlanningFallbackReason = "planner_request_failed"
+	NarrativeSegmentPlanningFallbackCatalogInvalid    NarrativeSegmentPlanningFallbackReason = "planner_catalog_invalid"
+	NarrativeSegmentPlanningFallbackNoVerifiableMatch NarrativeSegmentPlanningFallbackReason = "no_verifiable_match"
 )
 
 type NarrativeSegmentEvidence struct {

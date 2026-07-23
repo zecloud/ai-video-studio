@@ -53,6 +53,7 @@ type narrativePacingResolution struct {
 	profile        videoindexerstudio.NarrativePacingProfile
 	mode           videoindexerstudio.NarrativePacingClassifierMode
 	fallbackReason videoindexerstudio.NarrativePacingClassifierFallbackReason
+	query          *videoindexerstudio.NarrativeQuery
 }
 
 type videoIndexerJobStore interface {
@@ -519,7 +520,7 @@ func (s *VideoIndexerStudioService) resolveNarrativePacing(ctx context.Context, 
 				if response == nil || response.Validate() != nil {
 					return deterministicNarrativePacingResolution(intent, videoindexerstudio.NarrativePacingClassifierFallbackInvalidResponse)
 				}
-				return narrativePacingResolution{profile: response.Profile.PacingProfile(), mode: videoindexerstudio.NarrativePacingClassifierModeFoundryStructured}
+				return narrativePacingResolution{profile: response.Profile.PacingProfile(), mode: videoindexerstudio.NarrativePacingClassifierModeFoundryStructured, query: response.Query}
 			}
 			return deterministicNarrativePacingResolution(intent, narrativePacingFallbackReason(classifyErr))
 		}
@@ -644,7 +645,7 @@ func buildMultiVideoCompositionCore(compositionID string, assetIDs []string, dep
 	sort.Strings(canonicalAssetIDs)
 	suggestion := videoindexerstudio.EditSuggestion{ID: "multi-video-narrative", Title: "Multi-video narrative", Reason: "Orders grounded clips by their validated highlight score.", StartMs: 0, EndMs: duration, Score: averageClipScore(clips), SourceRefs: refs, Clips: clips}
 	plan := videoindexerstudio.EditPlan{SchemaVersion: 1, AssetID: canonicalAssetIDs[0], SourceAssetIDs: canonicalAssetIDs, Title: "Multi-video smart edit", Summary: fmt.Sprintf("A grounded narrative edit using all %d selected videos.", len(assetIDs)), Suggestions: []videoindexerstudio.EditSuggestion{suggestion}, SourceRefs: refs}
-	compositionPlan := videoindexerstudio.CompositionEditPlan{SchemaVersion: videoindexerstudio.CompositionEditPlanSchemaVersion, CompositionID: compositionID, NarrativeIntent: narrativeIntent, PacingProfile: profile, VariantCount: variantCount, PacingClassifierMode: resolution.mode, PacingFallbackReason: resolution.fallbackReason, Title: plan.Title, Summary: plan.Summary, RankingMode: "deterministic_grounded_v1", RecommendationVersion: "multi-video-composition-v2", EvidenceFingerprint: compositionEvidenceFingerprint(canonicalAssetIDs, sources, compositionClips), SourceAssetIDs: canonicalAssetIDs, Sources: sources, Clips: compositionClips, SourceRefs: refs}
+	compositionPlan := videoindexerstudio.CompositionEditPlan{SchemaVersion: videoindexerstudio.CompositionEditPlanSchemaVersion, CompositionID: compositionID, NarrativeIntent: narrativeIntent, NarrativeQuery: resolution.query, PacingProfile: profile, VariantCount: variantCount, PacingClassifierMode: resolution.mode, PacingFallbackReason: resolution.fallbackReason, Title: plan.Title, Summary: plan.Summary, RankingMode: "deterministic_grounded_v1", RecommendationVersion: "multi-video-composition-v2", EvidenceFingerprint: compositionEvidenceFingerprint(canonicalAssetIDs, sources, compositionClips), SourceAssetIDs: canonicalAssetIDs, Sources: sources, Clips: compositionClips, SourceRefs: refs}
 	draft, err := timelineDraftFromSuggestion(compositionID, suggestion)
 	if err != nil {
 		return videoindexerstudio.EditPlan{}, videoindexerstudio.CompositionEditPlan{}, nil, err

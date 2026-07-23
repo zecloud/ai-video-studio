@@ -340,6 +340,7 @@ type NarrativeIntentClassificationRequest struct {
 type NarrativeIntentClassificationResponse struct {
 	SchemaVersion int                    `json:"schemaVersion"`
 	Profile       NarrativeIntentProfile `json:"profile"`
+	Query         *NarrativeQuery         `json:"query,omitempty"`
 }
 
 // NarrativeRankingRequest contains only immutable clip identities and canonical
@@ -396,6 +397,8 @@ type CompositionEditPlan struct {
 	EditorialProfile       NarrativeIntentProfile                  `json:"editorialProfile,omitempty"`
 	PlanningMode           NarrativeSegmentPlanningMode            `json:"planningMode,omitempty"`
 	PlanningFallbackReason NarrativeSegmentPlanningFallbackReason  `json:"planningFallbackReason,omitempty"`
+	NarrativeQuery         *NarrativeQuery                          `json:"narrativeQuery,omitempty"`
+	SelectionOutcome       NarrativeSelectionOutcome                `json:"selectionOutcome,omitempty"`
 	Title                  string                                  `json:"title"`
 	Summary                string                                  `json:"summary"`
 	RankingMode            string                                  `json:"rankingMode"`
@@ -529,6 +532,11 @@ func (r NarrativeIntentClassificationRequest) Validate() error {
 func (r NarrativeIntentClassificationResponse) Validate() error {
 	if r.SchemaVersion != NarrativeRankingSchemaVersion || !r.Profile.Valid() {
 		return fmt.Errorf("%w: invalid narrative intent classification response", ErrInvalidRequest)
+	}
+	if r.Query != nil {
+		if err := r.Query.Validate(); err != nil {
+			return fmt.Errorf("%w: invalid narrative intent query", ErrInvalidRequest)
+		}
 	}
 	return nil
 }
