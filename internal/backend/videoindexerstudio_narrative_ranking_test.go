@@ -228,8 +228,8 @@ func TestResolveNarrativePacingUsesFoundryProfileAndSafeFallbacks(t *testing.T) 
 		wantMode     videoindexerstudio.NarrativePacingClassifierMode
 		wantFallback videoindexerstudio.NarrativePacingClassifierFallbackReason
 	}{
-		"multilingual Foundry energetic":        {intent: "dynamic tiktok video", response: validResponse(videoindexerstudio.NarrativeIntentProfileEnergetic), wantProfile: videoindexerstudio.NarrativePacingProfileEnergeticShortForm, wantMode: videoindexerstudio.NarrativePacingClassifierModeFoundryStructured},
-		"French Foundry calm":                   {intent: "recapitulatif calme", response: validResponse(videoindexerstudio.NarrativeIntentProfileCalm), wantProfile: videoindexerstudio.NarrativePacingProfileCalmRecap, wantMode: videoindexerstudio.NarrativePacingClassifierModeFoundryStructured},
+		"multilingual Foundry energetic":        {intent: "dynamic tiktok video", response: validResponse(videoindexerstudio.NarrativeIntentProfileEnergetic), wantProfile: videoindexerstudio.NarrativePacingProfileEnergeticShortForm, wantMode: videoindexerstudio.NarrativePacingClassifierModeFoundryProfileOnly},
+		"French Foundry calm":                   {intent: "recapitulatif calme", response: validResponse(videoindexerstudio.NarrativeIntentProfileCalm), wantProfile: videoindexerstudio.NarrativePacingProfileCalmRecap, wantMode: videoindexerstudio.NarrativePacingClassifierModeFoundryProfileOnly},
 		"timeout uses keyword fallback":         {intent: "energetic", err: context.DeadlineExceeded, wantProfile: videoindexerstudio.NarrativePacingProfileEnergeticShortForm, wantMode: videoindexerstudio.NarrativePacingClassifierModeDeterministicKeywordFallback, wantFallback: videoindexerstudio.NarrativePacingClassifierFallbackTimeout},
 		"invalid result uses standard fallback": {intent: "recapitulatif calme", response: &videoindexerstudio.NarrativeIntentClassificationResponse{SchemaVersion: 1, Profile: "untrusted"}, wantProfile: videoindexerstudio.NarrativePacingProfileStandard, wantMode: videoindexerstudio.NarrativePacingClassifierModeStandardFallback, wantFallback: videoindexerstudio.NarrativePacingClassifierFallbackInvalidResponse},
 	}
@@ -294,7 +294,7 @@ func TestCompositionPersistsFoundryClassificationWhenRankingFallsBack(t *testing
 		t.Fatal("composition plan is missing")
 	}
 	plan := composition.CompositionPlan
-	if plan.PacingProfile != videoindexerstudio.NarrativePacingProfileCalmRecap || plan.PacingClassifierMode != videoindexerstudio.NarrativePacingClassifierModeFoundryStructured || plan.PacingFallbackReason != "" {
+	if plan.PacingProfile != videoindexerstudio.NarrativePacingProfileCalmRecap || plan.PacingClassifierMode != videoindexerstudio.NarrativePacingClassifierModeFoundryProfileOnly || plan.PacingFallbackReason != "" {
 		t.Fatalf("persisted classifier metadata = %#v", plan)
 	}
 	if plan.RankingMode != "deterministic_grounded_fallback_v1" || len(plan.Clips) != 2 {

@@ -317,6 +317,7 @@ type NarrativePacingClassifierMode string
 
 const (
 	NarrativePacingClassifierModeFoundryStructured            NarrativePacingClassifierMode = "foundry_structured"
+	NarrativePacingClassifierModeFoundryProfileOnly           NarrativePacingClassifierMode = "foundry_profile_only"
 	NarrativePacingClassifierModeDeterministicKeywordFallback NarrativePacingClassifierMode = "deterministic_keyword_fallback"
 	NarrativePacingClassifierModeStandardFallback             NarrativePacingClassifierMode = "standard_fallback"
 )
@@ -330,6 +331,7 @@ const (
 	NarrativePacingClassifierFallbackTimeout         NarrativePacingClassifierFallbackReason = "classifier_timeout"
 	NarrativePacingClassifierFallbackInvalidResponse NarrativePacingClassifierFallbackReason = "classifier_invalid_response"
 	NarrativePacingClassifierFallbackRequestFailed   NarrativePacingClassifierFallbackReason = "classifier_request_failed"
+	NarrativePacingClassifierFallbackQueryInvalid    NarrativePacingClassifierFallbackReason = "query_invalid"
 )
 
 type NarrativeIntentClassificationRequest struct {
@@ -340,7 +342,7 @@ type NarrativeIntentClassificationRequest struct {
 type NarrativeIntentClassificationResponse struct {
 	SchemaVersion int                    `json:"schemaVersion"`
 	Profile       NarrativeIntentProfile `json:"profile"`
-	Query         *NarrativeQuery         `json:"query,omitempty"`
+	Query         *NarrativeQuery        `json:"query,omitempty"`
 }
 
 // NarrativeRankingRequest contains only immutable clip identities and canonical
@@ -397,8 +399,8 @@ type CompositionEditPlan struct {
 	EditorialProfile       NarrativeIntentProfile                  `json:"editorialProfile,omitempty"`
 	PlanningMode           NarrativeSegmentPlanningMode            `json:"planningMode,omitempty"`
 	PlanningFallbackReason NarrativeSegmentPlanningFallbackReason  `json:"planningFallbackReason,omitempty"`
-	NarrativeQuery         *NarrativeQuery                          `json:"narrativeQuery,omitempty"`
-	SelectionOutcome       NarrativeSelectionOutcome                `json:"selectionOutcome,omitempty"`
+	NarrativeQuery         *NarrativeQuery                         `json:"narrativeQuery,omitempty"`
+	SelectionOutcome       NarrativeSelectionOutcome               `json:"selectionOutcome,omitempty"`
 	Title                  string                                  `json:"title"`
 	Summary                string                                  `json:"summary"`
 	RankingMode            string                                  `json:"rankingMode"`
@@ -511,11 +513,11 @@ func (p NarrativeIntentProfile) PacingProfile() NarrativePacingProfile {
 }
 
 func (m NarrativePacingClassifierMode) Valid() bool {
-	return m == "" || m == NarrativePacingClassifierModeFoundryStructured || m == NarrativePacingClassifierModeDeterministicKeywordFallback || m == NarrativePacingClassifierModeStandardFallback
+	return m == "" || m == NarrativePacingClassifierModeFoundryStructured || m == NarrativePacingClassifierModeFoundryProfileOnly || m == NarrativePacingClassifierModeDeterministicKeywordFallback || m == NarrativePacingClassifierModeStandardFallback
 }
 
 func (r NarrativePacingClassifierFallbackReason) Valid() bool {
-	return r == NarrativePacingClassifierFallbackNone || r == NarrativePacingClassifierFallbackNoIntent || r == NarrativePacingClassifierFallbackUnavailable || r == NarrativePacingClassifierFallbackTimeout || r == NarrativePacingClassifierFallbackInvalidResponse || r == NarrativePacingClassifierFallbackRequestFailed
+	return r == NarrativePacingClassifierFallbackNone || r == NarrativePacingClassifierFallbackNoIntent || r == NarrativePacingClassifierFallbackUnavailable || r == NarrativePacingClassifierFallbackTimeout || r == NarrativePacingClassifierFallbackInvalidResponse || r == NarrativePacingClassifierFallbackRequestFailed || r == NarrativePacingClassifierFallbackQueryInvalid
 }
 
 func (r NarrativeIntentClassificationRequest) Validate() error {

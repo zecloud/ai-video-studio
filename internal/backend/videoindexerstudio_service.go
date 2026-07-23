@@ -520,7 +520,11 @@ func (s *VideoIndexerStudioService) resolveNarrativePacing(ctx context.Context, 
 				if response == nil || response.Validate() != nil {
 					return deterministicNarrativePacingResolution(intent, videoindexerstudio.NarrativePacingClassifierFallbackInvalidResponse)
 				}
-				return narrativePacingResolution{profile: response.Profile.PacingProfile(), mode: videoindexerstudio.NarrativePacingClassifierModeFoundryStructured, query: response.Query}
+				mode := videoindexerstudio.NarrativePacingClassifierModeFoundryStructured
+				if response.Query == nil {
+					mode = videoindexerstudio.NarrativePacingClassifierModeFoundryProfileOnly
+				}
+				return narrativePacingResolution{profile: response.Profile.PacingProfile(), mode: mode, query: response.Query}
 			}
 			return deterministicNarrativePacingResolution(intent, narrativePacingFallbackReason(classifyErr))
 		}

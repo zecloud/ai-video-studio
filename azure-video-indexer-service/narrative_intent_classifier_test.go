@@ -22,7 +22,7 @@ func (f narrativeIntentClassifierFunc) Classify(ctx context.Context, req videoin
 
 type narrativeIntentClassifierRunnerFunc func(context.Context, string) (videoindexerstudio.NarrativeIntentClassificationResponse, error)
 
-func (f narrativeIntentClassifierRunnerFunc) RunClassification(ctx context.Context, intent string) (videoindexerstudio.NarrativeIntentClassificationResponse, error) {
+func (f narrativeIntentClassifierRunnerFunc) RunClassification(ctx context.Context, intent string, _ bool) (videoindexerstudio.NarrativeIntentClassificationResponse, error) {
 	return f(ctx, intent)
 }
 
@@ -42,9 +42,11 @@ func TestNarrativeIntentClassifierEnforcesBoundsAndClosedResponse(t *testing.T) 
 			if intent != "video dynamique" {
 				t.Fatalf("intent = %q", intent)
 			}
+
 			return videoindexerstudio.NarrativeIntentClassificationResponse{SchemaVersion: 1, Profile: videoindexerstudio.NarrativeIntentProfileEnergetic}, nil
 		}),
 	}
+
 	response, err := classifier.Classify(context.Background(), videoindexerstudio.NarrativeIntentClassificationRequest{SchemaVersion: 1, NarrativeIntent: "video dynamique"})
 	if err != nil || response.Profile != videoindexerstudio.NarrativeIntentProfileEnergetic {
 		t.Fatalf("classification = %#v, %v", response, err)
@@ -55,6 +57,50 @@ func TestNarrativeIntentClassifierEnforcesBoundsAndClosedResponse(t *testing.T) 
 	})
 	if _, err := classifier.Classify(context.Background(), videoindexerstudio.NarrativeIntentClassificationRequest{SchemaVersion: 1, NarrativeIntent: "video dynamique"}); err == nil || narrativeFailureFor(err) != narrativeFailureInvalid {
 		t.Fatalf("expected closed-contract rejection, got %v", err)
+	}
+}
+
+func TestNarrativeIntentClassifierRejectsInvalidQuery(t *testing.T) {
+	classifier := narrativeIntentClassifier{
+		timeout: time.Second,
+		runner: narrativeIntentClassifierRunnerFunc(func(context.Context, string) (videoindexerstudio.NarrativeIntentClassificationResponse, error) {
+			return videoindexerstudio.NarrativeIntentClassificationResponse{
+				SchemaVersion: 1,
+				Profile:       videoindexerstudio.NarrativeIntentProfileSocialShortForm,
+				Query: &videoindexerstudio.NarrativeQuery{
+					SchemaVersion: 1,
+					Coverage:      videoindexerstudio.NarrativeQueryCoverageBestSubset,
+					Clauses: []videoindexerstudio.NarrativeQueryClause{{
+						ID: "c1", Importance: videoindexerstudio.NarrativeQueryMust,
+						Predicate: videoindexerstudio.NarrativeQueryVisibleEntity,
+						Terms:     []string{"NOT NORMALIZED"}, MatchMode: videoindexerstudio.NarrativeQueryMatchAny,
+						Relation: videoindexerstudio.NarrativeQueryRelationOverlap,
+					}},
+				},
+			}, nil
+		}),
+	}
+	response, err := classifier.Classify(context.Background(), videoindexerstudio.NarrativeIntentClassificationRequest{SchemaVersion: 1, NarrativeIntent: "dynamic tiktok video"})
+	if err == nil || narrativeFailureFor(err) != narrativeFailureInvalid {
+		t.Fatalf("expected invalid query rejection, got %#v, %v", response, err)
+	}
+}
+
+func TestNarrativeIntentClassifierRetriesWithCorrectionAfterInvalidResponse(t *testing.T) {
+	attempts := 0
+	classifier := narrativeIntentClassifier{
+		timeout: time.Second,
+		runner: narrativeIntentClassifierRunnerFunc(func(_ context.Context, _ string) (videoindexerstudio.NarrativeIntentClassificationResponse, error) {
+			attempts++
+			if attempts == 1 {
+				return videoindexerstudio.NarrativeIntentClassificationResponse{SchemaVersion: 1, Profile: "invalid"}, nil
+			}
+			return videoindexerstudio.NarrativeIntentClassificationResponse{SchemaVersion: 1, Profile: videoindexerstudio.NarrativeIntentProfileCalm}, nil
+		}),
+	}
+	response, err := classifier.Classify(context.Background(), videoindexerstudio.NarrativeIntentClassificationRequest{SchemaVersion: 1, NarrativeIntent: "calm recap"})
+	if err != nil || attempts != 2 || response.Profile != videoindexerstudio.NarrativeIntentProfileCalm {
+		t.Fatalf("corrective classification = %#v, %v, attempts=%d", response, err, attempts)
 	}
 }
 
