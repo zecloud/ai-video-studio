@@ -1,18 +1,27 @@
 # AI Video Studio product foundation
 
+## Permanent product split
+
+This repository documents **AI Video Studio**, one of two independent desktop products. The split is permanent and is a product boundary, not a deployment detail:
+
+- **AI Video Camera** owns the Osmo Action hardware workflow only: BLE scan and pairing, Wi-Fi/AP setup, DUML/UDP diagnostics, and HTTP media-endpoint probes and diagnostics. It does not own OneDrive or Azure authentication, cloud credentials, a library, analysis, editing, rendering, or any transfer.
+- **AI Video Studio** owns every transfer and every cloud/editor workflow: Camera -> OneDrive and local -> OneDrive transfer, OneDrive authentication, cloud library, Azure Content Understanding, Video Indexer Studio, editing, FFmpeg/renders, and settings.
+
+There is no inter-app transfer, sync, RPC, socket, or shared-file bridge in this product design, now or in the future. The products must not be described as a coordinated pair that hands work to the other app; each product has its own independent UX and responsibilities.
+
 ## Product register
 
 | Field | Decision |
 | --- | --- |
 | Product name | AI Video Studio |
 | Register | Product/tool |
-| Primary device | DJI Osmo Action 4 |
+| Primary source | Camera-originated media supplied to AI Video Studio, or local media selected by the user |
 | Primary cloud destination | OneDrive 365 through Microsoft Graph |
 | Primary AI service | Azure Content Understanding |
 | Desktop stack | Wails v3, Go backend, TypeScript/Vite frontend |
-| Workflow type | Import, secure, analyze, prepare, edit, and export action-camera footage |
+| Workflow type | Transfer, secure, analyze, prepare, edit, and export media |
 
-AI Video Studio is a desktop workflow tool for moving large Osmo Action 4 recordings into OneDrive, analyzing them with Azure AI, and turning the results into non-destructive edit projects. It is not a marketing site, consumer social editor, or generic cloud storage browser.
+AI Video Studio is the cloud and post-production desktop workflow tool for moving media into OneDrive, analyzing it with Azure AI, and turning the results into non-destructive edit projects. Camera hardware control belongs exclusively to AI Video Camera; Studio does not scan, pair, configure, or diagnose the camera. Studio is not a marketing site, consumer social editor, or generic cloud storage browser.
 
 ## Target users
 
@@ -23,20 +32,19 @@ AI Video Studio is a desktop workflow tool for moving large Osmo Action 4 record
 
 ## Job to be done
 
-When I return from a shoot with many large Osmo Action 4 clips, I want to browse the camera, select the footage worth keeping, stream originals directly to OneDrive, run Azure analysis, and create a draft edit from highlights without filling my local disk or losing track of what transferred.
+When I have media ready for Studio, I want to transfer it directly to OneDrive, run Azure analysis, and create a draft edit from highlights without filling my local disk or losing track of what transferred. Camera discovery and hardware diagnostics are a separate AI Video Camera workflow and are not part of this job.
 
 ## Core workflow
 
-1. Configure Microsoft 365, Azure Content Understanding, and non-sensitive app settings.
-2. Connect to the Osmo Action 4 using BLE/Wi-Fi guidance and diagnostics.
-3. Browse camera media with file metadata, storage location, and transfer readiness.
-4. Select one or more clips and confirm the OneDrive app-folder destination.
-5. Stream camera ranges/chunks directly to Microsoft Graph upload sessions.
-6. Track progress, speed, retry state, cancellation, and recoverable errors.
-7. Register uploaded assets in the project library.
-8. Submit assets to Azure Content Understanding, using Azure Blob staging only when required.
-9. Inspect scenes, transcripts, highlights, and edit suggestions.
-10. Build a non-destructive edit timeline, render/export a new asset, and optionally upload the render to OneDrive.
+1. Configure Microsoft 365, Azure services, and non-sensitive Studio settings.
+2. Select media from an available source, including camera-originated media made available to Studio or local media.
+3. Confirm the OneDrive app-folder destination and transfer policy.
+4. Stream camera-originated ranges/chunks, or local input, into Microsoft Graph upload sessions without persisting a complete camera original locally.
+5. Track progress, speed, retry state, cancellation, and recoverable errors.
+6. Register uploaded assets in the project library.
+7. Submit assets to Azure Content Understanding, using Azure Blob staging only when required.
+8. Inspect scenes, transcripts, highlights, Video Indexer Studio results, and edit suggestions.
+9. Build a non-destructive edit timeline, render/export a new asset, and optionally upload the render to OneDrive.
 
 ## Product personality
 
@@ -53,6 +61,8 @@ When I return from a shoot with many large Osmo Action 4 clips, I want to browse
 - Persisting full original video files locally during ingestion.
 - Becoming a general-purpose OneDrive file manager.
 - Depending on unofficial DJI behavior without diagnostics and replaceable adapters.
+- Owning camera discovery, pairing, Wi-Fi/AP setup, DUML/UDP, or camera endpoint diagnostics (these belong to AI Video Camera).
+- Implementing any inter-app bridge, sync, RPC, socket, or shared-file handoff with AI Video Camera.
 - Shipping embedded secrets, tenant secrets, client secrets, SAS URLs, or generated caches.
 - Using Azure AI to make opaque edit decisions without editable timecodes and source references.
 
@@ -120,12 +130,11 @@ Required ingestion behavior:
 - Normalize results into editing-oriented models: scenes, transcript segments, highlight candidates, and edit suggestions.
 - Keep AI output inspectable and editable; timecodes and source asset references are mandatory.
 
-### DJI Osmo Action 4
+### DJI Osmo Action 4 boundary
 
-- Treat media endpoints and protocol behavior as unconfirmed until tested on real hardware.
-- Expected media work includes BLE pairing, Wi-Fi/AP setup, HTTP endpoint validation, `HEAD`, `GET`, `Range`, storage IDs, file paths, thumbnails, and reconnect behavior.
-- Keep DJI protocol code behind replaceable Go interfaces.
-- Use licensed references carefully: CC0 and MIT projects may inform implementation with attribution; unlicensed references are protocol inspiration only, not copy sources.
+AI Video Camera owns all Osmo hardware and camera-endpoint work: BLE scan/pairing, Wi-Fi/AP setup, DUML/UDP, HTTP `HEAD`/`GET`/`Range` probes, storage IDs, paths, thumbnails, reconnect behavior, and diagnostics. AI Video Studio does not contain or invoke that workflow. There is no designed mechanism for Camera to transfer or synchronize media with Studio; Studio's transfer inputs are treated as independently available media sources.
+
+Treat camera behavior as unconfirmed until tested on real hardware, keep protocol code behind replaceable Go interfaces in the Camera product, and use licensed references carefully: CC0 and MIT projects may inform implementation with attribution; unlicensed references are protocol inspiration only, not copy sources.
 
 ### FFmpeg and editing
 

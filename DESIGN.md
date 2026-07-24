@@ -1,8 +1,14 @@
 # AI Video Studio design foundation
 
+## Product ownership boundary
+
+This is the UI specification for **AI Video Studio**, the independent transfer, cloud, analysis, and post-production product. **AI Video Camera** is a separate independent desktop product whose UI is limited to Osmo Action BLE scan/pairing, Wi-Fi/AP setup, DUML/UDP, and HTTP media-endpoint probes and diagnostics. Do not place either product's responsibilities in the other product's navigation, onboarding, empty states, or component labels.
+
+There is no inter-app transfer, sync, RPC, socket, or shared-file bridge—permanent or otherwise. Do not design a handoff button, paired-app status, shared inbox, or shared-file convention.
+
 ## Design intent
 
-AI Video Studio is a dense, practical desktop tool. The UI should help users understand device connection, cloud transfer, AI analysis, and editing state at a glance. Favor tables, split panes, queues, timelines, diagnostics, and inline recovery over decorative layouts.
+AI Video Studio is a dense, practical desktop tool. The UI should help users understand source availability, cloud transfer, AI analysis, and editing state at a glance. Favor tables, split panes, queues, timelines, diagnostics, and inline recovery over decorative layouts.
 
 ## OKLCH design tokens
 
@@ -129,27 +135,27 @@ Layout rules:
 
 ### Onboarding
 
-- Use a stepper with persistent progress: Microsoft 365, Azure, camera, storage policy, FFmpeg check.
+- Use a stepper with persistent progress: Microsoft 365, Azure, storage policy, and FFmpeg check. Do not include camera pairing or camera network setup; those belong to AI Video Camera.
 - Explain zero full local original storage before the first transfer.
 - Show permission scope, destination folder, and why each integration is required.
 - Prefer inline validation rows over modal alerts.
 - Provide diagnostics for missing FFmpeg, unavailable WebView dependencies, and failed auth.
 
-### Camera media browser
+### Transfer source and media browser
 
 - Primary layout: media table plus details/preview panel.
-- Treat this view as the DJI Osmo Action 4 inventory, not a generic file picker.
+- Treat this view as Studio's available transfer inputs, not as a camera-control surface. It may represent camera-originated media or local media, but it must not scan, pair, configure, or diagnose Osmo hardware.
 - Columns: selection, thumbnail if available, name, type, duration, size, date, storage, transfer status, diagnostics.
 - Support multi-select, select all visible, keyboard range selection, and a persistent selection bar.
-- Show camera connection, battery if available, Wi-Fi state, endpoint status, and last refresh.
-- Use warning states for unconfirmed size, missing range support, or unstable connection.
+- Show source availability, metadata, and transfer readiness. Camera BLE/Wi-Fi/AP, DUML/UDP, endpoint, battery, and reconnect diagnostics are not Studio components.
+- Use warning states for unconfirmed size, missing range support, or an unavailable source.
 
 ### Transfer queue
 
 - Show global progress, current file progress, bytes uploaded, speed, ETA when reliable, retry count, and current chunk/range.
 - States: queued, preparing, uploading, paused, retrying, completed, cancelled, failed.
-- Actions: pause if technically supported, cancel, retry, reconnect camera, renew auth, open diagnostics.
-- Errors must name the failing system: camera, OneDrive Graph, network, local runtime, or service limit.
+- Actions: pause if technically supported, cancel, retry, renew auth, and open Studio diagnostics.
+- Errors must name the failing system: source, OneDrive Graph, network, local runtime, or service limit. Do not imply Studio can repair camera connectivity.
 - Never imply a complete original file was stored locally.
 
 ### Project library
@@ -186,7 +192,7 @@ Every major component should define:
 - Disabled: reason available in text or accessible description.
 - Warning: degraded but usable.
 - Error: failed with cause, affected system, and recovery action.
-- Offline/disconnected: camera or cloud unavailable.
+- Offline/disconnected: transfer source or cloud unavailable.
 - Auth expired: renewal action and impact.
 - Permission-limited: current scope and what cannot be done.
 
