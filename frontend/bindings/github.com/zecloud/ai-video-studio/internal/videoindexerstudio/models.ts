@@ -77,6 +77,14 @@ export class CompositionClip {
 export class CompositionEditPlan {
     "schemaVersion": number;
     "compositionId": string;
+    "narrativeIntent"?: string;
+    "pacingProfile"?: NarrativePacingProfile;
+    "variantCount"?: number;
+    "pacingClassifierMode"?: NarrativePacingClassifierMode;
+    "pacingFallbackReason"?: NarrativePacingClassifierFallbackReason;
+    "editorialProfile"?: NarrativeIntentProfile;
+    "planningMode"?: NarrativeSegmentPlanningMode;
+    "planningFallbackReason"?: NarrativeSegmentPlanningFallbackReason;
     "title": string;
     "summary": string;
     "rankingMode": string;
@@ -130,22 +138,22 @@ export class CompositionEditPlan {
      * Creates a new CompositionEditPlan instance from a string or object.
      */
     static createFrom($$source: any = {}): CompositionEditPlan {
-        const $$createField7_0 = $$createType2;
-        const $$createField8_0 = $$createType4;
-        const $$createField9_0 = $$createType6;
-        const $$createField10_0 = $$createType1;
+        const $$createField15_0 = $$createType2;
+        const $$createField16_0 = $$createType4;
+        const $$createField17_0 = $$createType6;
+        const $$createField18_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("sourceAssetIds" in $$parsedSource) {
-            $$parsedSource["sourceAssetIds"] = $$createField7_0($$parsedSource["sourceAssetIds"]);
+            $$parsedSource["sourceAssetIds"] = $$createField15_0($$parsedSource["sourceAssetIds"]);
         }
         if ("sources" in $$parsedSource) {
-            $$parsedSource["sources"] = $$createField8_0($$parsedSource["sources"]);
+            $$parsedSource["sources"] = $$createField16_0($$parsedSource["sources"]);
         }
         if ("clips" in $$parsedSource) {
-            $$parsedSource["clips"] = $$createField9_0($$parsedSource["clips"]);
+            $$parsedSource["clips"] = $$createField17_0($$parsedSource["clips"]);
         }
         if ("sourceRefs" in $$parsedSource) {
-            $$parsedSource["sourceRefs"] = $$createField10_0($$parsedSource["sourceRefs"]);
+            $$parsedSource["sourceRefs"] = $$createField18_0($$parsedSource["sourceRefs"]);
         }
         return new CompositionEditPlan($$parsedSource as Partial<CompositionEditPlan>);
     }
@@ -467,6 +475,102 @@ export class MediaVideoSignals {
         return new MediaVideoSignals($$parsedSource as Partial<MediaVideoSignals>);
     }
 }
+
+/**
+ * NarrativeIntentProfile is the closed result contract returned by the
+ * classifier. It is mapped locally to a pacing profile before any candidates
+ * are selected.
+ */
+export enum NarrativeIntentProfile {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    NarrativeIntentProfileStandard = "standard",
+    NarrativeIntentProfileEnergetic = "energetic",
+    NarrativeIntentProfileCalm = "calm",
+    NarrativeIntentProfileChronological = "chronological",
+    NarrativeIntentProfileCinematic = "cinematic",
+    NarrativeIntentProfileSocialShortForm = "social_short_form",
+    NarrativeIntentProfileTutorial = "tutorial",
+    NarrativeIntentProfileHighlightReel = "highlight_reel",
+    NarrativeIntentProfileRecap = "recap",
+    NarrativeIntentProfileStorytelling = "storytelling",
+    NarrativeIntentProfileTravel = "travel",
+    NarrativeIntentProfileInterview = "interview",
+    NarrativeIntentProfileProductShowcase = "product_showcase",
+};
+
+export enum NarrativePacingClassifierFallbackReason {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    NarrativePacingClassifierFallbackNone = "",
+    NarrativePacingClassifierFallbackNoIntent = "no_intent",
+    NarrativePacingClassifierFallbackUnavailable = "classifier_unavailable",
+    NarrativePacingClassifierFallbackTimeout = "classifier_timeout",
+    NarrativePacingClassifierFallbackInvalidResponse = "classifier_invalid_response",
+    NarrativePacingClassifierFallbackRequestFailed = "classifier_request_failed",
+};
+
+export enum NarrativePacingClassifierMode {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    NarrativePacingClassifierModeFoundryStructured = "foundry_structured",
+    NarrativePacingClassifierModeDeterministicKeywordFallback = "deterministic_keyword_fallback",
+    NarrativePacingClassifierModeStandardFallback = "standard_fallback",
+};
+
+export enum NarrativePacingProfile {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    NarrativePacingProfileStandard = "standard",
+    NarrativePacingProfileEnergeticShortForm = "energetic_short_form",
+    NarrativePacingProfileCalmRecap = "calm_recap",
+    NarrativePacingProfileChronologicalContinuity = "chronological_continuity",
+    NarrativePacingProfileCinematic = "cinematic",
+    NarrativePacingProfileSocialShortForm = "social_short_form",
+    NarrativePacingProfileTutorial = "tutorial",
+    NarrativePacingProfileHighlightReel = "highlight_reel",
+    NarrativePacingProfileRecap = "recap",
+    NarrativePacingProfileStorytelling = "storytelling",
+    NarrativePacingProfileTravel = "travel",
+    NarrativePacingProfileInterview = "interview",
+    NarrativePacingProfileProductShowcase = "product_showcase",
+};
+
+export enum NarrativeSegmentPlanningFallbackReason {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    NarrativeSegmentPlanningFallbackNone = "",
+    NarrativeSegmentPlanningFallbackUnavailable = "planner_unavailable",
+    NarrativeSegmentPlanningFallbackTimeout = "planner_timeout",
+    NarrativeSegmentPlanningFallbackInvalidResponse = "planner_invalid_response",
+    NarrativeSegmentPlanningFallbackRequestFailed = "planner_request_failed",
+    NarrativeSegmentPlanningFallbackCatalogInvalid = "planner_catalog_invalid",
+};
+
+export enum NarrativeSegmentPlanningMode {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    NarrativeSegmentPlanningModeFoundryStructured = "foundry_structured",
+    NarrativeSegmentPlanningModeDeterministic = "deterministic_local",
+};
 
 export class SilenceInterval {
     "start": time$0.Duration;

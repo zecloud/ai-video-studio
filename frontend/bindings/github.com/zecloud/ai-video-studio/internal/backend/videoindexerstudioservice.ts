@@ -34,6 +34,16 @@ export function GenerateMultiVideoEdit(assetIDs: string[]): $CancellablePromise<
     });
 }
 
+/**
+ * GenerateMultiVideoEditWithIntent creates one persistent composition with an
+ * optional editorial preference for grounded Azure narrative ranking.
+ */
+export function GenerateMultiVideoEditWithIntent(assetIDs: string[], narrativeIntent: string): $CancellablePromise<$models.VideoIndexerStudioJob | null> {
+    return $Call.ByID(1974639139, assetIDs, narrativeIntent).then(($result: any) => {
+        return $$createType1($result);
+    });
+}
+
 export function IndexingJob(jobID: string): $CancellablePromise<$models.VideoIndexerStudioJob | null> {
     return $Call.ByID(2037013561, jobID).then(($result: any) => {
         return $$createType1($result);

@@ -188,6 +188,7 @@ export class VideoIndexerStudioJob {
     "assetIds"?: string[];
     "assetName": string;
     "composition"?: boolean;
+    "narrativeIntent"?: string;
     "dependencyJobIds"?: string[];
     "remoteJobId"?: string;
     "remoteStatus"?: string;
@@ -238,33 +239,33 @@ export class VideoIndexerStudioJob {
      */
     static createFrom($$source: any = {}): VideoIndexerStudioJob {
         const $$createField2_0 = $$createType0;
-        const $$createField5_0 = $$createType0;
-        const $$createField15_0 = $$createType2;
-        const $$createField16_0 = $$createType4;
-        const $$createField17_0 = $$createType6;
-        const $$createField18_0 = $$createType8;
-        const $$createField19_0 = $$createType10;
+        const $$createField6_0 = $$createType0;
+        const $$createField16_0 = $$createType2;
+        const $$createField17_0 = $$createType4;
+        const $$createField18_0 = $$createType6;
+        const $$createField19_0 = $$createType8;
+        const $$createField20_0 = $$createType10;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("assetIds" in $$parsedSource) {
             $$parsedSource["assetIds"] = $$createField2_0($$parsedSource["assetIds"]);
         }
         if ("dependencyJobIds" in $$parsedSource) {
-            $$parsedSource["dependencyJobIds"] = $$createField5_0($$parsedSource["dependencyJobIds"]);
+            $$parsedSource["dependencyJobIds"] = $$createField6_0($$parsedSource["dependencyJobIds"]);
         }
         if ("videoIndexResult" in $$parsedSource) {
-            $$parsedSource["videoIndexResult"] = $$createField15_0($$parsedSource["videoIndexResult"]);
+            $$parsedSource["videoIndexResult"] = $$createField16_0($$parsedSource["videoIndexResult"]);
         }
         if ("editPlan" in $$parsedSource) {
-            $$parsedSource["editPlan"] = $$createField16_0($$parsedSource["editPlan"]);
+            $$parsedSource["editPlan"] = $$createField17_0($$parsedSource["editPlan"]);
         }
         if ("compositionPlan" in $$parsedSource) {
-            $$parsedSource["compositionPlan"] = $$createField17_0($$parsedSource["compositionPlan"]);
+            $$parsedSource["compositionPlan"] = $$createField18_0($$parsedSource["compositionPlan"]);
         }
         if ("timelineDrafts" in $$parsedSource) {
-            $$parsedSource["timelineDrafts"] = $$createField18_0($$parsedSource["timelineDrafts"]);
+            $$parsedSource["timelineDrafts"] = $$createField19_0($$parsedSource["timelineDrafts"]);
         }
         if ("checkpoints" in $$parsedSource) {
-            $$parsedSource["checkpoints"] = $$createField19_0($$parsedSource["checkpoints"]);
+            $$parsedSource["checkpoints"] = $$createField20_0($$parsedSource["checkpoints"]);
         }
         return new VideoIndexerStudioJob($$parsedSource as Partial<VideoIndexerStudioJob>);
     }

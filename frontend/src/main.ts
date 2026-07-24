@@ -1366,6 +1366,10 @@ function render(): void {
           }
           if (target.dataset.setting === "video-indexer-apikey") {
             state.smartEdit.settings.apiKey = target.value;
+            return;
+          }
+          if (target.dataset.setting === "narrative-intent") {
+            state.smartEdit.narrativeIntent = target.value;
           }
         });
   }

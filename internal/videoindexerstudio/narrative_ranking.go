@@ -29,9 +29,61 @@ func (c *Client) RankNarrative(ctx context.Context, request NarrativeRankingRequ
 	return &response, nil
 }
 
+// ClassifyNarrativeIntent maps a normalized editorial preference to a closed
+// local pacing profile. The service never receives media or evidence here.
+func (c *Client) ClassifyNarrativeIntent(ctx context.Context, request NarrativeIntentClassificationRequest) (*NarrativeIntentClassificationResponse, error) {
+	if c == nil {
+		return nil, fmt.Errorf("%w: nil client", ErrInvalidConfig)
+	}
+	if err := c.cfg.validate(); err != nil {
+		return nil, err
+	}
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+	var response NarrativeIntentClassificationResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/narrative-intent-classifications", request, &response); err != nil {
+		return nil, fmt.Errorf("classify narrative intent: %w", err)
+	}
+	if err := response.Validate(); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// PlanNarrativeSegments submits a separately versioned, bounded catalog. Deployments
+// without this endpoint fail closed and callers retain the deterministic local plan.
+func (c *Client) PlanNarrativeSegments(ctx context.Context, request NarrativeSegmentPlanningRequest) (*NarrativeSegmentPlanningResponse, error) {
+	if c == nil {
+		return nil, fmt.Errorf("%w: nil client", ErrInvalidConfig)
+	}
+	if err := c.cfg.validate(); err != nil {
+		return nil, err
+	}
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+	var response NarrativeSegmentPlanningResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/narrative-segment-plans", request, &response); err != nil {
+		return nil, fmt.Errorf("plan narrative segments: %w", err)
+	}
+	if err := response.Validate(); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
 func (r NarrativeRankingRequest) Validate() error {
 	if r.SchemaVersion != NarrativeRankingSchemaVersion || strings.TrimSpace(r.CompositionID) == "" || len(r.Candidates) == 0 {
 		return fmt.Errorf("%w: invalid narrative ranking request", ErrInvalidRequest)
+	}
+	if normalized, err := NormalizeNarrativeIntent(r.NarrativeIntent); err != nil || normalized != r.NarrativeIntent {
+		return fmt.Errorf("%w: invalid narrative intent", ErrInvalidRequest)
+	}
+	if !r.PacingProfile.Valid() || r.VariantCount < 0 || r.VariantCount > len(r.Candidates) {
+		return fmt.Errorf("%w: invalid narrative pacing metadata", ErrInvalidRequest)
+	}
+	if r.PacingProfile != "" && r.PacingProfile != NarrativePacingProfileStandard && r.PacingProfile != NarrativePacingProfileForIntent(r.NarrativeIntent) {
+		return fmt.Errorf("%w: pacing profile does not match narrative intent", ErrInvalidRequest)
 	}
 	knownEvidence := make(map[string]struct{}, len(r.Evidence))
 	for _, evidence := range r.Evidence {

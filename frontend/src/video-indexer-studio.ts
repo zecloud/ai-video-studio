@@ -32,6 +32,7 @@ export interface VideoIndexerStudioViewState {
   assets: LibraryModels.ProjectAsset[];
   selectedAssetIDs: string[];
   selectedJobID: string | null;
+  narrativeIntent: string;
   polling: boolean;
   message: string;
   activeAction: VideoIndexerStudioAction | null;
@@ -51,6 +52,7 @@ export function createVideoIndexerStudioState(): VideoIndexerStudioViewState {
     assets: [],
     selectedAssetIDs: [],
     selectedJobID: null,
+    narrativeIntent: "",
     polling: false,
     message: "",
     activeAction: null,
@@ -339,7 +341,7 @@ export async function generateMultiVideoEdit(state: VideoIndexerStudioViewState)
   state.activeAction = { kind: "generate-composition", count: targets.length };
   state.message = `Preparing a combined edit from ${targets.length} videos...`;
   try {
-    const job = await VideoIndexerStudioService.GenerateMultiVideoEdit(targets.map((asset) => asset.id));
+    const job = await VideoIndexerStudioService.GenerateMultiVideoEditWithIntent(targets.map((asset) => asset.id), state.narrativeIntent);
     if (!job) {
       throw new Error("Smart Edit Studio did not return the combined edit job.");
     }
@@ -660,6 +662,7 @@ function renderCompositionRecommendation(job: BackendModels.VideoIndexerStudioJo
   if (!job.composition) return "";
 
   const plan = job.compositionPlan;
+  const narrativeIntent = plan?.narrativeIntent || job.narrativeIntent || "";
   const sources = compositionSourceStates(job, state);
   const planReady = job.status === "succeeded" && Boolean(plan);
   const statusMessage = job.status === "failed"
@@ -686,9 +689,14 @@ function renderCompositionRecommendation(job: BackendModels.VideoIndexerStudioJo
         ${planReady ? `
           <div class="composition-summary">
             <div class="kv"><span>Summary</span><strong>${escapeHTML(plan?.summary || "—")}</strong></div>
+            ${narrativeIntent ? `<div class="kv"><span>Narrative intent</span><strong>${escapeHTML(narrativeIntent)}</strong></div>` : ""}
+            ${plan?.pacingProfile ? `<div class="kv"><span>Local pacing</span><strong>${escapeHTML(plan.pacingProfile.replaceAll("_", " "))}</strong></div>` : ""}
+            ${plan?.pacingClassifierMode ? `<div class="kv"><span>Intent classification</span><strong>${escapeHTML(plan.pacingClassifierMode.replaceAll("_", " "))}${plan.pacingFallbackReason ? ` (${escapeHTML(plan.pacingFallbackReason.replaceAll("_", " "))})` : ""}</strong></div>` : ""}
+            ${plan?.editorialProfile ? `<div class="kv"><span>Editorial style</span><strong>${escapeHTML(plan.editorialProfile.replaceAll("_", " "))}</strong></div>` : ""}
+            ${plan?.planningMode ? `<div class="kv"><span>Moment selection</span><strong>${escapeHTML(plan.planningMode.replaceAll("_", " "))}${plan.planningFallbackReason ? ` (${escapeHTML(plan.planningFallbackReason.replaceAll("_", " "))})` : ""}</strong></div><p class="muted">AI selected only analyzed, verified moments; source clips and allowed ranges remain grounded.</p>` : ""}
             <div class="kv"><span>Ranking</span><strong>${escapeHTML(plan?.rankingMode || "Grounded ranking")}</strong></div>
             <div class="kv"><span>Evidence</span><strong class="path-detail">${escapeHTML(plan?.evidenceFingerprint || "Unavailable")}</strong></div>
-          </div>` : `<div class="empty-state"><strong>${job.status === "failed" ? "Composition unavailable" : job.status === "canceled" ? "Composition canceled" : "Composition not ready"}</strong><p>${escapeHTML(statusMessage)}</p></div>`}
+          </div>` : `<div class="empty-state"><strong>${job.status === "failed" ? "Composition unavailable" : job.status === "canceled" ? "Composition canceled" : "Composition not ready"}</strong>${narrativeIntent ? `<p>Narrative intent: ${escapeHTML(narrativeIntent)}</p>` : ""}<p>${escapeHTML(statusMessage)}</p></div>`}
         <div>
           <h4>Source analysis status</h4>
           ${sources.length ? `<div class="table-wrap"><table aria-label="Composition source analysis status"><thead><tr><th>Source</th><th>Analysis</th><th>Status</th><th>Duration</th></tr></thead><tbody>${sources.map((source) => {
@@ -1061,6 +1069,11 @@ export function renderVideoIndexerStudioPanel(state: VideoIndexerStudioViewState
       </div>
       <div class="detail-body">
         <div class="toolbar">
+          <label class="field-group">
+            <span>Narrative intent</span>
+            <input class="field" data-setting="narrative-intent" value="${escapeHTML(state.narrativeIntent)}" maxlength="240" placeholder="Chronological, action-forward, calm recap" aria-describedby="narrative-intent-help" ${busy ? "disabled" : ""} />
+            <small id="narrative-intent-help">Optional local pacing and ordering preference. It only selects bounded ranges inside validated suggestions; it cannot add clips, change sources, or alter evidence.</small>
+          </label>
           <button type="button" class="button" data-action="video-indexer-generate-composition" ${selectedEligibleAssets.length >= 2 && !busy ? "" : "disabled"} ${generatingComposition ? 'aria-busy="true"' : ""}>${generatingComposition ? `Preparing ${action.count} videos...` : `Generate combined edit${selectedEligibleAssets.length >= 2 ? ` (${selectedEligibleAssets.length})` : ""}`}</button>
           <button type="button" class="button" data-action="video-indexer-submit-selected" ${selectedAssetsList.length && !busy ? "" : "disabled"} ${submittingSelected ? 'aria-busy="true"' : ""}>${submittingSelected ? `Submitting ${selectedSubmissionCount}...` : "Submit selected"}</button>
           <button type="button" class="button secondary" data-action="video-indexer-submit-pending" ${pending.length && !busy ? "" : "disabled"} ${submittingPending ? 'aria-busy="true"' : ""}>${submittingPending ? `Submitting ${pendingSubmissionCount}...` : "Submit pending"}</button>

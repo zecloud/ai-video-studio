@@ -1,0 +1,211 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/zecloud/ai-video-studio/internal/videoindexerstudio"
+)
+
+type narrativeSegmentPlannerFunc func(context.Context, videoindexerstudio.NarrativeSegmentPlanningRequest) (videoindexerstudio.NarrativeSegmentPlanningResponse, error)
+
+func (f narrativeSegmentPlannerFunc) Plan(ctx context.Context, request videoindexerstudio.NarrativeSegmentPlanningRequest) (videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
+	return f(ctx, request)
+}
+
+type narrativeSegmentPlannerRunnerFunc func(context.Context, string) (foundryNarrativeSegmentPlan, error)
+
+func (f narrativeSegmentPlannerRunnerFunc) RunSegmentPlan(ctx context.Context, packet string) (foundryNarrativeSegmentPlan, error) {
+	return f(ctx, packet)
+}
+
+func segmentPlanningRequest() videoindexerstudio.NarrativeSegmentPlanningRequest {
+	return videoindexerstudio.NarrativeSegmentPlanningRequest{SchemaVersion: videoindexerstudio.NarrativeSegmentPlanningSchemaVersion, CompositionID: "composition-1", NarrativeIntent: "robots dansants en mode video TikTok", Profile: videoindexerstudio.NarrativeIntentProfileSocialShortForm, Catalog: []videoindexerstudio.NarrativeSegmentCatalogItem{{SegmentID: "segment-1", CandidateID: "candidate-1", SourceAssetID: "asset-1", AllowedStartMs: 1_000, AllowedEndMs: 7_000, EvidenceIDs: []string{"evidence-1"}, Evidence: []videoindexerstudio.NarrativeSegmentEvidence{{EvidenceID: "evidence-1", Kind: "label", StartMs: 2_000, EndMs: 4_000, Descriptor: "robot dansant"}}}}}
+}
+
+func foundrySegmentPlan() foundryNarrativeSegmentPlan {
+	return foundryNarrativeSegmentPlan{Segments: []foundryNarrativeSegmentPlanItem{{SegmentID: "segment-1", Role: "hook", AnchorEvidenceIDs: []string{"evidence-1"}, AnchorMode: "simultaneous"}}}
+}
+
+func TestNarrativeSegmentPlannerRejectsLimitTimeoutAndInvalidResponse(t *testing.T) {
+	request := segmentPlanningRequest()
+	planner := narrativeSegmentPlanner{timeout: time.Second, maxCatalog: 1, maxSegments: 1, runner: narrativeSegmentPlannerRunnerFunc(func(_ context.Context, _ string) (foundryNarrativeSegmentPlan, error) {
+		return foundrySegmentPlan(), nil
+	})}
+	if _, err := planner.Plan(context.Background(), request); err != nil {
+		t.Fatalf("valid plan: %v", err)
+	}
+
+	planner.runner = narrativeSegmentPlannerRunnerFunc(func(context.Context, string) (foundryNarrativeSegmentPlan, error) {
+		return foundryNarrativeSegmentPlan{}, nil
+	})
+	if _, err := planner.Plan(context.Background(), request); err == nil || narrativeFailureFor(err) != narrativeFailureInvalid {
+		t.Fatalf("expected response rejection, got %v", err)
+	}
+
+	planner.timeout = time.Millisecond
+	planner.runner = narrativeSegmentPlannerRunnerFunc(func(ctx context.Context, _ string) (foundryNarrativeSegmentPlan, error) {
+		<-ctx.Done()
+		return foundryNarrativeSegmentPlan{}, ctx.Err()
+	})
+	if _, err := planner.Plan(context.Background(), request); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected timeout, got %v", err)
+	}
+}
+
+func TestNarrativeSegmentPlannerSuppliesActiveSegmentLimitInPacket(t *testing.T) {
+	request := segmentPlanningRequest()
+	planner := narrativeSegmentPlanner{timeout: time.Second, maxCatalog: 1, maxSegments: 7, runner: narrativeSegmentPlannerRunnerFunc(func(_ context.Context, raw string) (foundryNarrativeSegmentPlan, error) {
+		var packet narrativeSegmentPlannerPacket
+		if err := json.Unmarshal([]byte(raw), &packet); err != nil {
+			t.Fatalf("decode planner packet: %v", err)
+		}
+		if packet.MaxSegments != 7 {
+			t.Fatalf("packet maxSegments = %d, want 7", packet.MaxSegments)
+		}
+		if packet.Request.CompositionID != request.CompositionID || len(packet.Request.Catalog) != len(request.Catalog) || packet.Request.Catalog[0].SegmentID != request.Catalog[0].SegmentID {
+			t.Fatalf("packet request = %#v, want %#v", packet.Request, request)
+		}
+		return foundrySegmentPlan(), nil
+	})}
+	if _, err := planner.Plan(context.Background(), request); err != nil {
+		t.Fatalf("plan with packet: %v", err)
+	}
+}
+
+func TestNarrativeSegmentPlanningHandlerStrictAndPrivate(t *testing.T) {
+	server := NewServer(Config{APIKey: "test-key"}, nil)
+	body, err := json.Marshal(segmentPlanningRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(payload []byte) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/narrative-segment-plans", bytes.NewReader(payload))
+		req.Header.Set("X-API-Key", "test-key")
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, req)
+		return response
+	}
+	if response := request(body); response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unavailable = %d", response.Code)
+	} else {
+		var apiErr videoindexerstudio.APIErrorResponse
+		if err := json.Unmarshal(response.Body.Bytes(), &apiErr); err != nil || apiErr.Code != "narrative_segment_planning_unavailable" {
+			t.Fatalf("unavailable response = %#v, %v", apiErr, err)
+		}
+	}
+	secret := "private editorial preference"
+	server.SetNarrativeSegmentPlanner(narrativeSegmentPlannerFunc(func(context.Context, videoindexerstudio.NarrativeSegmentPlanningRequest) (videoindexerstudio.NarrativeSegmentPlanningResponse, error) {
+		return videoindexerstudio.NarrativeSegmentPlanningResponse{}, errors.New(secret)
+	}))
+	if response := request(body); response.Code != http.StatusBadGateway || strings.Contains(response.Body.String(), secret) {
+		t.Fatalf("unsafe planner error: %d %s", response.Code, response.Body.String())
+	}
+	if response := request([]byte(`{"schemaVersion":1,"extra":true}`)); response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown field = %d", response.Code)
+	}
+}
+
+func TestNarrativeSegmentPlannerConfigCapsBounds(t *testing.T) {
+	cfg := (Config{NarrativeSegmentPlannerTimeout: 30 * time.Second, NarrativeSegmentPlannerMaxCatalog: 49, NarrativeSegmentPlannerMaxSegments: 49}).Normalize()
+	if cfg.NarrativeSegmentPlannerTimeout != 20*time.Second || cfg.NarrativeSegmentPlannerMaxCatalog != 48 || cfg.NarrativeSegmentPlannerMaxSegments != 24 {
+		t.Fatalf("normalized planner config = %#v", cfg)
+	}
+}
+
+func TestNarrativeSegmentPlannerRetriesTransientButNotInvalidResponse(t *testing.T) {
+	request := segmentPlanningRequest()
+	attempts := 0
+	planner := narrativeSegmentPlanner{timeout: time.Second, maxCatalog: 1, maxSegments: 1, runner: narrativeSegmentPlannerRunnerFunc(func(context.Context, string) (foundryNarrativeSegmentPlan, error) {
+		attempts++
+		if attempts == 1 {
+			return foundryNarrativeSegmentPlan{}, errors.New("temporary upstream failure")
+		}
+		return foundrySegmentPlan(), nil
+	})}
+	if _, err := planner.Plan(context.Background(), request); err != nil || attempts != 2 {
+		t.Fatalf("plan = %v, attempts = %d", err, attempts)
+	}
+	attempts = 0
+	planner.runner = narrativeSegmentPlannerRunnerFunc(func(context.Context, string) (foundryNarrativeSegmentPlan, error) {
+		attempts++
+		return foundryNarrativeSegmentPlan{}, nil
+	})
+	if _, err := planner.Plan(context.Background(), request); narrativeFailureFor(err) != narrativeFailureInvalid || attempts != 1 {
+		t.Fatalf("invalid response = %v, attempts = %d", err, attempts)
+	}
+}
+
+func TestNarrativeSegmentPlannerRetriesCatalogGroundingFailure(t *testing.T) {
+	request := segmentPlanningRequest()
+	attempts := 0
+	planner := narrativeSegmentPlanner{timeout: time.Second, maxCatalog: 1, maxSegments: 1, runner: narrativeSegmentPlannerRunnerFunc(func(context.Context, string) (foundryNarrativeSegmentPlan, error) {
+		attempts++
+		if attempts == 1 {
+			return foundryNarrativeSegmentPlan{Segments: []foundryNarrativeSegmentPlanItem{{SegmentID: "invented", Role: "hook", AnchorEvidenceIDs: []string{"evidence-1"}, AnchorMode: "simultaneous"}}}, nil
+		}
+		return foundrySegmentPlan(), nil
+	})}
+	if _, err := planner.Plan(context.Background(), request); err != nil || attempts != 2 {
+		t.Fatalf("plan = %v, attempts = %d", err, attempts)
+	}
+}
+
+func TestNarrativeSegmentPlannerMapsProviderDTOToVersionedContract(t *testing.T) {
+	request := segmentPlanningRequest()
+	planner := narrativeSegmentPlanner{timeout: time.Second, maxCatalog: 1, maxSegments: 1, runner: narrativeSegmentPlannerRunnerFunc(func(context.Context, string) (foundryNarrativeSegmentPlan, error) {
+		return foundrySegmentPlan(), nil
+	})}
+	response, err := planner.Plan(context.Background(), request)
+	if err != nil || response.SchemaVersion != videoindexerstudio.NarrativeSegmentPlanningSchemaVersion || response.Segments[0].AnchorMode != videoindexerstudio.NarrativeSegmentAnchorModeSimultaneous {
+		t.Fatalf("mapped response = %#v, %v", response, err)
+	}
+
+	request.SchemaVersion = videoindexerstudio.NarrativeSegmentPlanningLegacySchemaVersion
+	response, err = planner.Plan(context.Background(), request)
+	if err != nil || response.SchemaVersion != videoindexerstudio.NarrativeSegmentPlanningLegacySchemaVersion || len(response.Segments[0].EvidenceIDs) != 1 {
+		t.Fatalf("legacy mapped response = %#v, %v", response, err)
+	}
+}
+
+func TestFoundryNarrativeSegmentPlanHasNoOptionalTimecodeOrSchemaFields(t *testing.T) {
+	payload, err := json.Marshal(foundrySegmentPlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(payload)
+	for _, forbidden := range []string{"schemaVersion", "startMs", "endMs", "evidenceIds"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("provider DTO contains forbidden field %q: %s", forbidden, text)
+		}
+	}
+	for _, required := range []string{"segmentId", "role", "anchorEvidenceIds", "anchorMode"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("provider DTO omitted required field %q: %s", required, text)
+		}
+	}
+}
+
+func TestNarrativePlannerProviderFailureReasonsAreSafe(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		err    error
+		reason string
+	}{
+		"structured decode": {errors.New("structured output decode failed: private content"), "structured_output_decode_failure"},
+		"provider rejected": {errors.New("provider schema invalid: private content"), "provider_response_rejected"},
+		"transport":         {errors.New("connection reset by peer: private content"), "provider_transport"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := narrativePlannerProviderFailureReason(testCase.err); got != testCase.reason {
+				t.Fatalf("failure reason = %q, want %q", got, testCase.reason)
+			}
+		})
+	}
+}

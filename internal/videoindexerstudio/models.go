@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const maxErrorBodyBytes = 4096
@@ -270,13 +272,89 @@ const CompositionEditPlanSchemaVersion = 1
 
 const NarrativeRankingSchemaVersion = 1
 
+const NarrativeIntentMaxRunes = 240
+
+type NarrativePacingProfile string
+
+const (
+	NarrativePacingProfileStandard                NarrativePacingProfile = "standard"
+	NarrativePacingProfileEnergeticShortForm      NarrativePacingProfile = "energetic_short_form"
+	NarrativePacingProfileCalmRecap               NarrativePacingProfile = "calm_recap"
+	NarrativePacingProfileChronologicalContinuity NarrativePacingProfile = "chronological_continuity"
+	NarrativePacingProfileCinematic               NarrativePacingProfile = "cinematic"
+	NarrativePacingProfileSocialShortForm         NarrativePacingProfile = "social_short_form"
+	NarrativePacingProfileTutorial                NarrativePacingProfile = "tutorial"
+	NarrativePacingProfileHighlightReel           NarrativePacingProfile = "highlight_reel"
+	NarrativePacingProfileRecap                   NarrativePacingProfile = "recap"
+	NarrativePacingProfileStorytelling            NarrativePacingProfile = "storytelling"
+	NarrativePacingProfileTravel                  NarrativePacingProfile = "travel"
+	NarrativePacingProfileInterview               NarrativePacingProfile = "interview"
+	NarrativePacingProfileProductShowcase         NarrativePacingProfile = "product_showcase"
+)
+
+// NarrativeIntentProfile is the closed result contract returned by the
+// classifier. It is mapped locally to a pacing profile before any candidates
+// are selected.
+type NarrativeIntentProfile string
+
+const (
+	NarrativeIntentProfileStandard        NarrativeIntentProfile = "standard"
+	NarrativeIntentProfileEnergetic       NarrativeIntentProfile = "energetic"
+	NarrativeIntentProfileCalm            NarrativeIntentProfile = "calm"
+	NarrativeIntentProfileChronological   NarrativeIntentProfile = "chronological"
+	NarrativeIntentProfileCinematic       NarrativeIntentProfile = "cinematic"
+	NarrativeIntentProfileSocialShortForm NarrativeIntentProfile = "social_short_form"
+	NarrativeIntentProfileTutorial        NarrativeIntentProfile = "tutorial"
+	NarrativeIntentProfileHighlightReel   NarrativeIntentProfile = "highlight_reel"
+	NarrativeIntentProfileRecap           NarrativeIntentProfile = "recap"
+	NarrativeIntentProfileStorytelling    NarrativeIntentProfile = "storytelling"
+	NarrativeIntentProfileTravel          NarrativeIntentProfile = "travel"
+	NarrativeIntentProfileInterview       NarrativeIntentProfile = "interview"
+	NarrativeIntentProfileProductShowcase NarrativeIntentProfile = "product_showcase"
+)
+
+type NarrativePacingClassifierMode string
+
+const (
+	NarrativePacingClassifierModeFoundryStructured            NarrativePacingClassifierMode = "foundry_structured"
+	NarrativePacingClassifierModeFoundryProfileOnly           NarrativePacingClassifierMode = "foundry_profile_only"
+	NarrativePacingClassifierModeDeterministicKeywordFallback NarrativePacingClassifierMode = "deterministic_keyword_fallback"
+	NarrativePacingClassifierModeStandardFallback             NarrativePacingClassifierMode = "standard_fallback"
+)
+
+type NarrativePacingClassifierFallbackReason string
+
+const (
+	NarrativePacingClassifierFallbackNone            NarrativePacingClassifierFallbackReason = ""
+	NarrativePacingClassifierFallbackNoIntent        NarrativePacingClassifierFallbackReason = "no_intent"
+	NarrativePacingClassifierFallbackUnavailable     NarrativePacingClassifierFallbackReason = "classifier_unavailable"
+	NarrativePacingClassifierFallbackTimeout         NarrativePacingClassifierFallbackReason = "classifier_timeout"
+	NarrativePacingClassifierFallbackInvalidResponse NarrativePacingClassifierFallbackReason = "classifier_invalid_response"
+	NarrativePacingClassifierFallbackRequestFailed   NarrativePacingClassifierFallbackReason = "classifier_request_failed"
+	NarrativePacingClassifierFallbackQueryInvalid    NarrativePacingClassifierFallbackReason = "query_invalid"
+)
+
+type NarrativeIntentClassificationRequest struct {
+	SchemaVersion   int    `json:"schemaVersion"`
+	NarrativeIntent string `json:"narrativeIntent"`
+}
+
+type NarrativeIntentClassificationResponse struct {
+	SchemaVersion int                    `json:"schemaVersion"`
+	Profile       NarrativeIntentProfile `json:"profile"`
+	Query         *NarrativeQuery        `json:"query,omitempty"`
+}
+
 // NarrativeRankingRequest contains only immutable clip identities and canonical
 // evidence. The ranker cannot alter source assets or time ranges.
 type NarrativeRankingRequest struct {
-	SchemaVersion int                         `json:"schemaVersion"`
-	CompositionID string                      `json:"compositionId"`
-	Candidates    []NarrativeRankingCandidate `json:"candidates"`
-	Evidence      []NarrativeEvidence         `json:"evidence"`
+	SchemaVersion   int                         `json:"schemaVersion"`
+	CompositionID   string                      `json:"compositionId"`
+	NarrativeIntent string                      `json:"narrativeIntent,omitempty"`
+	PacingProfile   NarrativePacingProfile      `json:"pacingProfile,omitempty"`
+	VariantCount    int                         `json:"variantCount,omitempty"`
+	Candidates      []NarrativeRankingCandidate `json:"candidates"`
+	Evidence        []NarrativeEvidence         `json:"evidence"`
 }
 
 type NarrativeRankingCandidate struct {
@@ -311,17 +389,162 @@ type NarrativeRankedClip struct {
 // composition. It is deliberately separate from EditPlan so single-video
 // planner responses remain backwards compatible.
 type CompositionEditPlan struct {
-	SchemaVersion         int                       `json:"schemaVersion"`
-	CompositionID         string                    `json:"compositionId"`
-	Title                 string                    `json:"title"`
-	Summary               string                    `json:"summary"`
-	RankingMode           string                    `json:"rankingMode"`
-	RecommendationVersion string                    `json:"recommendationVersion"`
-	EvidenceFingerprint   string                    `json:"evidenceFingerprint"`
-	SourceAssetIDs        []string                  `json:"sourceAssetIds"`
-	Sources               []CompositionSourceStatus `json:"sources"`
-	Clips                 []CompositionClip         `json:"clips"`
-	SourceRefs            []SourceRef               `json:"sourceRefs"`
+	SchemaVersion          int                                     `json:"schemaVersion"`
+	CompositionID          string                                  `json:"compositionId"`
+	NarrativeIntent        string                                  `json:"narrativeIntent,omitempty"`
+	PacingProfile          NarrativePacingProfile                  `json:"pacingProfile,omitempty"`
+	VariantCount           int                                     `json:"variantCount,omitempty"`
+	PacingClassifierMode   NarrativePacingClassifierMode           `json:"pacingClassifierMode,omitempty"`
+	PacingFallbackReason   NarrativePacingClassifierFallbackReason `json:"pacingFallbackReason,omitempty"`
+	EditorialProfile       NarrativeIntentProfile                  `json:"editorialProfile,omitempty"`
+	PlanningMode           NarrativeSegmentPlanningMode            `json:"planningMode,omitempty"`
+	PlanningFallbackReason NarrativeSegmentPlanningFallbackReason  `json:"planningFallbackReason,omitempty"`
+	NarrativeQuery         *NarrativeQuery                         `json:"narrativeQuery,omitempty"`
+	SelectionOutcome       NarrativeSelectionOutcome               `json:"selectionOutcome,omitempty"`
+	Title                  string                                  `json:"title"`
+	Summary                string                                  `json:"summary"`
+	RankingMode            string                                  `json:"rankingMode"`
+	RecommendationVersion  string                                  `json:"recommendationVersion"`
+	EvidenceFingerprint    string                                  `json:"evidenceFingerprint"`
+	SourceAssetIDs         []string                                `json:"sourceAssetIds"`
+	Sources                []CompositionSourceStatus               `json:"sources"`
+	Clips                  []CompositionClip                       `json:"clips"`
+	SourceRefs             []SourceRef                             `json:"sourceRefs"`
+}
+
+// NormalizeNarrativeIntent creates a bounded editorial preference suitable for
+// persistence and for the grounded ranker's input packet.
+func NormalizeNarrativeIntent(value string) (string, error) {
+	if !utf8.ValidString(value) {
+		return "", fmt.Errorf("%w: narrativeIntent must be valid UTF-8", ErrInvalidRequest)
+	}
+	value = strings.Join(strings.FieldsFunc(value, unicode.IsSpace), " ")
+	if utf8.RuneCountInString(value) > NarrativeIntentMaxRunes {
+		return "", fmt.Errorf("%w: narrativeIntent exceeds %d characters", ErrInvalidRequest, NarrativeIntentMaxRunes)
+	}
+	return value, nil
+}
+
+// NarrativePacingProfileForIntent maps a normalized intent to one conservative,
+// local editing profile. Chronological terms take precedence over pace terms.
+func NarrativePacingProfileForIntent(intent string) NarrativePacingProfile {
+	terms := strings.FieldsFunc(strings.ToLower(intent), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+	has := func(values ...string) bool {
+		for _, term := range terms {
+			for _, value := range values {
+				if term == value {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	switch {
+	case has("chronological", "chronologic", "continuity", "continuous"):
+		return NarrativePacingProfileChronologicalContinuity
+	case has("energetic", "energy", "action", "fast"):
+		return NarrativePacingProfileEnergeticShortForm
+	case has("social", "tiktok", "shortform", "short", "reels"):
+		return NarrativePacingProfileSocialShortForm
+	case has("cinematic", "cinema", "film"):
+		return NarrativePacingProfileCinematic
+	case has("tutorial", "tutorials", "howto", "guide"):
+		return NarrativePacingProfileTutorial
+	case has("highlight", "highlights", "bestof"):
+		return NarrativePacingProfileHighlightReel
+	case has("story", "storytelling", "narrative"):
+		return NarrativePacingProfileStorytelling
+	case has("travel", "trip", "voyage"):
+		return NarrativePacingProfileTravel
+	case has("interview", "interviews"):
+		return NarrativePacingProfileInterview
+	case has("product", "showcase", "demo"):
+		return NarrativePacingProfileProductShowcase
+	case has("calm", "reflective", "relaxed"):
+		return NarrativePacingProfileCalmRecap
+	case has("recap", "summary", "roundup"):
+		return NarrativePacingProfileRecap
+	default:
+		return NarrativePacingProfileStandard
+	}
+}
+
+func (p NarrativeIntentProfile) Valid() bool {
+	switch p {
+	case NarrativeIntentProfileStandard, NarrativeIntentProfileEnergetic, NarrativeIntentProfileCalm, NarrativeIntentProfileChronological, NarrativeIntentProfileCinematic, NarrativeIntentProfileSocialShortForm, NarrativeIntentProfileTutorial, NarrativeIntentProfileHighlightReel, NarrativeIntentProfileRecap, NarrativeIntentProfileStorytelling, NarrativeIntentProfileTravel, NarrativeIntentProfileInterview, NarrativeIntentProfileProductShowcase:
+		return true
+	default:
+		return false
+	}
+}
+
+// PacingProfile maps a closed editorial style to deterministic local selection semantics.
+func (p NarrativeIntentProfile) PacingProfile() NarrativePacingProfile {
+	switch p {
+	case NarrativeIntentProfileEnergetic:
+		return NarrativePacingProfileEnergeticShortForm
+	case NarrativeIntentProfileCalm:
+		return NarrativePacingProfileCalmRecap
+	case NarrativeIntentProfileChronological:
+		return NarrativePacingProfileChronologicalContinuity
+	case NarrativeIntentProfileCinematic:
+		return NarrativePacingProfileCinematic
+	case NarrativeIntentProfileSocialShortForm:
+		return NarrativePacingProfileSocialShortForm
+	case NarrativeIntentProfileTutorial:
+		return NarrativePacingProfileTutorial
+	case NarrativeIntentProfileHighlightReel:
+		return NarrativePacingProfileHighlightReel
+	case NarrativeIntentProfileRecap:
+		return NarrativePacingProfileRecap
+	case NarrativeIntentProfileStorytelling:
+		return NarrativePacingProfileStorytelling
+	case NarrativeIntentProfileTravel:
+		return NarrativePacingProfileTravel
+	case NarrativeIntentProfileInterview:
+		return NarrativePacingProfileInterview
+	case NarrativeIntentProfileProductShowcase:
+		return NarrativePacingProfileProductShowcase
+	default:
+		return NarrativePacingProfileStandard
+	}
+}
+
+func (m NarrativePacingClassifierMode) Valid() bool {
+	return m == "" || m == NarrativePacingClassifierModeFoundryStructured || m == NarrativePacingClassifierModeFoundryProfileOnly || m == NarrativePacingClassifierModeDeterministicKeywordFallback || m == NarrativePacingClassifierModeStandardFallback
+}
+
+func (r NarrativePacingClassifierFallbackReason) Valid() bool {
+	return r == NarrativePacingClassifierFallbackNone || r == NarrativePacingClassifierFallbackNoIntent || r == NarrativePacingClassifierFallbackUnavailable || r == NarrativePacingClassifierFallbackTimeout || r == NarrativePacingClassifierFallbackInvalidResponse || r == NarrativePacingClassifierFallbackRequestFailed || r == NarrativePacingClassifierFallbackQueryInvalid
+}
+
+func (r NarrativeIntentClassificationRequest) Validate() error {
+	if r.SchemaVersion != NarrativeRankingSchemaVersion {
+		return fmt.Errorf("%w: invalid narrative intent classification request", ErrInvalidRequest)
+	}
+	normalized, err := NormalizeNarrativeIntent(r.NarrativeIntent)
+	if err != nil || normalized == "" || normalized != r.NarrativeIntent {
+		return fmt.Errorf("%w: invalid narrative intent", ErrInvalidRequest)
+	}
+	return nil
+}
+
+func (r NarrativeIntentClassificationResponse) Validate() error {
+	if r.SchemaVersion != NarrativeRankingSchemaVersion || !r.Profile.Valid() {
+		return fmt.Errorf("%w: invalid narrative intent classification response", ErrInvalidRequest)
+	}
+	if r.Query != nil {
+		if err := r.Query.Validate(); err != nil {
+			return fmt.Errorf("%w: invalid narrative intent query", ErrInvalidRequest)
+		}
+	}
+	return nil
+}
+
+func (p NarrativePacingProfile) Valid() bool {
+	return p == "" || NarrativeIntentProfile(p).Valid() || p == NarrativePacingProfileEnergeticShortForm || p == NarrativePacingProfileCalmRecap || p == NarrativePacingProfileChronologicalContinuity
 }
 
 type CompositionSourceStatus struct {

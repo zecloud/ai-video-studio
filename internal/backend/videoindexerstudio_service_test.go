@@ -718,6 +718,7 @@ func TestVideoIndexerGenerateMultiVideoEditReusesCompletedAnalyses(t *testing.T)
 	if err != nil {
 		t.Fatalf("GenerateMultiVideoEdit: %v", err)
 	}
+
 	if len(client.createReqs) != 0 {
 		t.Fatalf("completed analyses should be reused, got %d submissions", len(client.createReqs))
 	}
@@ -750,6 +751,26 @@ func TestVideoIndexerGenerateMultiVideoEditReusesCompletedAnalyses(t *testing.T)
 	}
 	if composition.CompositionPlan.EvidenceFingerprint == "" {
 		t.Fatal("composition plan did not persist its evidence fingerprint")
+	}
+}
+
+func TestVideoIndexerGenerateMultiVideoEditWithIntentFailsWithoutClassifierFallback(t *testing.T) {
+	assets := []library.ProjectAsset{{ID: "asset-1", Name: "one.mp4", CloudAssetID: "drive-1"}, {ID: "asset-2", Name: "two.mp4", CloudAssetID: "drive-2"}}
+	store := &memoryVideoIndexerJobStore{jobs: []VideoIndexerStudioJob{
+		completedAnalysisJob("analysis-1", "asset-1", 0, 1200, 0.8),
+		completedAnalysisJob("analysis-2", "asset-2", 500, 2200, 0.9),
+	}}
+	svc := NewVideoIndexerStudioService(&fakeLibraryStore{assets: assets}, nil, &fakeEditingSaver{}, &fakeVideoIndexerClient{}, store)
+
+	composition, err := svc.GenerateMultiVideoEditWithIntent(context.Background(), []string{"asset-1", "asset-2"}, "  calm\nrecap  ")
+	if err != nil {
+		t.Fatalf("GenerateMultiVideoEditWithIntent: %v", err)
+	}
+	if composition.NarrativeIntent != "calm recap" || composition.Status != videoIndexerJobStatusFailed || composition.Stage != "composition_failed" {
+		t.Fatalf("intent classification should fail loudly without fallback: %#v", composition)
+	}
+	if !strings.Contains(composition.ErrorMessage, "intent classification failed") {
+		t.Fatalf("unexpected composition error message: %q", composition.ErrorMessage)
 	}
 }
 

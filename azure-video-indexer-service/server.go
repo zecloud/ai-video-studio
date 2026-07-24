@@ -18,25 +18,33 @@ import (
 )
 
 type Server struct {
-	cfg             Config
-	jobs            JobService
-	renderJobs      RenderJobService
-	obs             *Observability
-	blobSvc         *AzureBlobService
-	renderOutputs   RenderOutputStreamer
-	videoIndexer    videoIndexerReadiness
-	planner         EditPlanner
-	narrativeRanker NarrativeRanker
-	lookPath        func(string) (string, error)
-	readiness       readinessReporter
-	readinessOnce   sync.Once
+	cfg                       Config
+	jobs                      JobService
+	renderJobs                RenderJobService
+	obs                       *Observability
+	blobSvc                   *AzureBlobService
+	renderOutputs             RenderOutputStreamer
+	videoIndexer              videoIndexerReadiness
+	planner                   EditPlanner
+	narrativeRanker           NarrativeRanker
+	narrativeIntentClassifier NarrativeIntentClassifier
+	narrativeSegmentPlanner   NarrativeSegmentPlanner
+	lookPath                  func(string) (string, error)
+	readiness                 readinessReporter
+	readinessOnce             sync.Once
 }
 
 type RenderOutputStreamer interface {
 	OpenDownload(context.Context, StagedAsset) (BlobDownload, error)
 }
 
-func (s *Server) SetNarrativeRanker(ranker NarrativeRanker)            { s.narrativeRanker = ranker }
+func (s *Server) SetNarrativeRanker(ranker NarrativeRanker) { s.narrativeRanker = ranker }
+func (s *Server) SetNarrativeIntentClassifier(classifier NarrativeIntentClassifier) {
+	s.narrativeIntentClassifier = classifier
+}
+func (s *Server) SetNarrativeSegmentPlanner(planner NarrativeSegmentPlanner) {
+	s.narrativeSegmentPlanner = planner
+}
 func (s *Server) SetRenderJobs(jobs RenderJobService)                  { s.renderJobs = jobs }
 func (s *Server) SetRenderOutputStreamer(outputs RenderOutputStreamer) { s.renderOutputs = outputs }
 
@@ -63,6 +71,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/render-jobs/{jobID}/cancel", s.requireAPIKey(http.HandlerFunc(s.handleCancelRenderJob)))
 	mux.Handle("POST /api/v1/jobs", s.requireAPIKey(http.HandlerFunc(s.handleCreateJob)))
 	mux.Handle("POST /api/v1/narrative-rankings", s.requireAPIKey(http.HandlerFunc(s.handleNarrativeRanking)))
+	mux.Handle("POST /api/v1/narrative-intent-classifications", s.requireAPIKey(http.HandlerFunc(s.handleNarrativeIntentClassification)))
+	mux.Handle("POST /api/v1/narrative-segment-plans", s.requireAPIKey(http.HandlerFunc(s.handleNarrativeSegmentPlanning)))
 	mux.Handle("GET /api/v1/jobs", s.requireAPIKey(http.HandlerFunc(s.handleListJobs)))
 	mux.Handle("GET /api/v1/jobs/{jobID}", s.requireAPIKey(http.HandlerFunc(s.handleGetJob)))
 	mux.Handle("POST /api/v1/jobs/{jobID}/cancel", s.requireAPIKey(http.HandlerFunc(s.handleCancelJob)))
@@ -71,6 +81,64 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	return mux
+}
+
+func (s *Server) handleNarrativeSegmentPlanning(w http.ResponseWriter, r *http.Request) {
+	if s.narrativeSegmentPlanner == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "narrative segment planner is not configured", "narrative_segment_planning_unavailable", true)
+		return
+	}
+	var req videoindexerstudio.NarrativeSegmentPlanningRequest
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid JSON request body", "bad_request", false)
+		return
+	}
+	if err := req.Validate(); err != nil {
+		writeAPIError(w, http.StatusUnprocessableEntity, "invalid narrative segment planning request", "narrative_segment_planning_invalid", false)
+		return
+	}
+	response, err := s.narrativeSegmentPlanner.Plan(r.Context(), req)
+	if err == nil {
+		err = response.Validate()
+		if err != nil {
+			err = narrativeFailureError(narrativeFailureInvalid, err)
+		}
+	}
+	if err != nil {
+		status, code, retryable := narrativeFailureHTTP("narrative_segment_planning", err)
+		writeAPIError(w, status, "narrative segment planning failed", code, retryable)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleNarrativeIntentClassification(w http.ResponseWriter, r *http.Request) {
+	if s.narrativeIntentClassifier == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "narrative intent classifier is not configured", "narrative_intent_classification_unavailable", true)
+		return
+	}
+	var req videoindexerstudio.NarrativeIntentClassificationRequest
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid JSON request body", "bad_request", false)
+		return
+	}
+	if err := req.Validate(); err != nil {
+		writeAPIError(w, http.StatusUnprocessableEntity, "invalid narrative intent classification request", "narrative_intent_classification_invalid", false)
+		return
+	}
+	response, err := s.narrativeIntentClassifier.Classify(r.Context(), req)
+	if err == nil {
+		err = response.Validate()
+		if err != nil {
+			err = narrativeFailureError(narrativeFailureInvalid, err)
+		}
+	}
+	if err != nil {
+		status, code, retryable := narrativeFailureHTTP("narrative_intent_classification", err)
+		writeAPIError(w, status, "narrative intent classification failed", code, retryable)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleNarrativeRanking(w http.ResponseWriter, r *http.Request) {
@@ -89,19 +157,12 @@ func (s *Server) handleNarrativeRanking(w http.ResponseWriter, r *http.Request) 
 	}
 	response, err := s.narrativeRanker.Rank(r.Context(), req)
 	if err != nil {
-		status, code, retryable := http.StatusBadGateway, "narrative_ranking_failed", false
-		if errors.Is(err, context.DeadlineExceeded) {
-			status, code, retryable = http.StatusGatewayTimeout, "narrative_ranking_timeout", true
-		}
-		if strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "unique") {
-			status, code = http.StatusUnprocessableEntity, "narrative_ranking_invalid"
-		}
+		status, code, retryable := narrativeFailureHTTP("narrative_ranking", err)
 		writeAPIError(w, status, "narrative ranking failed", code, retryable)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
 }
-
 func (s *Server) handleCreateRenderJob(w http.ResponseWriter, r *http.Request) {
 	if s.renderJobs == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "render job service is not configured", "service_unavailable", true)
