@@ -1,7 +1,7 @@
 version: '3'
 info:
   companyName: Zecloud
-  productName: AI Video Studio Camera
+  productName: AI Video Camera
   productIdentifier: com.zecloud.aivideostudio.camera
   description: Connect to and browse DJI Osmo Action 4 cameras.
   copyright: (c) 2026, Zecloud

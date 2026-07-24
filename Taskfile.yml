@@ -22,13 +22,13 @@ tasks:
       - task: studio:assets
       - mkdir -p cmd/studio/build
       - cp build/studio.yml cmd/studio/build/config.yml
-      - cd cmd/studio && wails3 build
+      - cd cmd/studio && wails3 build -tags prod
   camera:build:
     cmds:
       - task: camera:assets
       - mkdir -p cmd/camera/build
       - cp build/camera.yml cmd/camera/build/config.yml
-      - cd cmd/camera && wails3 build
+      - cd cmd/camera && wails3 build -tags prod
   studio:assets:
     cmds:
       - npm run build --prefix frontend
