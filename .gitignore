@@ -16,6 +16,7 @@ cmd/studio/frontend/dist/*
 cmd/camera/build/
 cmd/studio/build/
 frontend/node_modules/
+frontend-camera/node_modules/
 *.log
 *.exe
 .DS_Store
