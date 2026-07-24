@@ -65,10 +65,13 @@ func buildNarrativeSegmentCatalog(composition videoindexerstudio.CompositionEdit
 		evidenceByID[evidence.ID] = evidence
 	}
 
-	catalogCandidates := ranking.Candidates
+	catalogCandidates := narrativeSegmentEligibleCandidates(ranking.Candidates)
+	if len(catalogCandidates) == 0 {
+		return videoindexerstudio.NarrativeSegmentPlanningRequest{}, videoindexerstudio.NarrativeSelectionOutcomeUnavailable, errNarrativeSegmentCatalogInvalid
+	}
 	outcome := videoindexerstudio.NarrativeSelectionOutcomeUnavailable
 	if composition.NarrativeQuery != nil && composition.NarrativeQuery.Actionable() {
-		catalogCandidates, outcome = selectQueryAwareCandidates(ranking.Candidates, evidenceByID, composition.NarrativeQuery)
+		catalogCandidates, outcome = selectQueryAwareCandidates(catalogCandidates, evidenceByID, composition.NarrativeQuery)
 		if len(catalogCandidates) == 0 {
 			return videoindexerstudio.NarrativeSegmentPlanningRequest{}, outcome, errNarrativeSegmentNoVerifiableMatch
 		}
@@ -100,6 +103,26 @@ func buildNarrativeSegmentCatalog(composition videoindexerstudio.CompositionEdit
 		outcome = videoindexerstudio.NarrativeSelectionOutcomePartial
 	}
 	return request, outcome, nil
+}
+
+// narrativeSegmentEligibleCandidates drops candidates whose native span is already shorter
+// than narrativePlanningMinimumMS. narrativeSegmentTrim can only narrow an anchor window
+// toward a candidate's own AllowedStartMs/AllowedEndMs bounds, never widen past them, so a
+// candidate below the minimum can never produce a valid segment no matter which evidence the
+// planner anchors to. Offering such a candidate to the planner only invites Foundry to select
+// well-grounded, correctly cited evidence that is nonetheless guaranteed to fail the desktop's
+// own duration-budget check, rejecting an otherwise valid plan. This does not affect the
+// candidates available to the ranker (simple reordering has no duration floor) or the
+// deterministic composition, which continue to use every candidate unfiltered.
+func narrativeSegmentEligibleCandidates(candidates []videoindexerstudio.NarrativeRankingCandidate) []videoindexerstudio.NarrativeRankingCandidate {
+	eligible := make([]videoindexerstudio.NarrativeRankingCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.EndMs-candidate.StartMs < narrativePlanningMinimumMS {
+			continue
+		}
+		eligible = append(eligible, candidate)
+	}
+	return eligible
 }
 
 type narrativeQueryScoredCandidate struct {

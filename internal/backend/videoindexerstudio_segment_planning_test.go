@@ -260,6 +260,56 @@ func TestNarrativeSegmentCatalogReportsNoVerifiableMatch(t *testing.T) {
 	}
 }
 
+func TestNarrativeSegmentCatalogExcludesCandidatesShorterThanMinimumDuration(t *testing.T) {
+	dependencies := narrativeDependencies()
+	degenerate := completedAnalysisJob("analysis-c", "asset-c", 3_003, 3_036, .95)
+	degenerate.VideoIndexResult.Insights.Scenes = []videoindexerstudio.VideoIndexScene{{ID: "scene", StartMs: 3_003, EndMs: 3_036}}
+	dependencies = append(dependencies, degenerate)
+	_, composition, _, err := buildMultiVideoComposition("composition-1", []string{"asset-a", "asset-b", "asset-c"}, dependencies)
+	if err != nil {
+		t.Fatalf("build composition: %v", err)
+	}
+	composition.EditorialProfile = videoindexerstudio.NarrativeIntentProfileStandard
+	if len(composition.Clips) != 3 {
+		t.Fatalf("expected deterministic composition to keep every candidate including the degenerate one, got %d", len(composition.Clips))
+	}
+	request, _, err := buildNarrativeSegmentCatalog(composition, dependencies)
+	if err != nil {
+		t.Fatalf("build catalog: %v", err)
+	}
+	if len(request.Catalog) != 2 {
+		t.Fatalf("expected the 33ms candidate to be excluded from the segment-planning catalog, got %d items: %#v", len(request.Catalog), request.Catalog)
+	}
+	for _, item := range request.Catalog {
+		if item.SourceAssetID == "asset-c" {
+			t.Fatalf("candidate shorter than the minimum segment duration leaked into the planner catalog: %#v", item)
+		}
+		if item.AllowedEndMs-item.AllowedStartMs < narrativePlanningMinimumMS {
+			t.Fatalf("catalog item %q has a native span below the minimum segment duration", item.SegmentID)
+		}
+	}
+}
+
+func TestNarrativeSegmentCatalogRejectsWhenEveryCandidateIsBelowMinimumDuration(t *testing.T) {
+	tinyA := completedAnalysisJob("analysis-tiny-a", "asset-tiny-a", 0, 200, .9)
+	tinyA.VideoIndexResult.Insights.Scenes = []videoindexerstudio.VideoIndexScene{{ID: "scene", StartMs: 0, EndMs: 200}}
+	tinyB := completedAnalysisJob("analysis-tiny-b", "asset-tiny-b", 0, 200, .9)
+	tinyB.VideoIndexResult.Insights.Scenes = []videoindexerstudio.VideoIndexScene{{ID: "scene", StartMs: 0, EndMs: 200}}
+	dependencies := []VideoIndexerStudioJob{tinyA, tinyB}
+	_, composition, _, err := buildMultiVideoComposition("composition-1", []string{"asset-tiny-a", "asset-tiny-b"}, dependencies)
+	if err != nil {
+		t.Fatalf("build composition: %v", err)
+	}
+	composition.EditorialProfile = videoindexerstudio.NarrativeIntentProfileStandard
+	_, _, err = buildNarrativeSegmentCatalog(composition, dependencies)
+	if !errors.Is(err, errNarrativeSegmentCatalogInvalid) {
+		t.Fatalf("expected catalog-invalid error when every candidate is below the minimum segment duration, got %v", err)
+	}
+	if got := narrativeSegmentPlanningFallbackReason(err); got != videoindexerstudio.NarrativeSegmentPlanningFallbackCatalogInvalid {
+		t.Fatalf("expected planner_catalog_invalid fallback reason, got %q", got)
+	}
+}
+
 func TestNarrativeSegmentCatalogPreservesExistingBehaviorWithoutQuery(t *testing.T) {
 	dependencies := narrativeDependencies()
 	plan, composition, _, err := buildMultiVideoComposition("composition-1", []string{"asset-a", "asset-b"}, dependencies)
