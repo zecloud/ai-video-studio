@@ -1,6 +1,8 @@
 # AI Video Studio
 
-Desktop scaffold for importing DJI Osmo Action 4 footage, streaming originals to OneDrive 365, analyzing with Azure Content Understanding, and preparing non-destructive AI-assisted edits.
+AI Video Studio is the independent desktop product for transfers, OneDrive 365, Azure Content Understanding, Video Indexer Studio, cloud library, non-destructive editing, and FFmpeg-based renders. It accepts camera-originated media as an available source as well as local media. It does not control or diagnose DJI hardware.
+
+AI Video Camera is a separate independent desktop product for Osmo Action BLE scan/pairing, Wi-Fi/AP setup, DUML/UDP, and HTTP media-endpoint probes and diagnostics only. Camera does not own cloud authentication, transfers, or post-production. There is no inter-app transfer, sync, RPC, socket, or shared-file bridge between the products, and none is planned.
 
 ## Prerequisites
 
@@ -23,4 +25,4 @@ wails3 generate bindings -ts
 
 `task dev` runs `wails3 dev -config ./build/config.yml` and starts the Vite frontend in Wails dev mode. `task app:build` compiles the native Wails app; the internal `build` task is the Wails frontend asset hook.
 
-The Go services are safe stubs: they do not store credentials, authenticate to Microsoft/Azure, command DJI hardware, or persist complete original videos locally.
+The Go services do not command DJI hardware or persist complete camera originals locally. Microsoft Graph sign-in uses the device-code flow; after authorization, the access and refresh tokens are cached for the configured tenant, client, and scopes. On Windows, the cache is stored under the application settings directory and protected with Windows DPAPI for the current user profile; the cache is unavailable on non-Windows builds. No Microsoft client secret is stored. The media-service and Video Indexer Studio API keys are persisted separately from `settings.json` in protected sidecar files (Windows DPAPI; an application-managed AES-GCM protector on supported non-Windows builds), with restrictive directory/file modes where applicable. These protections do not make secrets inaccessible to a process or user account that can access or run the application. The no-full-local-original rule remains in force for camera-originated ingestion; bounded streaming/chunking and permitted metadata, thumbnails/proxies, and explicit renders are the only documented exceptions.

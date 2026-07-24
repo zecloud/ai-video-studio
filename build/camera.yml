@@ -1,0 +1,17 @@
+version: '3'
+info:
+  companyName: Zecloud
+  productName: AI Video Camera
+  productIdentifier: com.zecloud.aivideostudio.camera
+  description: Connect to and browse DJI Osmo Action 4 cameras.
+  copyright: (c) 2026, Zecloud
+  version: 0.1.0
+dev_mode:
+  root_path: .
+  executes:
+    - cmd: npm run dev --prefix ../../frontend-camera -- --port 9246
+      type: background
+    - cmd: wails3 build
+      type: blocking
+    - cmd: go run .
+      type: primary

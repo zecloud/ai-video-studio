@@ -1,0 +1,17 @@
+version: '3'
+info:
+  companyName: Zecloud
+  productName: AI Video Studio
+  productIdentifier: com.zecloud.aivideostudio
+  description: Import DJI Osmo Action 4 footage to OneDrive and prepare AI-assisted edits.
+  copyright: (c) 2026, Zecloud
+  version: 0.1.0
+dev_mode:
+  root_path: .
+  executes:
+    - cmd: npm run dev --prefix ../../frontend -- --port 9245
+      type: background
+    - cmd: wails3 build
+      type: blocking
+    - cmd: go run .
+      type: primary

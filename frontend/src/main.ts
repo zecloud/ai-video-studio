@@ -3,9 +3,7 @@ import "./styles.css";
 import { Dialogs } from "@wailsio/runtime";
 import {
   AppService,
-  CameraService,
   ContentUnderstandingService,
-  DJIControlService,
   FileDialogService,
   OneDriveService,
   ProjectLibraryService,
@@ -13,13 +11,6 @@ import {
   TransferService,
   VideoProcessingService,
 } from "../bindings/github.com/zecloud/ai-video-studio/internal/backend/index.js";
-import {
-  BLEDevice,
-  ControlStatus,
-  DiagnosticResult,
-  PairingRequest,
-  ProtocolProfile,
-} from "../bindings/github.com/zecloud/ai-video-studio/internal/dji/models.js";
 import { ProjectAsset } from "../bindings/github.com/zecloud/ai-video-studio/internal/library/models.js";
 import { AppSettings } from "../bindings/github.com/zecloud/ai-video-studio/internal/settings/models.js";
 import { AuthFlow } from "../bindings/github.com/zecloud/ai-video-studio/internal/onedrive/models.js";
@@ -27,7 +18,6 @@ import {
   DescribeLocalFilesRequest,
   LocalMediaFile,
   LocalToOneDriveRequest,
-  StartTransferRequest,
   TransferJob,
 } from "../bindings/github.com/zecloud/ai-video-studio/internal/transfer/models.js";
 import {
@@ -60,8 +50,8 @@ import {
   EditingViewState,
   createEditingState,
   loadEditingData,
-  renderEditingPanel,
   setupEditingEvents,
+  renderEditingPanel,
   createNewProject,
   saveProject,
   startRender,
@@ -73,7 +63,7 @@ import {
 } from "./editing.js";
 
 type Tone = "success" | "warning" | "danger" | "info" | "neutral";
-type AppView = "camera" | "transfers" | "library" | "analysis" | "smart-edit" | "editing" | "settings";
+type AppView = "transfers" | "library" | "analysis" | "smart-edit" | "editing" | "settings";
 
 type StatusItem = {
   label: string;
@@ -81,17 +71,6 @@ type StatusItem = {
   tone: Tone;
 };
 
-type MediaItem = {
-  id: string;
-  name: string;
-  capturedAt: string;
-  duration: string;
-  size: string;
-  storage: string;
-  selected: boolean;
-  readiness: string;
-  tone: Tone;
-};
 
 type QueueItem = {
   name: string;
@@ -120,34 +99,21 @@ type AppState = {
   description: string;
   status: StatusItem[];
   activeView: AppView;
-  media: MediaItem[];
   localMedia: LocalMediaItem[];
   queue: QueueItem[];
   diagnostics: DiagnosticItem[];
   transferMessage: string;
   settings: AppSettings | null;
-  authChallenge: {
-    userCode: string;
-    verificationUri: string;
-    message: string;
-    expiresAt: string;
-    intervalSeconds: number;
-  } | null;
-  djiStatus: ControlStatus | null;
-  djiProtocol: ProtocolProfile | null;
-  djiDiagnostics: DiagnosticResult | null;
-  bleDevices: BLEDevice[];
-  selectedBleDeviceId: string;
-  bleActionMessage: string;
+  authChallenge: { userCode: string; verificationUri: string; message: string; expiresAt: string; intervalSeconds: number } | null;
   settingsMessage: string;
   localTransferInFlight: boolean;
-    libraryAssets: ProjectAsset[];
-    selectedAssetId: string | null;
-    loading: boolean;
-    analysis: AnalysisViewState;
-    smartEdit: VideoIndexerStudioViewState;
-        editing: EditingViewState;
-    };
+  libraryAssets: ProjectAsset[];
+  selectedAssetId: string | null;
+  loading: boolean;
+  analysis: AnalysisViewState;
+  smartEdit: VideoIndexerStudioViewState;
+  editing: EditingViewState;
+};
 
 const state: AppState = {
   title: "AI Video Studio",
@@ -155,26 +121,18 @@ const state: AppState = {
   description:
     "Desktop workflow for DJI Osmo Action 4 import, OneDrive transfer, Azure Content Understanding, and non-destructive editing.",
   status: [
-    { label: "Camera", value: "Loading status", tone: "neutral" },
     { label: "OneDrive", value: "Loading status", tone: "neutral" },
     { label: "Azure CU", value: "Loading status", tone: "neutral" },
     { label: "FFmpeg", value: "Loading status", tone: "neutral" },
     { label: "Active work", value: "0 transfers, 0 renders", tone: "neutral" },
   ],
   activeView: "transfers",
-  media: [],
   localMedia: [],
   queue: [],
   diagnostics: [],
-  transferMessage: "No transfer jobs yet. Choose local Osmo videos to start a OneDrive upload.",
+  transferMessage: "No transfer jobs yet.",
   settings: null,
   authChallenge: null,
-  djiStatus: null,
-  djiProtocol: null,
-  djiDiagnostics: null,
-  bleDevices: [],
-  selectedBleDeviceId: "",
-  bleActionMessage: "Scan Windows BLE to find nearby Osmo/DJI candidates, then run the GATT readiness pair test.",
   settingsMessage: "Configure Microsoft Entra public-client details, then start device-code sign-in.",
   localTransferInFlight: false,
     libraryAssets: [],
@@ -211,124 +169,6 @@ function renderProgress(value: number, label: string): string {
       <div class="bar" aria-hidden="true"><span style="width: ${bounded}%"></span></div>
       <span>${escapeHTML(label)}</span>
     </div>
-  `;
-}
-
-function diagnosticTone(status: string): Tone {
-  switch (status) {
-    case "available":
-      return "info";
-    case "blocked":
-      return "danger";
-    case "pending":
-      return "warning";
-    default:
-      return "neutral";
-  }
-}
-
-function renderProtocolCell(label: string, value: string): string {
-  return `
-    <div class="protocol-cell">
-      <span>${escapeHTML(label)}</span>
-      <strong>${escapeHTML(value)}</strong>
-    </div>
-  `;
-}
-
-function renderDJIProtocolPanel(): string {
-  const protocol = state.djiProtocol ?? state.djiStatus?.protocol ?? new ProtocolProfile();
-  const ble = protocol.ble;
-  const steps = state.djiDiagnostics?.steps ?? [];
-  const status = state.djiStatus;
-  const statusTone: Tone = status?.adapterConfigured ? "success" : "warning";
-  const statusLabel = status?.adapterConfigured ? "Adapter configured" : "Adapter not configured";
-  const ports = protocol.mediaPorts?.length ? protocol.mediaPorts.join(", ") : "80, 7001";
-
-  return `
-    <section class="panel" aria-labelledby="ble-title">
-      <div class="panel-header">
-        <div>
-          <p class="eyebrow">BLE / DUML diagnostics</p>
-          <h3 id="ble-title">${escapeHTML(protocol.modelHint || "Osmo Action 4 control boundary")}</h3>
-        </div>
-        ${renderBadge(statusLabel, statusTone)}
-      </div>
-      <div class="protocol-grid" aria-label="DJI protocol profile">
-        ${renderProtocolCell("GATT service", ble.serviceUuid || "fff0")}
-        ${renderProtocolCell("Write / control", ble.writeCharUuid || "fff3")}
-        ${renderProtocolCell("Pairing notify", ble.pairingCharUuid || "fff4")}
-        ${renderProtocolCell("Status notify", ble.statusCharUuid || "fff5")}
-        ${renderProtocolCell("Default PIN candidate", ble.defaultPin || "love")}
-        ${renderProtocolCell("Camera gateway", protocol.defaultIp || "192.168.2.1")}
-        ${renderProtocolCell("Media ports", ports)}
-        ${renderProtocolCell("DUML UDP", protocol.udpPort ? String(protocol.udpPort) : "9004")}
-      </div>
-      <div class="ble-actions">
-        <div>
-          <strong>Windows BLE adapter</strong>
-          <p>${escapeHTML(state.bleActionMessage)}</p>
-        </div>
-        <div class="actions">
-          <button class="button secondary" type="button" data-action="scan-ble">Scan BLE</button>
-          <button class="button" type="button" data-action="pair-ble" ${state.selectedBleDeviceId ? "" : "disabled"}>Pair / GATT test</button>
-        </div>
-      </div>
-      <div class="ble-device-list" aria-label="Scanned BLE devices">
-        ${
-          state.bleDevices.length
-            ? state.bleDevices
-                .map((device) => {
-                  const selected = device.id === state.selectedBleDeviceId;
-                  const label = device.name || "Unnamed BLE peripheral";
-                  const serviceText = device.serviceUuids?.length ? device.serviceUuids.join(", ") : "No advertised service UUIDs";
-                  return `
-                    <button class="ble-device ${selected ? "selected" : ""}" type="button" data-action="select-ble-device" data-device-id="${escapeHTML(device.id)}">
-                      <span>${renderBadge(selected ? "Selected" : "BLE", selected ? "success" : "neutral")}</span>
-                      <strong>${escapeHTML(label)}</strong>
-                      <small>${escapeHTML(device.model || "BLE peripheral")} - RSSI ${device.rssi} - ${escapeHTML(device.address || device.id)}</small>
-                      <small>${escapeHTML(serviceText)}</small>
-                    </button>
-                  `;
-                })
-                .join("")
-            : `<div class="ble-empty">
-                <strong>No scan results yet</strong>
-                <p>Put the Osmo Action 4 in wireless/app control mode, keep it near the PC, then scan.</p>
-              </div>`
-        }
-      </div>
-      <div class="step-list" aria-label="BLE and DUML diagnostic plan">
-        ${
-          steps.length
-            ? steps
-                .map(
-                  (step) => `
-                    <div class="step-row">
-                      ${renderBadge(step.status || "pending", diagnosticTone(step.status))}
-                      <div>
-                        <strong>${escapeHTML(step.label)}</strong>
-                        <p>${escapeHTML(step.description)}</p>
-                      </div>
-                      <span class="muted">${escapeHTML(step.transport || "-")}</span>
-                    </div>
-                  `,
-                )
-                .join("")
-            : `<div class="step-row">
-                ${renderBadge("Pending", "warning")}
-                <div>
-                  <strong>Diagnostics not loaded</strong>
-                  <p>Run diagnostics to load the BLE/DUML profile and safe hardware readiness plan.</p>
-                </div>
-                <span class="muted">BLE</span>
-              </div>`
-        }
-      </div>
-      <div class="detail-body protocol-note">
-        <p class="queue-message">${escapeHTML(status?.message || state.djiDiagnostics?.message || protocol.referencePolicy || "No BLE/DUML commands are issued until a hardware adapter is configured.")}</p>
-      </div>
-    </section>
   `;
 }
 
@@ -568,60 +408,6 @@ function renderSettingsPanel(): string {
   `;
 }
 
-function renderCameraMediaPanel(selectedCount: number): string {
-  return `
-    <section class="panel" aria-labelledby="media-title">
-      <div class="panel-header">
-        <div>
-          <p class="eyebrow">Camera media browser</p>
-          <h3 id="media-title">DCIM/100MEDIA</h3>
-        </div>
-        <div class="toolbar">
-          <input class="field" value="GX01" aria-label="Filter media" />
-          <select class="field" aria-label="Storage filter"><option>Storage 1 - SD card</option></select>
-          <button class="button secondary" type="button" data-action="refresh">Refresh</button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table aria-label="Camera media files">
-          <thead>
-            <tr>
-              <th><input class="check" type="checkbox" ${selectedCount === state.media.length ? "checked" : ""} aria-label="Select all media" /></th>
-              <th>Preview</th>
-              <th>Name</th>
-              <th>Duration</th>
-              <th>Size</th>
-              <th>Storage</th>
-              <th>Transfer readiness</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${state.media
-              .map(
-                (item) => `
-                  <tr>
-                    <td><input class="check" type="checkbox" ${item.selected ? "checked" : ""} aria-label="Select ${escapeHTML(item.name)}" /></td>
-                    <td><div class="thumb" aria-hidden="true"></div></td>
-                    <td><strong>${escapeHTML(item.name)}</strong><br><span class="muted">${escapeHTML(item.capturedAt)}</span></td>
-                    <td class="muted">${escapeHTML(item.duration)}</td>
-                    <td class="muted">${escapeHTML(item.size)}</td>
-                    <td class="muted">${escapeHTML(item.storage)}</td>
-                    <td>${renderBadge(item.readiness, item.tone)}</td>
-                  </tr>
-                `,
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  `;
-}
-
-function renderEditingPanelWrapper(): string {
-  return renderEditingPanel(state.editing);
-}
-
 function renderDetailsPanel(destinationPath: string): string {
   if (state.activeView === "transfers") {
     const selected = selectedLocalFiles();
@@ -648,27 +434,6 @@ function renderDetailsPanel(destinationPath: string): string {
           <div class="kv"><span>Chunking</span><strong>${formatBytes(state.settings?.chunkSizeBytes ?? 10485760)} bounded reads</strong></div>
           <div class="kv"><span>Local cache</span><strong>No complete original copied by the app</strong></div>
           ${selectedFile ? `<div class="kv"><span>Path</span><strong class="path-detail">${escapeHTML(selectedFile.path)}</strong></div>` : ""}
-        </div>
-      </section>
-    `;
-  }
-
-  if (state.activeView === "camera") {
-    const selectedCount = state.media.filter((item) => item.selected).length;
-    return `
-      <section class="panel">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Selected camera media</p>
-            <h3>${escapeHTML(state.media.find((item) => item.selected)?.name ?? "No media selected")}</h3>
-          </div>
-          ${renderBadge(selectedCount > 0 ? `${selectedCount} selected` : "Empty", selectedCount > 0 ? "success" : "neutral")}
-        </div>
-        <div class="detail-body">
-          <div class="kv"><span>Endpoint</span><strong>http://192.168.2.1/v2</strong></div>
-          <div class="kv"><span>Range</span><strong>206 Partial Content required</strong></div>
-          <div class="kv"><span>Destination</span><strong>${escapeHTML(destinationPath)}</strong></div>
-          <div class="kv"><span>Analysis</span><strong>Queued after upload</strong></div>
         </div>
       </section>
     `;
@@ -724,10 +489,8 @@ function renderDetailsPanel(destinationPath: string): string {
   return "";
 }
 
-function renderActiveView(selectedCount: number): string {
+function renderActiveView(): string {
   switch (state.activeView) {
-    case "camera":
-      return `${renderDJIProtocolPanel()}${renderCameraMediaPanel(selectedCount)}${renderTransferQueuePanel("Transfer queue", "Direct camera to OneDrive streaming")}`;
     case "transfers":
       return `${renderLocalMediaTable()}${renderTransferQueuePanel()}`;
     case "settings":
@@ -735,7 +498,7 @@ function renderActiveView(selectedCount: number): string {
     case "smart-edit":
       return renderVideoIndexerStudioPanel(state.smartEdit);
     case "editing":
-          return renderEditingPanelWrapper();
+          return renderEditingPanel(state.editing);
     case "library":
           return renderLibraryPanel();
     case "analysis":
@@ -844,8 +607,6 @@ function renderLibraryAssetDetail(asset: ProjectAsset): string {
 
     function viewTitle(): string {
       switch (state.activeView) {
-    case "camera":
-      return "Camera import workspace";
     case "transfers":
       return "USB/local transfers";
     case "library":
@@ -862,7 +623,6 @@ function renderLibraryAssetDetail(asset: ProjectAsset): string {
 }
 
 function render(): void {
-  const selectedCount = state.media.filter((item) => item.selected).length;
   const queue = visibleTransferQueue();
   const diagnosticRows: DiagnosticItem[] = state.diagnostics.length
     ? state.diagnostics
@@ -882,7 +642,6 @@ function render(): void {
           </div>
         </div>
         <nav>
-          <button type="button" data-action="navigate" data-view="camera" aria-current="${state.activeView === "camera" ? "page" : "false"}">Camera <small>${state.media.length} files</small></button>
           <button type="button" data-action="navigate" data-view="transfers" aria-current="${state.activeView === "transfers" ? "page" : "false"}">Transfers <small>${queue.length} jobs</small></button>
           <button type="button" data-action="navigate" data-view="library" aria-current="${state.activeView === "library" ? "page" : "false"}">Library <small>${state.libraryAssets.length} assets</small></button>
           <button type="button" data-action="navigate" data-view="analysis" aria-current="${state.activeView === "analysis" ? "page" : "false"}">Analysis <small>${state.analysis.jobs.length} jobs</small></button>
@@ -908,9 +667,7 @@ function render(): void {
             ${
               state.activeView === "transfers"
                 ? `<button class="button" type="button" data-action="choose-local-files">Choose USB videos</button>`
-                : state.activeView === "camera"
-                  ? `<button class="button" type="button" data-action="start-transfer">Start selected transfer</button>`
-                  : ""
+                : ""
             }
           </div>
         </header>`}
@@ -930,7 +687,7 @@ function render(): void {
 
         <section class="content ${isEditing ? "editing-content" : ""}">
           <div class="main-stack">
-            ${renderActiveView(selectedCount)}
+            ${renderActiveView()}
           </div>
 
           ${isEditing ? "" : `<aside class="details" aria-label="Details and diagnostics">
@@ -1374,9 +1131,6 @@ function render(): void {
         });
   }
 
-  root.querySelector<HTMLButtonElement>("[data-action='start-transfer']")?.addEventListener("click", () => {
-        void startSelectedTransfer();
-  });
 
   root.querySelectorAll<HTMLButtonElement>("[data-action='choose-local-files']").forEach((button) => {
     button.addEventListener("click", () => {
@@ -1402,21 +1156,6 @@ function render(): void {
     });
   });
 
-  root.querySelector<HTMLButtonElement>("[data-action='scan-ble']")?.addEventListener("click", () => {
-    void scanBLEDevices();
-  });
-
-  root.querySelectorAll<HTMLButtonElement>("[data-action='select-ble-device']").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.selectedBleDeviceId = button.dataset.deviceId || "";
-      state.bleActionMessage = state.selectedBleDeviceId ? `Selected BLE device ${state.selectedBleDeviceId}.` : state.bleActionMessage;
-      render();
-    });
-  });
-
-  root.querySelector<HTMLButtonElement>("[data-action='pair-ble']")?.addEventListener("click", () => {
-    void pairSelectedBLEDevice();
-  });
 
   root.querySelector<HTMLButtonElement>("[data-action='save-settings']")?.addEventListener("click", () => {
     void saveSettingsFromForm();
@@ -1436,16 +1175,12 @@ function render(): void {
 }
 
 async function readServiceStatus(): Promise<void> {
-  const [overview, camera, graph, azure, ffmpeg, settings, djiStatus, djiProtocol, djiDiagnostics] = await Promise.allSettled([
+  const [overview, graph, azure, ffmpeg, settings] = await Promise.allSettled([
     AppService.GetOverview(),
-    CameraService.GetConnectionStatus(),
     OneDriveService.Status(),
     ContentUnderstandingService.Status(),
     VideoProcessingService.RuntimeStatus(),
     SettingsService.Get(),
-    DJIControlService.Status(),
-    DJIControlService.ProtocolProfile(),
-    DJIControlService.RunDiagnostics("osmo-action-4"),
   ]);
 
   if (overview.status === "fulfilled") {
@@ -1457,25 +1192,6 @@ async function readServiceStatus(): Promise<void> {
   if (settings.status === "fulfilled") {
     state.settings = settings.value;
   }
-
-  if (djiStatus.status === "fulfilled") {
-    state.djiStatus = djiStatus.value;
-  }
-  if (djiProtocol.status === "fulfilled") {
-    state.djiProtocol = djiProtocol.value;
-  }
-  if (djiDiagnostics.status === "fulfilled") {
-    state.djiDiagnostics = djiDiagnostics.value;
-  }
-
-  const cameraStatus =
-    camera.status === "fulfilled"
-      ? {
-          value: camera.value.available ? "Camera connected" : "Connector stubbed",
-          detail: camera.value.message,
-          tone: camera.value.available ? ("success" as const) : ("warning" as const),
-        }
-      : { value: "Unavailable", detail: "Camera service could not be reached.", tone: "danger" as const };
 
   const graphStatus =
     graph.status === "fulfilled"
@@ -1512,7 +1228,6 @@ async function readServiceStatus(): Promise<void> {
       : { value: "Unavailable", detail: "Video processing service could not be reached.", tone: "danger" as const };
 
   state.status = [
-    { label: "Camera", value: cameraStatus.value, tone: cameraStatus.tone },
     { label: "OneDrive", value: graphStatus.value, tone: graphStatus.tone },
     { label: "Azure CU", value: azureStatus.value, tone: azureStatus.tone },
     { label: "FFmpeg", value: ffmpegStatus.value, tone: ffmpegStatus.tone },
@@ -1527,15 +1242,6 @@ async function readServiceStatus(): Promise<void> {
   ];
 
   state.diagnostics = [
-    { label: "Camera", detail: cameraStatus.detail, tone: cameraStatus.tone },
-    {
-      label: "BLE/DUML",
-      detail:
-        state.djiStatus?.message ||
-        state.djiDiagnostics?.message ||
-        "DJI control adapter status could not be loaded.",
-      tone: state.djiStatus?.adapterConfigured ? "success" : "warning",
-    },
     { label: "Microsoft 365", detail: graphStatus.detail, tone: graphStatus.tone },
     { label: "Azure CU", detail: azureStatus.detail, tone: azureStatus.tone },
     { label: "FFmpeg", detail: ffmpegStatus.detail, tone: ffmpegStatus.tone },
@@ -1553,33 +1259,6 @@ async function refreshServiceStatus(): Promise<void> {
   state.libraryAssets = state.smartEdit.assets;
   state.analysis.assets = state.smartEdit.assets;
   state.transferMessage = "Diagnostics refreshed from Wails services.";
-  render();
-}
-
-async function startSelectedTransfer(): Promise<void> {
-  const selected = state.media.filter((item) => item.selected);
-  if (selected.length === 0) {
-    state.transferMessage = "Select at least one camera media item before starting a transfer.";
-    render();
-    return;
-  }
-
-  state.transferMessage = "Creating transfer job...";
-  render();
-
-  try {
-    const job = await TransferService.StartCameraToOneDrive(
-      new StartTransferRequest({
-        cameraDeviceId: "osmo-action-4",
-        mediaIds: selected.map((item) => item.id),
-        destinationPath: "/Apps/AI Video Studio/Imports",
-      }),
-    );
-    state.transferMessage = job.message || `Transfer job ${job.id} is ${job.status}.`;
-  } catch (error) {
-    state.transferMessage = error instanceof Error ? error.message : "Transfer service call failed.";
-  }
-
   render();
 }
 
@@ -1816,49 +1495,6 @@ async function startLocalTransfer(): Promise<void> {
   render();
 }
 
-async function scanBLEDevices(): Promise<void> {
-  state.bleActionMessage = "Scanning Windows BLE advertisements for Osmo/DJI candidates...";
-  render();
-
-  try {
-    const devices = await DJIControlService.ScanBLE();
-    state.bleDevices = devices;
-    const firstCandidate =
-      devices.find((device) => /osmo|dji|action/i.test(`${device.name} ${device.model} ${(device.serviceUuids || []).join(" ")}`)) ??
-      devices[0];
-    state.selectedBleDeviceId = firstCandidate?.id ?? "";
-    state.bleActionMessage = devices.length
-      ? `Scan complete: ${devices.length} BLE peripheral(s) found. Select the Osmo candidate, then run Pair / GATT test.`
-      : "Scan complete: no BLE peripherals found. Check Windows Bluetooth and camera wireless/app control mode.";
-    await readServiceStatus();
-  } catch (error) {
-    state.bleActionMessage = error instanceof Error ? error.message : "BLE scan failed.";
-  }
-
-  render();
-}
-
-async function pairSelectedBLEDevice(): Promise<void> {
-  if (!state.selectedBleDeviceId) {
-    state.bleActionMessage = "Select a scanned BLE device before pairing.";
-    render();
-    return;
-  }
-
-  const pin = state.djiProtocol?.ble?.defaultPin || "love";
-  state.bleActionMessage = `Connecting to ${state.selectedBleDeviceId} and checking DJI GATT service fff0...`;
-  render();
-
-  try {
-    const result = await DJIControlService.Pair(new PairingRequest({ deviceId: state.selectedBleDeviceId, pin }));
-    state.bleActionMessage = result.message || (result.paired ? "Pairing/GATT test succeeded." : "Pairing/GATT test needs confirmation.");
-    await readServiceStatus();
-  } catch (error) {
-    state.bleActionMessage = error instanceof Error ? error.message : "BLE pairing/GATT test failed.";
-  }
-
-  render();
-}
 
 function settingValue(name: string): string {
   return root.querySelector<HTMLInputElement>(`[data-setting='${name}']`)?.value.trim() ?? "";

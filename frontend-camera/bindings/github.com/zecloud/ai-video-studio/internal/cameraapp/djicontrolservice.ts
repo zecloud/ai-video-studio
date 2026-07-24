@@ -10,37 +10,37 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as dji$0 from "../dji/models.js";
 
 export function Pair(req: dji$0.PairingRequest): $CancellablePromise<dji$0.PairingResult> {
-    return $Call.ByID(3695187372, req).then(($result: any) => {
+    return $Call.ByID(2811849074, req).then(($result: any) => {
         return $$createType0($result);
     });
 }
 
 export function ProtocolProfile(): $CancellablePromise<dji$0.ProtocolProfile> {
-    return $Call.ByID(122214169).then(($result: any) => {
+    return $Call.ByID(4116901535).then(($result: any) => {
         return $$createType1($result);
     });
 }
 
-export function RunDiagnostics(deviceID: string): $CancellablePromise<dji$0.DiagnosticResult> {
-    return $Call.ByID(1980292239, deviceID).then(($result: any) => {
+export function RunDiagnostics(id: string): $CancellablePromise<dji$0.DiagnosticResult> {
+    return $Call.ByID(368443593, id).then(($result: any) => {
         return $$createType2($result);
     });
 }
 
 export function ScanBLE(): $CancellablePromise<dji$0.BLEDevice[]> {
-    return $Call.ByID(1368249630).then(($result: any) => {
+    return $Call.ByID(1508376708).then(($result: any) => {
         return $$createType4($result);
     });
 }
 
 export function SetupWiFi(req: dji$0.WiFiSetupRequest): $CancellablePromise<dji$0.WiFiProfile> {
-    return $Call.ByID(630749960, req).then(($result: any) => {
+    return $Call.ByID(367178610, req).then(($result: any) => {
         return $$createType5($result);
     });
 }
 
 export function Status(): $CancellablePromise<dji$0.ControlStatus> {
-    return $Call.ByID(103978170).then(($result: any) => {
+    return $Call.ByID(1140700876).then(($result: any) => {
         return $$createType6($result);
     });
 }

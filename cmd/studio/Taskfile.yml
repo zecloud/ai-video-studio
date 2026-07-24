@@ -1,0 +1,6 @@
+version: '3'
+
+tasks:
+  build:
+    cmds:
+      - echo "Using assets prepared by the repository-level studio task."

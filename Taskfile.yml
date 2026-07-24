@@ -5,25 +5,77 @@ vars:
   VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
 
 tasks:
+  studio:dev:
+    cmds:
+      - task: studio:assets
+      - mkdir -p cmd/studio/build
+      - cp build/studio.yml cmd/studio/build/config.yml
+      - cd cmd/studio && wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+  camera:dev:
+    cmds:
+      - task: camera:assets
+      - mkdir -p cmd/camera/build
+      - cp build/camera.yml cmd/camera/build/config.yml
+      - cd cmd/camera && wails3 dev -config ./build/config.yml -port {{.CAMERA_VITE_PORT | default 9246}}
+  studio:build:
+    cmds:
+      - task: studio:assets
+      - mkdir -p cmd/studio/build
+      - cp build/studio.yml cmd/studio/build/config.yml
+      - cd cmd/studio && wails3 build -tags prod
+  camera:build:
+    cmds:
+      - task: camera:assets
+      - mkdir -p cmd/camera/build
+      - cp build/camera.yml cmd/camera/build/config.yml
+      - cd cmd/camera && wails3 build -tags prod
+  studio:assets:
+    cmds:
+      - npm run build --prefix frontend
+      - mkdir -p cmd/studio/frontend
+      - rm -rf cmd/studio/frontend/dist
+      - mkdir -p cmd/studio/frontend/dist
+      - cp -R frontend/dist/. cmd/studio/frontend/dist/
+      - touch frontend/dist/placeholder.txt cmd/studio/frontend/dist/placeholder.txt
+  camera:assets:
+    cmds:
+      - npm run build --prefix frontend-camera
+      - mkdir -p cmd/camera/frontend
+      - rm -rf cmd/camera/frontend/dist
+      - mkdir -p cmd/camera/frontend/dist
+      - cp -R frontend-camera/dist/. cmd/camera/frontend/dist/
+      - touch cmd/camera/frontend/dist/placeholder.txt
+  studio:run:
+    cmds:
+      - go run ./cmd/studio
+  camera:run:
+    cmds:
+      - go run ./cmd/camera
+  studio:bindings:
+    cmds:
+      - wails3 generate bindings -ts -clean -d frontend/bindings ./cmd/studio
+  camera:bindings:
+    cmds:
+      - wails3 generate bindings -ts -clean -d frontend-camera/bindings ./cmd/camera
   dev:
     desc: Run the Wails v3 desktop app in development mode.
     cmds:
-      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+      - task: studio:dev
 
   build:
     desc: Build frontend assets used by the Wails build hook.
     cmds:
-      - npm run build --prefix frontend
+      - task: studio:assets
 
   app:build:
     desc: Build the native Wails binary.
     cmds:
-      - wails3 build
+      - task: studio:build
 
   run:
     desc: Run the native app binary built by Wails.
     cmds:
-      - go run .
+      - task: studio:run
 
   package:
     desc: Build the app; packaging assets/signing are not configured yet.
@@ -39,4 +91,4 @@ tasks:
   bindings:
     desc: Regenerate TypeScript bindings from Wails services.
     cmds:
-      - wails3 generate bindings -ts
+      - task: studio:bindings
