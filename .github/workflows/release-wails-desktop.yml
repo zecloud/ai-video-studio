@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v0.1.0)'
+        description: 'Release tag (e.g. v0.1.0). If missing remotely, it will be created at this workflow commit.'
         required: true
         type: string
       draft:
@@ -70,6 +70,8 @@ jobs:
       - name: Install Linux build dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
+          # GUI build dependencies required by Wails/WebKitGTK on Linux runners.
+          # FFmpeg is a runtime dependency and is not required for packaging here.
           sudo apt-get update
           sudo apt-get install -y \
             libgtk-3-dev \
@@ -81,13 +83,13 @@ jobs:
       - name: Build frontend assets
         run: |
           npm run build --prefix frontend
+          rm -rf cmd/studio/frontend/dist
           mkdir -p cmd/studio/frontend/dist
-          rm -rf cmd/studio/frontend/dist/*
           cp -R frontend/dist/. cmd/studio/frontend/dist/
 
           npm run build --prefix frontend-camera
+          rm -rf cmd/camera/frontend/dist
           mkdir -p cmd/camera/frontend/dist
-          rm -rf cmd/camera/frontend/dist/*
           cp -R frontend-camera/dist/. cmd/camera/frontend/dist/
         shell: bash
 
@@ -109,6 +111,7 @@ jobs:
 
           pick_output_dir() {
             local app="$1"
+            # Wails build outputs can be in build/bin or bin depending on setup/version.
             if [ -d "cmd/${app}/build/bin" ]; then
               echo "cmd/${app}/build/bin"
               return 0
