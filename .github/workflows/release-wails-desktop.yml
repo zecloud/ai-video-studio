@@ -7,11 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag de release (ex: v0.1.0)'
+        description: 'Release tag (e.g. v0.1.0)'
         required: true
         type: string
       draft:
-        description: 'Créer la release en brouillon'
+        description: 'Create draft release'
         required: false
         default: true
         type: boolean
@@ -84,6 +84,7 @@ jobs:
           mkdir -p cmd/studio/frontend/dist
           rm -rf cmd/studio/frontend/dist/*
           cp -R frontend/dist/. cmd/studio/frontend/dist/
+          # Keep placeholders expected by the repository for tracked dist folders.
           touch frontend/dist/placeholder.txt cmd/studio/frontend/dist/placeholder.txt
 
           npm run build --prefix frontend-camera
@@ -125,11 +126,11 @@ jobs:
           mkdir -p release-artifacts
 
           studio_out="$(pick_output_dir studio)" || {
-            echo "Impossible de trouver les artefacts build pour AI Video Studio" >&2
+            echo "Unable to find build artifacts for AI Video Studio" >&2
             exit 1
           }
           camera_out="$(pick_output_dir camera)" || {
-            echo "Impossible de trouver les artefacts build pour AI Video Camera" >&2
+            echo "Unable to find build artifacts for AI Video Camera" >&2
             exit 1
           }
 
