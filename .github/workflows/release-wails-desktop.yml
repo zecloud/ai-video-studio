@@ -81,19 +81,15 @@ jobs:
 
       - name: Build frontend assets
         run: |
-          sync_dist() {
-            local source="$1"
-            local destination="$2"
-            rm -rf "${destination}"
-            mkdir -p "${destination}"
-            cp -R "${source}"/. "${destination}/"
-          }
-
           npm run build --prefix frontend
-          sync_dist frontend/dist cmd/studio/frontend/dist
+          rm -rf cmd/studio/frontend/dist
+          mkdir -p cmd/studio/frontend/dist
+          cp -R frontend/dist/. cmd/studio/frontend/dist/
 
           npm run build --prefix frontend-camera
-          sync_dist frontend-camera/dist cmd/camera/frontend/dist
+          rm -rf cmd/camera/frontend/dist
+          mkdir -p cmd/camera/frontend/dist
+          cp -R frontend-camera/dist/. cmd/camera/frontend/dist/
         shell: bash
 
       - name: Build AI Video Studio
@@ -163,6 +159,11 @@ jobs:
       contents: write
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -173,7 +174,7 @@ jobs:
       - name: Validate release tag exists
         if: github.event_name == 'workflow_dispatch'
         run: |
-          git ls-remote --exit-code --tags "https://github.com/${{ github.repository }}.git" "refs/tags/${{ github.event.inputs.tag }}" > /dev/null
+          git rev-parse "refs/tags/${{ github.event.inputs.tag }}" > /dev/null
         shell: bash
 
       - name: Create release
