@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v0.1.0). If missing remotely, it will be created at this workflow commit.'
+        description: 'Release tag (e.g. v0.1.0). The tag must already exist remotely.'
         required: true
         type: string
       draft:
@@ -169,6 +169,12 @@ jobs:
           pattern: wails-desktop-*
           path: release-artifacts
           merge-multiple: true
+
+      - name: Validate release tag exists
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git ls-remote --exit-code --tags "https://github.com/${{ github.repository }}.git" "refs/tags/${{ github.event.inputs.tag }}" > /dev/null
+        shell: bash
 
       - name: Create release
         uses: softprops/action-gh-release@v2
