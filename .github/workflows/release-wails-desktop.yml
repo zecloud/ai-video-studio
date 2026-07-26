@@ -84,14 +84,11 @@ jobs:
           mkdir -p cmd/studio/frontend/dist
           rm -rf cmd/studio/frontend/dist/*
           cp -R frontend/dist/. cmd/studio/frontend/dist/
-          # Keep placeholders expected by the repository for tracked dist folders.
-          touch frontend/dist/placeholder.txt cmd/studio/frontend/dist/placeholder.txt
 
           npm run build --prefix frontend-camera
           mkdir -p cmd/camera/frontend/dist
           rm -rf cmd/camera/frontend/dist/*
           cp -R frontend-camera/dist/. cmd/camera/frontend/dist/
-          touch cmd/camera/frontend/dist/placeholder.txt
         shell: bash
 
       - name: Build AI Video Studio
@@ -134,15 +131,20 @@ jobs:
             exit 1
           }
 
-          tar -czf "release-artifacts/ai-video-studio-${{ matrix.artifact_suffix }}.tar.gz" -C "${studio_out}" .
-          tar -czf "release-artifacts/ai-video-camera-${{ matrix.artifact_suffix }}.tar.gz" -C "${camera_out}" .
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            (cd "${studio_out}" && zip -r "${GITHUB_WORKSPACE}/release-artifacts/ai-video-studio-${{ matrix.artifact_suffix }}.zip" .)
+            (cd "${camera_out}" && zip -r "${GITHUB_WORKSPACE}/release-artifacts/ai-video-camera-${{ matrix.artifact_suffix }}.zip" .)
+          else
+            tar -czf "release-artifacts/ai-video-studio-${{ matrix.artifact_suffix }}.tar.gz" -C "${studio_out}" .
+            tar -czf "release-artifacts/ai-video-camera-${{ matrix.artifact_suffix }}.tar.gz" -C "${camera_out}" .
+          fi
         shell: bash
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: wails-desktop-${{ matrix.artifact_suffix }}
-          path: release-artifacts/*.tar.gz
+          path: release-artifacts/*
           if-no-files-found: error
 
   release:
@@ -166,5 +168,5 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
           target_commitish: ${{ github.sha }}
           draft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.draft || false }}
-          files: release-artifacts/*.tar.gz
+          files: release-artifacts/*
           generate_release_notes: true
