@@ -16,9 +16,6 @@ on:
         default: true
         type: boolean
 
-permissions:
-  contents: read
-
 jobs:
   build:
     name: Build (${{ matrix.name }})
@@ -82,15 +79,19 @@ jobs:
 
       - name: Build frontend assets
         run: |
+          sync_dist() {
+            local source="$1"
+            local destination="$2"
+            rm -rf "${destination}"
+            mkdir -p "${destination}"
+            cp -R "${source}"/. "${destination}/"
+          }
+
           npm run build --prefix frontend
-          rm -rf cmd/studio/frontend/dist
-          mkdir -p cmd/studio/frontend/dist
-          cp -R frontend/dist/. cmd/studio/frontend/dist/
+          sync_dist frontend/dist cmd/studio/frontend/dist
 
           npm run build --prefix frontend-camera
-          rm -rf cmd/camera/frontend/dist
-          mkdir -p cmd/camera/frontend/dist
-          cp -R frontend-camera/dist/. cmd/camera/frontend/dist/
+          sync_dist frontend-camera/dist cmd/camera/frontend/dist
         shell: bash
 
       - name: Build AI Video Studio
