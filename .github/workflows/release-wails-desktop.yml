@@ -20,6 +20,8 @@ jobs:
   build:
     name: Build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -97,12 +99,14 @@ jobs:
       - name: Build AI Video Studio
         run: |
           cd cmd/studio
+          # Keep parity with existing repository build tasks.
           wails3 build -tags prod
         shell: bash
 
       - name: Build AI Video Camera
         run: |
           cd cmd/camera
+          # Keep parity with existing repository build tasks.
           wails3 build -tags prod
         shell: bash
 
