@@ -77,7 +77,10 @@ jobs:
             libx11-dev \
             libxkbcommon-dev
           if ! sudo apt-get install -y libwebkit2gtk-4.1-dev; then
-            sudo apt-get install -y libwebkit2gtk-4.0-dev
+            if ! sudo apt-get install -y libwebkit2gtk-4.0-dev; then
+              echo "Neither libwebkit2gtk-4.1-dev nor libwebkit2gtk-4.0-dev is available on this runner." >&2
+              exit 1
+            fi
           fi
         shell: bash
 
@@ -114,7 +117,9 @@ jobs:
 
           pick_output_dir() {
             local app="$1"
-            # Wails build outputs can be in build/bin or bin depending on setup/version.
+            # Wails v3 alpha builds can output to either:
+            # - cmd/<app>/bin when running from the app directory
+            # - cmd/<app>/build/bin with generated build config/layout
             if [ -d "cmd/${app}/build/bin" ]; then
               echo "cmd/${app}/build/bin"
               return 0
