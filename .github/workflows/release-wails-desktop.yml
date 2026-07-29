@@ -39,6 +39,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -99,16 +101,18 @@ jobs:
 
       - name: Build AI Video Studio
         run: |
-          cd cmd/studio
-          # Keep parity with existing repository build tasks.
-          wails3 build -tags prod
+          set -euo pipefail
+          mkdir -p cmd/studio/build
+          cp build/studio.yml cmd/studio/build/config.yml
+          cd cmd/studio && wails3 build -config ./build/config.yml -tags prod
         shell: bash
 
       - name: Build AI Video Camera
         run: |
-          cd cmd/camera
-          # Keep parity with existing repository build tasks.
-          wails3 build -tags prod
+          set -euo pipefail
+          mkdir -p cmd/camera/build
+          cp build/camera.yml cmd/camera/build/config.yml
+          cd cmd/camera && wails3 build -config ./build/config.yml -tags prod
         shell: bash
 
       - name: Package release artifacts
@@ -143,8 +147,9 @@ jobs:
           }
 
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            (cd "${studio_out}" && zip -r "${GITHUB_WORKSPACE}/release-artifacts/ai-video-studio-${{ matrix.artifact_suffix }}.zip" .)
-            (cd "${camera_out}" && zip -r "${GITHUB_WORKSPACE}/release-artifacts/ai-video-camera-${{ matrix.artifact_suffix }}.zip" .)
+            # Use 7-Zip which is preinstalled on Windows runners; Info-ZIP `zip` is not available in Git Bash by default.
+            (cd "${studio_out}" && 7z a "${GITHUB_WORKSPACE}/release-artifacts/ai-video-studio-${{ matrix.artifact_suffix }}.zip" .)
+            (cd "${camera_out}" && 7z a "${GITHUB_WORKSPACE}/release-artifacts/ai-video-camera-${{ matrix.artifact_suffix }}.zip" .)
           else
             tar -czf "release-artifacts/ai-video-studio-${{ matrix.artifact_suffix }}.tar.gz" -C "${studio_out}" .
             tar -czf "release-artifacts/ai-video-camera-${{ matrix.artifact_suffix }}.tar.gz" -C "${camera_out}" .
