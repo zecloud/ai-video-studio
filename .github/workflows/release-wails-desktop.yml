@@ -1,0 +1,202 @@
+name: Build and release Wails desktop apps
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.0). The tag must already exist remotely.'
+        required: true
+        type: string
+      draft:
+        description: 'Create draft release'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+            artifact_suffix: linux
+          - os: windows-latest
+            name: windows
+            artifact_suffix: windows
+          - os: macos-latest
+            name: macos
+            artifact_suffix: macos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            frontend-camera/package-lock.json
+
+      - name: Install frontend dependencies
+        run: |
+          npm ci --prefix frontend
+          npm ci --prefix frontend-camera
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.112
+
+      - name: Add Go bin to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+        shell: bash
+
+      - name: Install Linux build dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          # GUI build dependencies required by Wails/WebKitGTK on Linux runners.
+          # FFmpeg is a runtime dependency and is not required for packaging here.
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libx11-dev \
+            libxkbcommon-dev
+          if ! sudo apt-get install -y libwebkit2gtk-4.1-dev; then
+            if ! sudo apt-get install -y libwebkit2gtk-4.0-dev; then
+              echo "Neither libwebkit2gtk-4.1-dev nor libwebkit2gtk-4.0-dev is available on this runner." >&2
+              exit 1
+            fi
+          fi
+        shell: bash
+
+      - name: Build frontend assets
+        run: |
+          npm run build --prefix frontend
+          rm -rf cmd/studio/frontend/dist
+          mkdir -p cmd/studio/frontend/dist
+          cp -R frontend/dist/. cmd/studio/frontend/dist/
+
+          npm run build --prefix frontend-camera
+          rm -rf cmd/camera/frontend/dist
+          mkdir -p cmd/camera/frontend/dist
+          cp -R frontend-camera/dist/. cmd/camera/frontend/dist/
+        shell: bash
+
+      - name: Build AI Video Studio
+        run: |
+          set -euo pipefail
+          mkdir -p cmd/studio/build
+          cp build/studio.yml cmd/studio/build/config.yml
+          cd cmd/studio && wails3 build -config ./build/config.yml -tags prod
+        shell: bash
+
+      - name: Build AI Video Camera
+        run: |
+          set -euo pipefail
+          mkdir -p cmd/camera/build
+          cp build/camera.yml cmd/camera/build/config.yml
+          cd cmd/camera && wails3 build -config ./build/config.yml -tags prod
+        shell: bash
+
+      - name: Package release artifacts
+        run: |
+          set -euo pipefail
+
+          pick_output_dir() {
+            local app="$1"
+            # Wails v3 alpha builds can output to either:
+            # - cmd/<app>/bin when running from the app directory
+            # - cmd/<app>/build/bin with generated build config/layout
+            if [ -d "cmd/${app}/build/bin" ]; then
+              echo "cmd/${app}/build/bin"
+              return 0
+            fi
+            if [ -d "cmd/${app}/bin" ]; then
+              echo "cmd/${app}/bin"
+              return 0
+            fi
+            return 1
+          }
+
+          mkdir -p release-artifacts
+
+          studio_out="$(pick_output_dir studio)" || {
+            echo "Unable to find build artifacts for AI Video Studio" >&2
+            exit 1
+          }
+          camera_out="$(pick_output_dir camera)" || {
+            echo "Unable to find build artifacts for AI Video Camera" >&2
+            exit 1
+          }
+
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            # Use 7-Zip which is preinstalled on Windows runners; Info-ZIP `zip` is not available in Git Bash by default.
+            (cd "${studio_out}" && 7z a "${GITHUB_WORKSPACE}/release-artifacts/ai-video-studio-${{ matrix.artifact_suffix }}.zip" .)
+            (cd "${camera_out}" && 7z a "${GITHUB_WORKSPACE}/release-artifacts/ai-video-camera-${{ matrix.artifact_suffix }}.zip" .)
+          else
+            tar -czf "release-artifacts/ai-video-studio-${{ matrix.artifact_suffix }}.tar.gz" -C "${studio_out}" .
+            tar -czf "release-artifacts/ai-video-camera-${{ matrix.artifact_suffix }}.tar.gz" -C "${camera_out}" .
+          fi
+        shell: bash
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wails-desktop-${{ matrix.artifact_suffix }}
+          path: release-artifacts/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wails-desktop-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Validate release tag exists
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if ! git rev-parse "refs/tags/${{ github.event.inputs.tag }}" > /dev/null; then
+            echo "Tag '${{ github.event.inputs.tag }}' not found. Push the tag before running this workflow." >&2
+            exit 1
+          fi
+        shell: bash
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.draft || false }}
+          files: release-artifacts/*
+          generate_release_notes: true
